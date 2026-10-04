@@ -1,0 +1,12 @@
+version: 2
+updates:
+  # The actions of the workflow: a new version arrives as a pull request to be read.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  # The modules. The two SDKs are pinned on purpose: read what changed before accepting.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly

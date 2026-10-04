@@ -1,0 +1,6 @@
+# Text is checked out with LF on every system, whatever the git of the computer is set to do.
+# The record of the language (internal/lang/testdata/characterization.golden), the test scripts
+# and the agent examples are compared byte by byte, and gofmt wants LF.
+* text=auto eol=lf
+*.golden text eol=lf
+*.ag text eol=lf

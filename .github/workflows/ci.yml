@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+    paths-ignore: ['**.md', 'LICENSE', 'NOTICE']
+  pull_request:
+    paths-ignore: ['**.md', 'LICENSE', 'NOTICE']
+  # In a private repository a minute of macOS costs ten minutes of the monthly allowance, and a minute
+  # of Windows two. So macOS runs once a week and when it is asked for (Actions tab, "Run workflow"),
+  # not at every push.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+# The workflow reads the code and nothing else: it has no right to write to the repository.
+permissions:
+  contents: read
+
+# A new push to the same branch makes the run that is going obsolete.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # What does not depend on the system: the format, the modules and go vet.
+  lint:
+    name: Format, modules and vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # The folder spikes/ is another module, of experiments, and is not part of the program.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go' | grep -v '^spikes/'))"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt (run: make fmt):"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+      - name: go vet
+        run: go vet ./...
+
+  # Linux and Windows, at every push. The program starts other programs, closes them as a group,
+  # follows links between folders and writes files, so what it does is not the same on each system.
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # A job that fails does not stop the other: the two systems report separately.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            race: true
+          # The race detector of Windows needs a C compiler, and the tests of the groups of
+          # processes and of the links between folders were written for Linux and macOS first.
+          - os: windows-latest
+            race: false
+    # The Windows job is allowed to fail while what is known not to work there is being fixed.
+    # Its result is still shown. Remove this line when the job is green.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Versions
+        run: |
+          go version
+          go env GOOS GOARCH CGO_ENABLED
+      - name: Build
+        run: go build ./...
+      - name: Unit tests
+        run: go test -count=1 ${{ matrix.race && '-race' || '' }} ./...
+      - name: Acceptance tests (the binary, through the scripts of testdata/script)
+        run: go test -count=1 -tags acceptance ./internal/acceptance/...
+      # What runs things at the same time is repeated: a race shows up once in a few runs.
+      - name: Concurrency, repeated
+        if: ${{ matrix.race }}
+        run: go test -race -count=3 ./internal/serve ./internal/cli ./internal/runtime ./internal/mcp
+
+  # macOS, once a week and on request. It is the system of the computer where the program is written,
+  # so it is the one that is already tested at every change.
+  test-macos:
+    name: Test on macOS (weekly and on request)
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: macos-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Unit tests
+        run: go test -race -count=1 ./...
+      - name: Acceptance tests (the binary, through the scripts of testdata/script)
+        run: go test -count=1 -tags acceptance ./internal/acceptance/...
+      - name: Concurrency, repeated
+        run: go test -race -count=3 ./internal/serve ./internal/cli ./internal/runtime ./internal/mcp
