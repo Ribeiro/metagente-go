@@ -46,27 +46,28 @@ func hasString(raw []byte, want string) bool {
 	if json.Unmarshal(raw, &document) != nil {
 		return false
 	}
-	var walk func(any) bool
-	walk = func(node any) bool {
-		switch node := node.(type) {
-		case string:
-			return node == want
-		case []any:
-			for _, item := range node {
-				if walk(item) {
-					return true
-				}
-			}
-		case map[string]any:
-			for _, item := range node {
-				if walk(item) {
-					return true
-				}
+	return jsonContainsString(document, want)
+}
+
+// jsonContainsString looks for a text, at any depth of a document that was read from JSON.
+func jsonContainsString(node any, want string) bool {
+	switch node := node.(type) {
+	case string:
+		return node == want
+	case []any:
+		for _, item := range node {
+			if jsonContainsString(item, want) {
+				return true
 			}
 		}
-		return false
+	case map[string]any:
+		for _, item := range node {
+			if jsonContainsString(item, want) {
+				return true
+			}
+		}
 	}
-	return walk(document)
+	return false
 }
 
 // This is the test that matters most for the client: it is written by hand, so

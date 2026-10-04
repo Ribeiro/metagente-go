@@ -296,16 +296,7 @@ func charIndent(b *strings.Builder, depth int) {
 func charFormat(b *strings.Builder, v reflect.Value) {
 	switch v.Kind() {
 	case reflect.Pointer:
-		switch {
-		case v.IsNil():
-			b.WriteString("nil")
-		case v.Type() == reflect.TypeOf((*SourceFile)(nil)):
-			f := v.Elem()
-			fmt.Fprintf(b, "source(%q, %q)", f.FieldByName("Name").String(), f.FieldByName("Path").String())
-		default:
-			b.WriteString("&")
-			charFormat(b, v.Elem())
-		}
+		charFormatPointer(b, v)
 	case reflect.Interface:
 		if v.IsNil() {
 			b.WriteString("nil")
@@ -313,33 +304,9 @@ func charFormat(b *strings.Builder, v reflect.Value) {
 		}
 		charFormat(b, v.Elem())
 	case reflect.Struct:
-		t := v.Type()
-		if t == reflect.TypeOf(Span{}) {
-			fmt.Fprintf(b, "@%d:%d", v.Field(0).Int(), v.Field(1).Int())
-			return
-		}
-		b.WriteString(t.Name() + "{")
-		for i := 0; i < v.NumField(); i++ {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(t.Field(i).Name + ": ")
-			charFormat(b, v.Field(i))
-		}
-		b.WriteString("}")
+		charFormatStruct(b, v)
 	case reflect.Slice:
-		if v.IsNil() {
-			b.WriteString("nil")
-			return
-		}
-		b.WriteString("[")
-		for i := 0; i < v.Len(); i++ {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			charFormat(b, v.Index(i))
-		}
-		b.WriteString("]")
+		charFormatSlice(b, v)
 	case reflect.String:
 		b.WriteString(strconv.Quote(v.String()))
 	case reflect.Bool:
@@ -351,6 +318,51 @@ func charFormat(b *strings.Builder, v reflect.Value) {
 	default:
 		fmt.Fprintf(b, "<%s>", v.Kind())
 	}
+}
+
+func charFormatPointer(b *strings.Builder, v reflect.Value) {
+	switch {
+	case v.IsNil():
+		b.WriteString("nil")
+	case v.Type() == reflect.TypeOf((*SourceFile)(nil)):
+		f := v.Elem()
+		fmt.Fprintf(b, "source(%q, %q)", f.FieldByName("Name").String(), f.FieldByName("Path").String())
+	default:
+		b.WriteString("&")
+		charFormat(b, v.Elem())
+	}
+}
+
+func charFormatStruct(b *strings.Builder, v reflect.Value) {
+	t := v.Type()
+	if t == reflect.TypeOf(Span{}) {
+		fmt.Fprintf(b, "@%d:%d", v.Field(0).Int(), v.Field(1).Int())
+		return
+	}
+	b.WriteString(t.Name() + "{")
+	for i := 0; i < v.NumField(); i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(t.Field(i).Name + ": ")
+		charFormat(b, v.Field(i))
+	}
+	b.WriteString("}")
+}
+
+func charFormatSlice(b *strings.Builder, v reflect.Value) {
+	if v.IsNil() {
+		b.WriteString("nil")
+		return
+	}
+	b.WriteString("[")
+	for i := 0; i < v.Len(); i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		charFormat(b, v.Index(i))
+	}
+	b.WriteString("]")
 }
 
 // ---------- what is said when the record and the code disagree ----------

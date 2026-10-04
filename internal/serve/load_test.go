@@ -150,27 +150,8 @@ func TestThe65thTaskAtTheSameTimeGets503AndTheOthersFinish(t *testing.T) {
 	holder.hold = make(chan struct{})
 	address, _ := realServer(t, func(c *Config) { c.MaxInFlight = 64 }, RunOptions{MaxConnections: 256}, holder)
 
-	type reply struct {
-		status int
-		body   string
-	}
-	replies := make(chan reply, 64)
-	for i := 0; i < 64; i++ {
-		go func() {
-			status, _, body, err := realPost(address, "/agents/Bob", sendTo("hold", `{}`))
-			if err != nil {
-				body = err.Error()
-			}
-			replies <- reply{status, body}
-		}()
-	}
-	deadline := time.Now().Add(15 * time.Second)
-	for holder.entered.Load() < 64 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if got := holder.entered.Load(); got != 64 {
-		t.Fatalf("%d tasks are running, want 64", got)
-	}
+	replies := holdTasks(address, 64)
+	waitForTasks(t, holder, 64)
 
 	status, header, body := mustPost(t, address, "/agents/Bob", sendTo("echo", `{"text":"x"}`))
 	if status != http.StatusServiceUnavailable || header.Get("Retry-After") != "1" || !strings.Contains(body, "busy") {
@@ -178,18 +159,58 @@ func TestThe65thTaskAtTheSameTimeGets503AndTheOthersFinish(t *testing.T) {
 	}
 
 	close(holder.hold)
-	for i := 0; i < 64; i++ {
+	finishHeldTasks(t, replies, 64)
+	if status, _, _ := mustPost(t, address, "/agents/Bob", sendTo("echo", `{"text":"again"}`)); status != http.StatusOK {
+		t.Errorf("the server did not recover: %d", status)
+	}
+}
+
+// heldReply is the answer to a request that was held.
+type heldReply struct {
+	status int
+	body   string
+}
+
+// holdTasks sends n requests to the skill that holds, each one from a goroutine of its own, and gives
+// their answers as they come.
+func holdTasks(address string, n int) <-chan heldReply {
+	replies := make(chan heldReply, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			status, _, body, err := realPost(address, "/agents/Bob", sendTo("hold", `{}`))
+			if err != nil {
+				body = err.Error()
+			}
+			replies <- heldReply{status, body}
+		}()
+	}
+	return replies
+}
+
+// waitForTasks waits, for up to 15 seconds, until n tasks are running at the same time.
+func waitForTasks(t *testing.T, holder *fakeAgent, n int) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for int(holder.entered.Load()) < n && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := int(holder.entered.Load()); got != n {
+		t.Fatalf("%d tasks are running, want %d", got, n)
+	}
+}
+
+// finishHeldTasks wants the n tasks that were held to answer, and to say they were released.
+func finishHeldTasks(t *testing.T, replies <-chan heldReply, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
 		select {
 		case r := <-replies:
 			if r.status != http.StatusOK || !strings.Contains(r.body, "released") {
 				t.Errorf("a task that was running: %d %s", r.status, r.body)
 			}
 		case <-time.After(15 * time.Second):
-			t.Fatalf("only %d of the 64 tasks finished", i)
+			t.Fatalf("only %d of the %d tasks finished", i, n)
 		}
-	}
-	if status, _, _ := mustPost(t, address, "/agents/Bob", sendTo("echo", `{"text":"again"}`)); status != http.StatusOK {
-		t.Errorf("the server did not recover: %d", status)
 	}
 }
 

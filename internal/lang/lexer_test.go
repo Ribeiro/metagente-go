@@ -138,23 +138,30 @@ func TestLexErrorsSayWhatIsWrongAndHowToFixIt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := lex("t.ag", tt.source)
-			if err == nil {
-				t.Fatal("expected a problem")
-			}
-			text := errorText(t, err)
-			if !strings.HasPrefix(text, "Problem on line 1 of t.ag") {
-				t.Errorf("no place in:\n%s", text)
-			}
-			if !strings.Contains(text, "Fix: ") {
-				t.Errorf("no fix in:\n%s", text)
-			}
-			for _, want := range tt.want {
-				if !strings.Contains(text, want) {
-					t.Errorf("missing %q in:\n%s", want, text)
-				}
-			}
+			assertLexProblem(t, tt.source, tt.want)
 		})
+	}
+}
+
+// assertLexProblem lexes a source that is wrong. It wants a problem that is placed on line 1, that
+// says how to fix it, and that says each of the words in want.
+func assertLexProblem(t *testing.T, source string, want []string) {
+	t.Helper()
+	_, err := lex("t.ag", source)
+	if err == nil {
+		t.Fatal("expected a problem")
+	}
+	text := errorText(t, err)
+	if !strings.HasPrefix(text, "Problem on line 1 of t.ag") {
+		t.Errorf("no place in:\n%s", text)
+	}
+	if !strings.Contains(text, "Fix: ") {
+		t.Errorf("no fix in:\n%s", text)
+	}
+	for _, w := range want {
+		if !strings.Contains(text, w) {
+			t.Errorf("missing %q in:\n%s", w, text)
+		}
 	}
 }
 

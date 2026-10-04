@@ -417,8 +417,9 @@ so run `make fmt` after copying it over the project.
 3. **The port of the tests of the original project** (`contract/*`, `a2a_*`, `sample_city_briefing`,
    `perf`).
 4. **Checks in real conditions** that cannot be automated (next section).
-5. **Quality:** the 8 long tests that Sonar still marks. The functions of the code that it marked are
-   split, and the copies of `shorten` are one function (`internal/clip`).
+5. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
+   of `shorten` are one function (`internal/clip`). Run Sonar again to see what is left; the
+   record of the language (above) is what makes the next change in `internal/lang` safe.
 6. **Distribution:** binaries for the three systems, a version number (it is `0.0.0-dev`), a
    reference of the language for people who write agents, `CONTRIBUTING` and `CHANGELOG`.
 7. **Smaller decisions:** a smaller default for the memory a conversation may use (see Memory

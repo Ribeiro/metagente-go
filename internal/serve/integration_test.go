@@ -71,6 +71,14 @@ func TestOurClientTalksToOurServerWithTheToken(t *testing.T) {
 	base, _ := listen(t, nil, newFake("Bob", defaultSkills...))
 	tool := remoteTool(base, "BOB_TOKEN", map[string]string{"BOB_TOKEN": goodToken})
 
+	checkRemoteActions(t, tool)
+	checkRemoteCalls(t, tool)
+	checkRemoteFailure(t, tool)
+}
+
+// checkRemoteActions wants one action for each skill of the other agent, with what it is for.
+func checkRemoteActions(t *testing.T, tool tools.Tool) {
+	t.Helper()
 	actions, err := tool.Actions(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +92,12 @@ func TestOurClientTalksToOurServerWithTheToken(t *testing.T) {
 	if len(actions) != len(defaultSkills) || echo != "repeats the text Takes: text." {
 		t.Fatalf("%d actions, echo = %q", len(actions), echo)
 	}
+}
 
+// checkRemoteCalls calls three skills: one that repeats a text, one that answers with a record, and
+// one that is passed on through two agents.
+func checkRemoteCalls(t *testing.T, tool tools.Tool) {
+	t.Helper()
 	if got, err := callTool(t, tool, nil, "echo", "text", "hello"); err != nil || got.Text != "echo: hello" {
 		t.Errorf("echo: %v %v", got.Display(), err)
 	}
@@ -100,7 +113,13 @@ func TestOurClientTalksToOurServerWithTheToken(t *testing.T) {
 	if got, err := callTool(t, tool, []string{"Planner", "Helper"}, "chain"); err != nil || got.Text != "Planner>Helper" {
 		t.Errorf("the chain: %v %v", got.Display(), err)
 	}
-	_, err = callTool(t, tool, nil, "fail")
+}
+
+// checkRemoteFailure calls a skill that fails, and wants the reason to arrive without anything of the
+// other computer.
+func checkRemoteFailure(t *testing.T, tool tools.Tool) {
+	t.Helper()
+	_, err := callTool(t, tool, nil, "fail")
 	text := err.Error()
 	if d, ok := asDiag(err); ok {
 		text = d.Render()

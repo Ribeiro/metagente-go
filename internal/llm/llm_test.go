@@ -106,11 +106,22 @@ func TestTheAnthropicRequestHasTheShapeTheAPIExpects(t *testing.T) {
 	if c.path != "/v1/messages" {
 		t.Errorf("path = %s", c.path)
 	}
-	if c.headers.Get("x-api-key") != testKey || c.headers.Get("anthropic-version") != "2023-06-01" ||
-		c.headers.Get("Content-Type") != "application/json" {
-		t.Errorf("headers = %v", c.headers)
+	checkAnthropicHeaders(t, c.headers)
+	checkAnthropicSettings(t, c.body)
+	checkAnthropicMessages(t, c.body["messages"].([]any))
+}
+
+func checkAnthropicHeaders(t *testing.T, headers http.Header) {
+	t.Helper()
+	if headers.Get("x-api-key") != testKey || headers.Get("anthropic-version") != "2023-06-01" ||
+		headers.Get("Content-Type") != "application/json" {
+		t.Errorf("headers = %v", headers)
 	}
-	body := c.body
+}
+
+// checkAnthropicSettings looks at the model, the limit, the system prompt and the tool.
+func checkAnthropicSettings(t *testing.T, body map[string]any) {
+	t.Helper()
 	if body["model"] != "m" || body["max_tokens"] != float64(99) {
 		t.Errorf("model/max_tokens = %v / %v", body["model"], body["max_tokens"])
 	}
@@ -122,7 +133,11 @@ func TestTheAnthropicRequestHasTheShapeTheAPIExpects(t *testing.T) {
 	if tool["name"] != "file__read" || tool["input_schema"] == nil {
 		t.Errorf("tool = %v", tool)
 	}
-	messages := body["messages"].([]any)
+}
+
+// checkAnthropicMessages looks at the request for a tool, at its result, and at the mark for the cache.
+func checkAnthropicMessages(t *testing.T, messages []any) {
+	t.Helper()
 	if len(messages) != 3 {
 		t.Fatalf("got %d messages", len(messages))
 	}
@@ -504,71 +519,39 @@ func TestTheOpenAIAnswerIsRead(t *testing.T) {
 func TestOddButCommonAnswersOfCompatibleServersAreAccepted(t *testing.T) {
 	for name, tt := range map[string]struct {
 		answer string
-		check  func(t *testing.T, r *Response)
+		check  oddAnswerCheck
 	}{
 		"arguments as an object": {
 			`{"choices":[{"message":{"content":"","tool_calls":[{"id":"a","function":{"name":"n","arguments":{"path":"d.txt"}}}]},"finish_reason":"tool_calls"}]}`,
-			func(t *testing.T, r *Response) {
-				if u := r.ToolUses(); len(u) != 1 || u[0].Input["path"] != "d.txt" || u[0].BadInput {
-					t.Errorf("uses = %+v", u)
-				}
-			},
+			wantOneToolUse(false, "d.txt"),
 		},
 		"arguments that are not json": {
 			`{"choices":[{"message":{"tool_calls":[{"id":"a","function":{"name":"n","arguments":"{oops"}}]},"finish_reason":"tool_calls"}]}`,
-			func(t *testing.T, r *Response) {
-				if u := r.ToolUses(); len(u) != 1 || !u[0].BadInput {
-					t.Errorf("uses = %+v", u)
-				}
-			},
+			wantOneToolUse(true, ""),
 		},
 		"no arguments at all": {
 			`{"choices":[{"message":{"tool_calls":[{"id":"a","function":{"name":"n","arguments":""}}]},"finish_reason":"tool_calls"}]}`,
-			func(t *testing.T, r *Response) {
-				if u := r.ToolUses(); len(u) != 1 || u[0].BadInput {
-					t.Errorf("uses = %+v", u)
-				}
-			},
+			wantOneToolUse(false, ""),
 		},
 		"stop with tool calls": {
 			`{"choices":[{"message":{"tool_calls":[{"id":"a","function":{"name":"n","arguments":"{}"}}]},"finish_reason":"stop"}]}`,
-			func(t *testing.T, r *Response) {
-				if r.Stop != StopToolUse {
-					t.Errorf("stop = %v", r.Stop)
-				}
-			},
+			wantStop(StopToolUse),
 		},
 		"content as parts": {
 			`{"choices":[{"message":{"content":[{"type":"text","text":"he"},{"type":"text","text":"llo"}]},"finish_reason":"stop"}]}`,
-			func(t *testing.T, r *Response) {
-				if r.Text() != "hello" || r.Stop != StopEnd {
-					t.Errorf("text %q stop %v", r.Text(), r.Stop)
-				}
-			},
+			wantTextAndStop("hello", StopEnd),
 		},
 		"cut": {
 			`{"choices":[{"message":{"content":"half"},"finish_reason":"length"}]}`,
-			func(t *testing.T, r *Response) {
-				if r.Stop != StopLength {
-					t.Errorf("stop = %v", r.Stop)
-				}
-			},
+			wantStop(StopLength),
 		},
 		"refusal": {
 			`{"choices":[{"message":{"content":null,"refusal":"I cannot help with that"},"finish_reason":"stop"}]}`,
-			func(t *testing.T, r *Response) {
-				if r.Stop != StopRefusal {
-					t.Errorf("stop = %v", r.Stop)
-				}
-			},
+			wantStop(StopRefusal),
 		},
 		"content filter": {
 			`{"choices":[{"message":{"content":""},"finish_reason":"content_filter"}]}`,
-			func(t *testing.T, r *Response) {
-				if r.Stop != StopRefusal {
-					t.Errorf("stop = %v", r.Stop)
-				}
-			},
+			wantStop(StopRefusal),
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -580,6 +563,39 @@ func TestOddButCommonAnswersOfCompatibleServersAreAccepted(t *testing.T) {
 			}
 			tt.check(t, resp)
 		})
+	}
+}
+
+// oddAnswerCheck says what a test wants to find in the response to an answer.
+type oddAnswerCheck func(t *testing.T, r *Response)
+
+func wantStop(want Stop) oddAnswerCheck {
+	return func(t *testing.T, r *Response) {
+		t.Helper()
+		if r.Stop != want {
+			t.Errorf("stop = %v", r.Stop)
+		}
+	}
+}
+
+// wantOneToolUse wants a single request for a tool, whose arguments were readable or were not,
+// and, when wantPath is not empty, that has that path in them.
+func wantOneToolUse(wantBad bool, wantPath string) oddAnswerCheck {
+	return func(t *testing.T, r *Response) {
+		t.Helper()
+		u := r.ToolUses()
+		if len(u) != 1 || u[0].BadInput != wantBad || (wantPath != "" && u[0].Input["path"] != wantPath) {
+			t.Errorf("uses = %+v", u)
+		}
+	}
+}
+
+func wantTextAndStop(text string, stop Stop) oddAnswerCheck {
+	return func(t *testing.T, r *Response) {
+		t.Helper()
+		if r.Text() != text || r.Stop != stop {
+			t.Errorf("text %q stop %v", r.Text(), r.Stop)
+		}
 	}
 }
 

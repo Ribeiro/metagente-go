@@ -235,9 +235,22 @@ func TestTheCardNeedsTheTokenAndSaysWhatTheAgentIsFor(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &card); err != nil {
 		t.Fatal(err)
 	}
+	checkCard(t, card)
+}
+
+// checkCard wants the card of Bob to say who he is, where he is reached, how, and what his skills are for.
+func checkCard(t *testing.T, card map[string]any) {
+	t.Helper()
 	if card["name"] != "Bob" || card["description"] != "Goal of Bob" || card["version"] != "1.2.3" {
 		t.Errorf("card = %v", card)
 	}
+	checkCardInterface(t, card)
+	checkCardSkills(t, card)
+}
+
+// checkCardInterface looks at the address, the protocol, the capabilities and the way to authenticate.
+func checkCardInterface(t *testing.T, card map[string]any) {
+	t.Helper()
 	iface := card["supportedInterfaces"].([]any)[0].(map[string]any)
 	if iface["url"] != "http://127.0.0.1:8080/agents/Bob" || iface["protocolBinding"] != "JSONRPC" || iface["protocolVersion"] != "1.0" {
 		t.Errorf("interface = %v", iface)
@@ -250,6 +263,11 @@ func TestTheCardNeedsTheTokenAndSaysWhatTheAgentIsFor(t *testing.T) {
 	if scheme["scheme"] != "Bearer" {
 		t.Errorf("security scheme = %v", scheme)
 	}
+}
+
+// checkCardSkills wants the skill echo, and what it says it is for.
+func checkCardSkills(t *testing.T, card map[string]any) {
+	t.Helper()
 	var echo map[string]any
 	for _, sk := range card["skills"].([]any) {
 		if m := sk.(map[string]any); m["id"] == "echo" {
