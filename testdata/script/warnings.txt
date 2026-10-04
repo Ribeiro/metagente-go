@@ -1,0 +1,53 @@
+# E2 and L7: advice never blocks, unless --strict asks for it.
+
+# a package runner without a pinned version
+exec metagente check unpinned.ag
+stdout 'No problems found'
+stderr 'Warning on line 3 of unpinned\.ag'
+stderr 'does not pin a version of `weather-mcp`'
+stderr 'weather-mcp@1\.2\.3'
+
+! exec metagente check --strict unpinned.ag
+stderr 'Found 1 problem\.'
+! stdout .
+
+# the same command with a version is quiet
+exec metagente check pinned.ag
+stdout 'No problems found'
+! stderr .
+
+# a think that can use every tool, including ones that change things
+exec metagente check open_think.ag
+stderr 'every tool the agent declared'
+exec metagente check limited_think.ag
+! stderr .
+
+-- unpinned.ag --
+agent A
+  goal "x"
+  tool weather from mcp "npx -y weather-mcp"
+  accepts go
+  on go
+    reply "x"
+-- pinned.ag --
+agent A
+  goal "x"
+  tool weather from mcp "npx -y weather-mcp@1.2.3"
+  accepts go
+  on go
+    reply "x"
+-- open_think.ag --
+agent A
+  goal "x"
+  tool file
+  accepts go
+  on go
+    reply think "hi"
+-- limited_think.ag --
+agent A
+  goal "x"
+  tool file
+  tool clock
+  accepts go
+  on go
+    reply think "hi" using clock

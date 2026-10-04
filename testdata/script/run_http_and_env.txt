@@ -1,0 +1,49 @@
+# The guard of `tool http` and the secrets of `tool env`.
+# (from http_state_tools and env_scope)
+
+# an address without a scheme
+! exec metagente run web.ag go url=example.org
+stderr 'http:// or https://'
+
+# internal addresses are refused unless the agent says so
+! exec metagente run web.ag go url=http://127.0.0.1:1/x
+stderr '`http` refused to connect to 127\.0\.0\.1: it is this computer'
+stderr 'tool http allow private'
+
+# the cloud metadata address is refused even with `allow private`
+! exec metagente run private.ag go url=http://169.254.169.254/latest
+stderr 'refused to connect to 169\.254\.169\.254'
+stderr 'link-local'
+
+# only the declared environment variables can be read, never the secrets
+env MG_SCRIPT_VAR=alpha
+env ANTHROPIC_API_KEY=very-secret
+exec metagente run vars.ag get name=MG_SCRIPT_VAR
+stdout '^alpha$'
+! exec metagente run vars.ag get name=PATH
+stderr 'did not declare the variable `PATH`'
+! exec metagente run vars.ag get name=ANTHROPIC_API_KEY
+stderr 'is a secret'
+! stderr 'very-secret'
+
+-- web.ag --
+agent Web
+  goal "Talk to the web"
+  tool http
+  accepts go url
+  on go
+    reply http.get url: url
+-- private.ag --
+agent Private
+  goal "Talk to the local network"
+  tool http allow private
+  accepts go url
+  on go
+    reply http.get url: url
+-- vars.ag --
+agent Vars
+  goal "Read some variables"
+  tool env "MG_SCRIPT_VAR" "ANTHROPIC_API_KEY"
+  accepts get name
+  on get
+    reply env.get name: name

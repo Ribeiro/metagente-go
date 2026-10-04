@@ -1,0 +1,11 @@
+exec metagente --version
+stdout '^metagente '
+
+exec metagente --help
+stdout 'metagente check'
+
+! exec metagente dance
+stderr 'I do not know the command `dance`'
+
+! exec metagente
+stderr 'Usage:'

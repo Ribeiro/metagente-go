@@ -1,0 +1,76 @@
+# A call the linked agent does not accept is refused before anything runs.
+# (from link_interface)
+
+! exec metagente check boss_nots.ag
+stderr 'did you mean `note`\?'
+stderr 'Problem on line 6'
+! exec metagente run boss_nots.ag go
+stderr 'did you mean `note`\?'
+
+! exec metagente check boss_missing.ag
+stderr 'needs a value for `text`'
+! exec metagente run boss_missing.ag go
+stderr 'needs a value for `text`'
+
+! exec metagente run boss_extra.ag go
+stderr 'does not take `extra`'
+
+! exec metagente run boss_txt.ag go
+stderr 'needs a value for `text`'
+
+# none of them reached the writer
+! exists marker.txt
+
+# a good call works, and the writer does its job
+exec metagente run boss_good.ag go
+stdout '^written$'
+grep '^hello$' marker.txt
+
+-- writer.ag --
+agent Writer
+  goal "Write a marker file"
+  tool file
+  accepts note text
+  on note
+    file.write path: "marker.txt" text: text
+    reply "written"
+-- boss_nots.ag --
+agent Boss
+  goal "b"
+  link Writer
+  accepts go
+  on go
+    r = Writer.nots text: "x"
+    reply r
+-- boss_missing.ag --
+agent Boss
+  goal "b"
+  link Writer
+  accepts go
+  on go
+    r = Writer.note
+    reply r
+-- boss_extra.ag --
+agent Boss
+  goal "b"
+  link Writer
+  accepts go
+  on go
+    r = Writer.note text: "x" extra: "y"
+    reply r
+-- boss_txt.ag --
+agent Boss
+  goal "b"
+  link Writer
+  accepts go
+  on go
+    r = Writer.note txt: "x"
+    reply r
+-- boss_good.ag --
+agent Boss
+  goal "b"
+  link Writer
+  accepts go
+  on go
+    r = Writer.note text: "hello"
+    reply r

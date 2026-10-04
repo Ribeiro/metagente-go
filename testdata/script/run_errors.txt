@@ -1,0 +1,72 @@
+# Problems found by `run` read as plain language, with the line.
+# (from diagnostics_golden and internal_error)
+
+# problems stop the run, and it says how many more there are
+! exec metagente run bad.ag go
+stderr 'agent Bad has no goal'
+stderr '\(2 more problems in this file; run `metagente check bad\.ag` to see them all\)'
+
+# a message the agent does not accept, and one with a value missing
+! exec metagente run hello.ag shout name=Ana
+stderr 'does not accept the message `shout`'
+stderr 'hello accepts: greet|Hello accepts: greet'
+! exec metagente run hello.ag greet
+stderr 'needs a value for `name`'
+! exec metagente run hello.ag greet name=Ana extra=1
+stderr 'does not take `extra`'
+
+# fail stops the agent with its own words, on its line
+! exec metagente run failing.ag go
+stderr 'Problem on line 5 of failing\.ag: I need a city'
+
+# think without a language model set up says what to set up
+! exec metagente run thinker.ag go
+stderr 'this agent needs a language model to think, and none is set up'
+stderr '\[llm\] section'
+
+# a tool server nobody approved is not started
+! exec metagente run mcp.ag go
+stderr 'have not approved for this project'
+stderr 'starts the program: weather-mcp@1\.0\.0'
+
+# a missing file, and a broken configuration
+! exec metagente run nope.ag
+stderr 'I could not open nope\.ag: the file does not exist'
+! exec metagente run hello.ag name=Ana --config broken.toml
+stderr 'Problem on line 2 of broken\.toml'
+
+-- bad.ag --
+agent Bad
+  accepts go
+  on go
+    x = nme
+    reply q
+-- hello.ag --
+agent Hello
+  goal "Say hello to someone"
+  accepts greet name
+  on greet
+    reply "Hello, {name}!"
+-- failing.ag --
+agent F
+  goal "x"
+  accepts go
+  on go
+    fail "I need a city"
+-- thinker.ag --
+agent T
+  goal "x"
+  accepts go
+  on go
+    reply think "hi"
+-- mcp.ag --
+agent M
+  goal "x"
+  tool weather from mcp "weather-mcp@1.0.0"
+  accepts go
+  on go
+    r = weather.forecast city: "x"
+    reply r
+-- broken.toml --
+[runtime]
+timeout_seconds = soon

@@ -1,0 +1,19 @@
+# Calls a Weather agent that is being served elsewhere.
+#
+#   1. In one terminal:   export METAGENTE_TOKEN=$(metagente token)
+#                         metagente serve weather.ag
+#   2. In metagente.toml, next to this file, name the variable that holds the same token:
+#                         [credentials]
+#                         Bob = "BOB_TOKEN"
+#   3. In another terminal:  export BOB_TOKEN=<the same token>
+#                            metagente trust remote_weather.ag
+#                            metagente run remote_weather.ag plan city=Lisbon
+#
+# The agent is at /agents/NAME of the server, and its card is read with the token.
+agent Trip
+  goal "Ask a remote weather agent"
+  remote Bob at "http://127.0.0.1:8080/agents/Weather"
+  accepts plan city
+  on plan
+    forecast = Bob.ask city: city
+    reply "Bob says: {forecast}"

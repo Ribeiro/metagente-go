@@ -1,0 +1,45 @@
+# A link that leaves the project is warned about, and never blocked (T5).
+
+cd proj
+exec metagente check boss.ag
+stdout 'No problems found'
+stderr 'Warning on line 3 of boss\.ag'
+stderr 'points outside this project'
+
+# a link inside the project is quiet
+exec metagente check inside.ag
+! stderr 'Warning'
+
+# --strict turns the warning into a problem
+! exec metagente check --strict boss.ag
+stderr 'points outside this project'
+
+-- proj/metagente.toml --
+[runtime]
+timeout_seconds = 30
+-- proj/boss.ag --
+agent Boss
+  goal "b"
+  link Helper from "../outside/helper.ag"
+  accepts go
+  on go
+    reply Helper.hi
+-- proj/inside.ag --
+agent Boss
+  goal "b"
+  link Helper from "near/helper.ag"
+  accepts go
+  on go
+    reply Helper.hi
+-- proj/near/helper.ag --
+agent Helper
+  goal "h"
+  accepts hi
+  on hi
+    reply "inside"
+-- outside/helper.ag --
+agent Helper
+  goal "h"
+  accepts hi
+  on hi
+    reply "outside"

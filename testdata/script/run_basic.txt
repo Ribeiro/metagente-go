@@ -1,0 +1,39 @@
+# `run` answers with the reply of the agent.
+# (from internal_error::cli_new_check_and_run_work_together)
+exec metagente new hello
+exec metagente run hello.ag greet name=Ana
+stdout '^Hello, Ana!$'
+! stderr .
+
+# with one accepted message, the message can be left out
+exec metagente run hello.ag name=Ana
+stdout '^Hello, Ana!$'
+
+# several agents in a file: the first is the default, --agent picks another
+exec metagente run two.ag go
+stdout '^first$'
+exec metagente run two.ag go --agent Second
+stdout '^second$'
+
+# a reply that is not text is printed as JSON
+exec metagente run list.ag go
+stdout '^\[$'
+stdout '^  1,$'
+
+-- two.ag --
+agent First
+  goal "a"
+  accepts go
+  on go
+    reply "first"
+agent Second
+  goal "b"
+  accepts go
+  on go
+    reply "second"
+-- list.ag --
+agent L
+  goal "x"
+  accepts go
+  on go
+    reply [1, 2]

@@ -1,0 +1,12 @@
+Metagente (Go port)
+Copyright 2026 the contributors of this repository.
+
+This project is a port of Metagente / MetaAgent, originally written in Rust by
+Cleuton Sampaio and contributors, and released under the Apache License 2.0:
+
+    https://github.com/cleuton/MetaAgent
+
+The language design, the diagnostics wording, the example agents in
+testdata/examples and the behaviour captured by the test suite come from that
+project. This repository is a derivative work and keeps the same license
+(see LICENSE).

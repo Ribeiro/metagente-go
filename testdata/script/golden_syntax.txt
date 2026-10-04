@@ -1,0 +1,14 @@
+# A typo in a keyword is explained with the line, a marker and a suggestion.
+# (from diagnostics_golden::syntax_error and parser_tests)
+! exec metagente check typo.ag
+stderr 'Problem on line 2 of typo\.ag'
+stderr 'did you mean `goal`\?'
+stderr '2 \|   gaol "x"'
+stderr '\^'
+stderr 'Fix: '
+! stderr 'panic|goroutine|\.go:'
+! stdout .
+
+-- typo.ag --
+agent A
+  gaol "x"

@@ -1,0 +1,56 @@
+# Names and tools: every problem says where it is and how to fix it.
+# (from diagnostics_golden)
+
+# a name nobody declared
+! exec metagente check undeclared_name.ag
+stderr 'Problem on line 5 of undeclared_name\.ag'
+stderr 'I do not know what `nme` is here'
+stderr 'Fix: '
+
+# a built in tool used without `tool file`
+! exec metagente check undeclared_tool.ag
+stderr 'never declared it'
+stderr 'tool file'
+stderr 'Found 1 problem\.'
+
+# a wrong parameter name: both the missing value and the stray one are reported
+! exec metagente check bad_param.ag
+stderr 'needs a value for `path`'
+stderr 'does not take `pth`'
+stderr 'did you mean `path`\?'
+stderr 'Found 2 problems\.'
+
+# a mistyped action
+! exec metagente check unknown_action.ag
+stderr 'did you mean `file\.read`\?'
+stderr '`file` can do: read, write'
+
+-- undeclared_name.ag --
+agent A
+  goal "x"
+  accepts go
+  on go
+    reply nme
+-- undeclared_tool.ag --
+agent A
+  goal "x"
+  accepts go
+  on go
+    x = file.read path: "a"
+    reply x
+-- bad_param.ag --
+agent A
+  goal "x"
+  tool file
+  accepts go
+  on go
+    x = file.read pth: "a"
+    reply x
+-- unknown_action.ag --
+agent A
+  goal "x"
+  tool file
+  accepts go
+  on go
+    x = file.reed path: "a"
+    reply x

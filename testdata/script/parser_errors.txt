@@ -1,0 +1,66 @@
+# Syntax errors read as plain language, with the line and a fix.
+# (from parser_tests)
+
+! exec metagente check bare_env.ag
+stderr 'Problem on line 3 of bare_env\.ag'
+stderr 'tool env "HOME"'
+
+! exec metagente check unterminated.ag
+stderr 'line 2'
+stderr 'never ends'
+stderr 'closing quote'
+
+! exec metagente check odd_indent.ag
+stderr '3 spaces'
+
+! exec metagente check tab_indent.ag
+stderr 'tab'
+
+! exec metagente check not_an_agent.ag
+stderr 'every agent must begin with the word `agent`'
+
+! exec metagente check empty_handler.ag
+stderr 'nothing under it'
+
+! exec metagente check stray_otherwise.ag
+stderr '`otherwise` must come right after an `if`'
+
+! exec metagente check extra_tokens.ag
+stderr 'did not expect'
+
+! exec metagente check unknown_tool.ag
+stderr 'did you mean `tool file`\?'
+
+# the last message, like all the others, shows nothing of how the interpreter works inside
+! stderr 'panic|goroutine|\.go:|runtime\.'
+
+-- bare_env.ag --
+agent A
+  goal "x"
+  tool env
+-- unterminated.ag --
+agent A
+  goal "never ends
+-- odd_indent.ag --
+agent A
+   goal "x"
+-- tab_indent.ag --
+agent A
+	goal "x"
+-- not_an_agent.ag --
+goal "x"
+-- empty_handler.ag --
+agent A
+  goal "x"
+  on go
+-- stray_otherwise.ag --
+agent A
+  on go
+    otherwise
+      reply "x"
+-- extra_tokens.ag --
+agent A
+  goal "x" "y"
+-- unknown_tool.ag --
+agent A
+  tool fille

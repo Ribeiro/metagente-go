@@ -1,0 +1,69 @@
+# `link` finds the agent in the same file, next to the caller, in the agents/
+# folder, or by a quoted path. (from dynamic_link)
+
+# 1. only the agents folder has it
+exec metagente run boss.ag go
+stdout '^from agents folder$'
+
+# 2. next to the calling file wins (a lower case file name works too)
+cp next_to.ag helper.ag
+exec metagente run boss.ag go
+stdout '^from next to$'
+
+# 3. the same file wins over everything
+cp boss_same_file.ag boss.ag
+exec metagente run boss.ag go
+stdout '^from same file$'
+
+# 4. a quoted path is used as written
+exec metagente run boss_quoted.ag go
+stdout '^from quoted path$'
+
+# check agrees with run
+exec metagente check boss_quoted.ag
+stdout 'No problems found'
+
+-- boss.ag --
+agent Boss
+  goal "b"
+  link Helper
+  accepts go
+  on go
+    reply Helper.hi
+-- agents/Helper.ag --
+agent Helper
+  goal "h"
+  accepts hi
+  on hi
+    reply "from agents folder"
+-- next_to.ag --
+agent Helper
+  goal "h"
+  accepts hi
+  on hi
+    reply "from next to"
+-- boss_same_file.ag --
+agent Boss
+  goal "b"
+  link Helper
+  accepts go
+  on go
+    reply Helper.hi
+agent Helper
+  goal "h"
+  accepts hi
+  on hi
+    reply "from same file"
+-- boss_quoted.ag --
+agent Boss
+  goal "b"
+  link Helper from "elsewhere/x.ag"
+  accepts go
+  on go
+    reply Helper.hi
+-- elsewhere/x.ag --
+agent Helper
+  goal "h"
+  accepts hi
+  on hi
+    reply "from quoted path"

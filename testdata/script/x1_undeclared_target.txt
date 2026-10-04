@@ -1,0 +1,13 @@
+# X1: a call to a name that was never declared is refused by `check`, with the
+# same words the runtime would use.
+! exec metagente check a.ag
+stderr 'does not know anything called `Other`'
+stderr 'Found 1 problem\.'
+
+-- a.ag --
+agent A
+  goal "x"
+  accepts go
+  on go
+    r = Other.ask city: "x"
+    reply r

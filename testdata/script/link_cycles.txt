@@ -1,0 +1,69 @@
+# Agents that call each other in a circle stop with a clear message.
+# (from link_cycle)
+
+# a cycle is only found when the agents run, so `check` is happy
+exec metagente check cycle_a.ag
+stdout 'No problems found'
+
+! exec metagente run cycle_a.ag go
+stderr 'CycleA asked CycleB, and CycleB asked CycleA again \(CycleA -> CycleB -> CycleA\)'
+stderr 'make one of them answer without calling the other'
+
+! exec metagente run loop.ag go
+stderr 'Loop -> Loop'
+
+# a missing target says where it looked
+! exec metagente check boss_ghost.ag
+stderr 'Problem on line 3 of boss_ghost\.ag'
+stderr 'I could not find an agent called Ghost'
+stderr 'I looked:'
+stderr 'link Ghost from "path/to/file\.ag"'
+
+# an error inside the linked agent keeps its own file and line
+! exec metagente run outer.ag go
+stderr 'Problem on line 6 of outer\.ag: Inner could not answer `go`'
+stderr 'Problem on line 6 of inner\.ag'
+stderr 'the file `missing\.txt` does not exist'
+
+-- cycle_a.ag --
+agent CycleA
+  goal "Call CycleB, which calls back"
+  link CycleB from "cycle_b.ag"
+  accepts go
+  on go
+    reply CycleB.go
+-- cycle_b.ag --
+agent CycleB
+  goal "Call CycleA, which called me"
+  link CycleA from "cycle_a.ag"
+  accepts go
+  on go
+    reply CycleA.go
+-- loop.ag --
+agent Loop
+  goal "l"
+  link Loop
+  accepts go
+  on go
+    reply Loop.go
+-- boss_ghost.ag --
+agent Boss
+  goal "b"
+  link Ghost
+  accepts go
+  on go
+    reply Ghost.hi
+-- outer.ag --
+agent Outer
+  goal "o"
+  link Inner
+  accepts go
+  on go
+    reply Inner.go
+-- inner.ag --
+agent Inner
+  goal "i"
+  tool file
+  accepts go
+  on go
+    reply file.read path: "missing.txt"

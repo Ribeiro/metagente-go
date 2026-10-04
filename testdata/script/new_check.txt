@@ -1,0 +1,14 @@
+# `new`, then `check`, work together. (from internal_error::cli_new_check_and_run_work_together)
+exec metagente new hello
+stdout 'Created hello\.ag'
+stdout 'Created metagente\.toml'
+stdout 'Try it: metagente run hello\.ag greet name=World'
+exists hello.ag
+exists metagente.toml
+
+! exec metagente new hello
+stderr 'already exists'
+
+exec metagente check hello.ag
+stdout 'No problems found in hello\.ag \(1 agent\)\.'
+! stderr .

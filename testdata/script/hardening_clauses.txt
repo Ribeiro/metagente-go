@@ -1,0 +1,67 @@
+# X2, L7 and E1: the clauses that limit what an agent can do.
+
+# readonly removes the actions that change things
+! exec metagente check readonly_write.ag
+stderr '`file\.write` is not available because `tool file` was declared readonly'
+exec metagente check readonly_read.ag
+stdout 'No problems found'
+
+# `using` can only name tools the agent declared
+! exec metagente check using_unknown.ag
+stderr '`using` names `clok`'
+stderr 'did you mean `clock`\?'
+
+# `allow` takes domain names, not addresses or URLs
+! exec metagente check allow_bad.ag
+stderr 'is not a domain name that `allow` can use'
+exec metagente check allow_good.ag
+stdout 'No problems found'
+
+# secrets are never passed to a tool server
+! exec metagente check env_secret.ag
+stderr 'can never be passed to a tool server'
+
+-- readonly_write.ag --
+agent A
+  goal "x"
+  tool file "data/" readonly
+  accepts go
+  on go
+    file.write path: "a" text: "b"
+    reply "x"
+-- readonly_read.ag --
+agent A
+  goal "x"
+  tool file "data/" readonly
+  accepts go
+  on go
+    t = file.read path: "a"
+    reply t
+-- using_unknown.ag --
+agent A
+  goal "x"
+  tool clock
+  accepts go
+  on go
+    reply think "hi" using clok
+-- allow_bad.ag --
+agent A
+  goal "x"
+  tool http allow "10.0.0.1"
+  accepts go
+  on go
+    reply "x"
+-- allow_good.ag --
+agent A
+  goal "x"
+  tool http allow "api.example.com" "*.corp.example"
+  accepts go
+  on go
+    reply "x"
+-- env_secret.ag --
+agent A
+  goal "x"
+  tool x from mcp "cmd@1.0.0" env "ANTHROPIC_API_KEY"
+  accepts go
+  on go
+    reply "x"

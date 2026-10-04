@@ -1,0 +1,31 @@
+# Every example must behave: valid ones pass `check`, broken ones fail with a
+# plain message. (from examples_check)
+exec metagente check $EXAMPLES/clock.ag
+stdout 'No problems found'
+exec metagente check $EXAMPLES/read_file.ag
+stdout 'No problems found'
+exec metagente check $EXAMPLES/weather.ag
+stdout 'No problems found'
+exec metagente check $EXAMPLES/planner.ag
+stdout 'No problems found'
+exec metagente check $EXAMPLES/remote_weather.ag
+stdout 'No problems found'
+exec metagente check $EXAMPLES/cycle_a.ag
+stdout 'No problems found'
+exec metagente check $EXAMPLES/cycle_b.ag
+stdout 'No problems found'
+
+! exec metagente check $EXAMPLES/broken_syntax.ag
+stderr 'Problem'
+stderr 'Fix:'
+! stderr 'panic|goroutine|\.go:'
+
+! exec metagente check $EXAMPLES/broken_undeclared_tool.ag
+stderr 'Problem'
+stderr 'Fix:'
+! stderr 'panic|goroutine|\.go:'
+
+# broken_permission.ag is only broken when it runs: the file tool refuses to
+# read outside its folder. It passes `check`; the run test arrives with `run`.
+exec metagente check $EXAMPLES/broken_permission.ag
+stdout 'No problems found'

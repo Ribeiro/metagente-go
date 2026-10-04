@@ -1,0 +1,52 @@
+# A real tool server, from approval to answer: the program `mcpecho` is the test
+# binary itself, started by Metagente as a child process.
+
+env SECRET_CANARY=leak-me
+env VISIBLE_ON_PURPOSE=shared
+
+# nothing is started before the person approves it (T1)
+! exec metagente run agent.ag say text=hello
+stderr 'have not approved for this project'
+stderr 'starts the program: mcpecho'
+stderr 'metagente trust agent\.ag'
+
+# approving is explicit, and the list is shown before anything is saved
+exec metagente trust --yes agent.ag
+stdout '\[NEW\] starts the program: mcpecho'
+stdout 'Approved 1 item'
+
+# now it answers
+exec metagente run agent.ag say text=hello
+stdout '^echo: hello$'
+
+# the program sees only what the agent file named (E1)
+exec metagente run agent.ag peek name=VISIBLE_ON_PURPOSE
+stdout '^value: shared$'
+exec metagente run agent.ag peek name=SECRET_CANARY
+stdout '^value: $'
+! stdout 'leak-me'
+
+# approvals are listed, and can be taken back
+exec metagente trust --list
+stdout 'starts the program: mcpecho \(it receives the variables VISIBLE_ON_PURPOSE\)'
+exec metagente trust --revoke
+stdout 'Removed 1 approval'
+! exec metagente run agent.ag say text=hello
+stderr 'have not approved'
+
+# approvals are never kept inside the project (T2)
+env METAGENTE_CONFIG_DIR=$WORK/inside
+! exec metagente trust --yes agent.ag
+stderr 'inside the project'
+! exists inside
+
+-- agent.ag --
+agent Echo
+  goal "Send text back, or tell what the tool server can see"
+  tool server from mcp "mcpecho" env "VISIBLE_ON_PURPOSE"
+  accepts say text
+  accepts peek name
+  on say
+    reply server.echo text: text
+  on peek
+    reply server.env name: name

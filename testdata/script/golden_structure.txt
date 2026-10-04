@@ -1,0 +1,22 @@
+# `accepts` and `on` must match, and every agent needs a goal.
+# (from diagnostics_golden)
+! exec metagente check mismatch.ag
+stderr 'agent A accepts `one` but nothing says what to do with it'
+stderr '`on two` has no matching `accepts two` line'
+stderr 'Found 2 problems\.'
+
+! exec metagente check nogoal.ag
+stderr 'agent A has no goal'
+stderr 'Fix: add a line under `agent A`'
+
+-- mismatch.ag --
+agent A
+  goal "x"
+  accepts one
+  on two
+    reply "x"
+-- nogoal.ag --
+agent A
+  accepts go
+  on go
+    reply "x"

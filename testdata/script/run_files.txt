@@ -1,0 +1,67 @@
+# The file tool inside `run`. (from builtin_tools and permissions)
+
+# write, then read it back
+exec metagente run notes.ag save text=remember
+stdout '^remember$'
+exists out/a.txt
+grep '^remember$' out/a.txt
+
+# a missing file is explained, with the line
+! exec metagente run reader.ag read
+stderr 'Problem on line 6 of reader\.ag'
+stderr 'the file `notes\.txt` does not exist'
+stderr 'looked up from the project folder'
+
+# a scoped tool stays inside its folder
+exec metagente run scoped.ag read path=ok.txt
+stdout '^fine$'
+! exec metagente run scoped.ag read path=../secret.txt
+stderr 'outside the folder this agent may use \(data/\)'
+! exec metagente run scoped.ag write path=../evil.txt
+stderr 'outside the folder this agent may use \(data/\)'
+! exists evil.txt
+
+# readonly refuses to write, even though the file exists
+! exec metagente check readonly.ag
+stderr '`file\.write` is not available because `tool file` was declared readonly'
+
+-- notes.ag --
+agent Notes
+  goal "Keep notes"
+  tool file
+  accepts save text
+  on save
+    file.write path: "out/a.txt" text: text
+    back = file.read path: "out/a.txt"
+    reply back
+-- reader.ag --
+agent Reader
+  goal "Read a file and show what is in it"
+  tool file
+  accepts read
+  on read
+    text = file.read path: "notes.txt"
+    reply text
+-- scoped.ag --
+agent Scoped
+  goal "Read inside data only"
+  tool file "data/"
+  accepts read path
+  accepts write path
+  on read
+    reply file.read path: path
+  on write
+    file.write path: path text: "x"
+    reply "written"
+-- readonly.ag --
+agent R
+  goal "x"
+  tool file readonly
+  accepts go
+  on go
+    file.write path: "a" text: "b"
+    reply "x"
+-- data/ok.txt --
+fine
+-- secret.txt --
+top secret
