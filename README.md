@@ -366,7 +366,9 @@ go test -race ./internal/serve/ ./internal/cli/      # the packages that run thi
 go test -tags acceptance ./internal/acceptance/...   # the binary, through the scripts of testdata/script
 ```
 
-`make check` runs all of these and the formatting check below. There is no CI yet.
+`make check` runs all of these and the formatting check below. The same checks run on Linux, macOS
+and Windows in `.github/workflows/ci.yml` (written, not yet run). The Windows job may fail until what is
+known not to work there is fixed, and is allowed to, so that the others are not hidden by it.
 
 ### The record of the language
 
