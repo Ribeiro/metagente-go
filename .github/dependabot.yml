@@ -5,8 +5,13 @@ updates:
     directory: /
     schedule:
       interval: monthly
-  # The modules. The two SDKs are pinned on purpose: read what changed before accepting.
+  # The modules. The two SDKs of the protocols are not updated by themselves: the server and the client
+  # speak MCP and A2A through them, so a new version is read, tried against the interop tests and
+  # changed by hand. Everything else arrives as a pull request.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: monthly
+    ignore:
+      - dependency-name: "github.com/modelcontextprotocol/go-sdk"
+      - dependency-name: "github.com/a2aproject/a2a-go/v2"
