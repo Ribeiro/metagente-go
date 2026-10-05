@@ -93,8 +93,9 @@ Usage:
   metagente trust --list               show what is approved
   metagente trust --revoke             remove the approvals of this project
   metagente token                      make a token to keep and give to the server (METAGENTE_TOKEN)
-  metagente serve FILE.ag ... [--port N] [--agent NAME] [--public-card] [--quiet] [--config FILE]
-                                       serve agents over A2A on this computer; every request needs a token
+  metagente serve FILE.ag ... [--port N] [--agent NAME] [--public-card] [--mcp] [--quiet] [--config FILE]
+                                       serve agents over A2A on this computer; every request needs a token.
+                                       --mcp serves them as MCP tools too, at /mcp, behind the same token
   metagente serve ... --public --tls-cert FILE --tls-key FILE --host NAME
                                        open to the network: TLS of its own, the names it answers to,
                                        and the token in METAGENTE_TOKEN

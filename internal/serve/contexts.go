@@ -14,17 +14,16 @@ import (
 // caller can make up the id of someone else's conversation (requirement S7).
 // There is a limit of conversations, and one that is not used expires (S9).
 type Contexts[T any] struct {
-	max int
-	ttl time.Duration
-	now func() time.Time
+	room places // one place for each conversation held or being made
+	ttl  time.Duration
+	now  func() time.Time
 
 	// OnRemove, when set, is called with each conversation that is swept away, so
 	// what it holds can be let go. It is called without any lock held.
 	OnRemove func(id string, value T)
 
-	mu      sync.Mutex
-	items   map[string]*entry[T]
-	pending int // places taken by conversations that are still being made
+	mu    sync.Mutex
+	items map[string]*entry[T]
 }
 
 type entry[T any] struct {
@@ -43,7 +42,13 @@ var (
 // NewContexts makes a registry of at most limit conversations, each forgotten after
 // ttl without use.
 func NewContexts[T any](limit int, ttl time.Duration) *Contexts[T] {
-	return &Contexts[T]{max: limit, ttl: ttl, now: time.Now, items: map[string]*entry[T]{}}
+	return newContextsIn[T](newPlaces(limit), ttl)
+}
+
+// newContextsIn makes a registry whose conversations take their places from room,
+// which others may share.
+func newContextsIn[T any](room places, ttl time.Duration) *Contexts[T] {
+	return &Contexts[T]{room: room, ttl: ttl, now: time.Now, items: map[string]*entry[T]{}}
 }
 
 // newContextID is 128 random bits.
@@ -64,29 +69,22 @@ func (c *Contexts[T]) Open(value T) (string, error) {
 // the id the server issued. A place is kept for it while it is being made, so a
 // slow build cannot let the limit be passed, and if build fails nothing is kept.
 func (c *Contexts[T]) OpenWith(build func(id string) (T, error)) (string, error) {
-	c.mu.Lock()
-	var gone []removed[T]
-	if len(c.items)+c.pending >= c.max {
-		gone = c.sweepLocked()
-		if len(c.items)+c.pending >= c.max {
-			c.mu.Unlock()
-			c.release(gone)
+	if !c.room.take() {
+		c.Sweep()
+		if !c.room.take() {
 			return "", ErrTooManyContexts
 		}
 	}
-	c.pending++
 	id := newContextID()
-	c.mu.Unlock()
-	c.release(gone)
 
 	value, err := build(id)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.pending--
 	if err != nil {
+		c.room.give()
 		return "", err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.items[id] = &entry[T]{value: value, last: c.now(), busy: make(chan struct{}, 1)}
 	return id, nil
 }
@@ -148,6 +146,7 @@ func (c *Contexts[T]) sweepLocked() []removed[T] {
 	for id, e := range c.items {
 		if len(e.busy) == 0 && c.expired(e) {
 			delete(c.items, id)
+			c.room.give()
 			gone = append(gone, removed[T]{id, e.value})
 		}
 	}
@@ -193,6 +192,7 @@ func (c *Contexts[T]) CloseAll() {
 	for id, e := range c.items {
 		gone = append(gone, removed[T]{id, e.value})
 		delete(c.items, id)
+		c.room.give()
 	}
 	c.mu.Unlock()
 	c.release(gone)

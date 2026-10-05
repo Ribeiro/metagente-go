@@ -181,3 +181,13 @@ func TestServeStdioWritesNothingToTheOutputButTheProtocol(t *testing.T) {
 	}
 	assertContains(t, errOut.String(), "Serving 1 tool over MCP", "serve.allowed_origins is ignored")
 }
+
+func TestServeStdioRefusesMCPOverHTTPBesideIt(t *testing.T) {
+	dir := project(t)
+	writeFile(t, dir, "hello.ag", helloAgent)
+	var errOut bytes.Buffer
+	code := serveCommand(context.Background(), []string{"hello.ag", "--stdio", "--mcp"}, io.Discard, &errOut, serveEnv{getenv: func(string) string { return "" }, stdin: strings.NewReader("")})
+	if code != 2 || !strings.Contains(errOut.String(), "keep only one of the two") {
+		t.Errorf("exit %d\n%s", code, errOut.String())
+	}
+}
