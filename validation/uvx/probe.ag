@@ -1,0 +1,6 @@
+agent Probe
+  goal "Read a page through a tool server that uvx starts"
+  tool fetch from mcp "uvx mcp-server-fetch==2026.8.18"
+  accepts get url  # the text of a page
+  on get
+    reply fetch.fetch url: url

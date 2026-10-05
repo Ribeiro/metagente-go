@@ -568,7 +568,8 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 
 - the MCP server with a desktop assistant (Claude Desktop); only the Inspector was tried;
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
-- a tool server started with `uvx`;
+- a tool server started with `uvx` fetching a page: check 10 saw `uvx` start the server in the minimal
+  environment, our client call it, and `readonly` refuse its tool, but not a page arrive;
 - `--public`, with a certificate of its own;
 - MCP over HTTP behind a proxy, and with a desktop assistant;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;

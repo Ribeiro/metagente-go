@@ -18,6 +18,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 7 | `remote`, a task that takes time and a caller that gives up | the cancellable agent of the same SDK | 30 min |
 | 8 | `serve --mcp` (MCP over HTTP) | the client of the official SDK of MCP in TypeScript, and the command line of the MCP Inspector | 20 min |
 | 9 | `serve` (A2A server) | the client of the official A2A SDK in Python | 15 min |
+| 10 | tool servers (MCP client), E1, E2, L7 | a server in Python that `uvx` starts | 10 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -494,6 +495,45 @@ Lisbon` as a message; `TASK_STATE_FAILED` with `the barometer exploded`; `GetTas
 `TaskNotFoundError`; a skill that is not there raising `InvalidParamsError` with the skills that are; and,
 without the token, `401`. To end: `Ctrl-C` in A, `rm -rf ~/a2a-python ~/metagente-demo/python`.
 
+## 10. A tool server that `uvx` starts
+
+What the tests cannot show: that `uvx` finds what it needs in the minimal environment of E1 (it keeps its
+packages in the folder of the user, so it needs `HOME`), that a server written in Python with its SDK
+talks to our client, and what `readonly` does with a server of another team. The server is
+`mcp-server-fetch`, the one of the City Briefing sample, and the agent calls it directly: no model and
+no key.
+
+```text
+mkdir -p ~/metagente-demo/uvx && cd ~/metagente-demo/uvx
+cp PROJECT/validation/uvx/probe.ag .
+uvx mcp-server-fetch==2026.8.18 --help         # the first time, uvx fetches the package (about 10 s)
+export SECRET_TEST=must-not-appear
+~/bin/metagente check --strict probe.ag        # no problems: the version is pinned
+~/bin/metagente trust probe.ag                 # NEW: starts the program uvx mcp-server-fetch==2026.8.18; answer y
+~/bin/metagente run probe.ag get url=https://example.com
+pgrep -fl mcp-server-fetch || echo "no fetch server left"
+```
+
+**Expected:** `run` prints the page as text, with `Example Domain` in it, and nothing of the server is left
+running after it ends.
+
+Then two variants, in the same folder:
+
+```text
+sed 's|2026.8.18"|2026.8.18" readonly|' probe.ag > readonly.ag
+~/bin/metagente run readonly.ag get url=https://example.com
+sed 's|==2026.8.18||' probe.ag > unpinned.ag
+~/bin/metagente check unpinned.ag
+~/bin/metagente check --strict unpinned.ag
+```
+
+**Expected:** `readonly.ag` is refused with "`fetch.fetch` is not available because `tool fetch` was declared
+readonly, and the tool server does not mark it as read only": the fetch server marks none of its tools as
+read only, so `readonly` leaves nothing to call. (It is approved already: the approval is of the command,
+which did not change.) `unpinned.ag` gets a warning that the version is not pinned, and `--strict` refuses it.
+
+Keep what each command printed. To end: `rm -rf ~/metagente-demo/uvx`.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -507,6 +547,7 @@ without the token, `401`. To end: `Ctrl-C` in A, `rm -rf ~/a2a-python ~/metagent
 | 7 | 2026-10-05 | macOS, arm64; `agents/cancellable-agent` of `a2aproject/a2a-js`, port 41241 | 0.0.0-dev | passed, after F9 | `ask` waited 5.1 s, as the agent runs five steps of one second. It printed nothing, and that is right: the task ended `COMPLETED` with no artifact and no message in its status, so there was nothing to print. `hurry` (`within 2 seconds`) failed after 2 s, as it should, but the agent went on and ran the five steps to the end: its log shows no `Cancellation requested`, and `GetTask` says `TASK_STATE_COMPLETED`, not `CANCELED`. After the fix (F9): `hurry` made the agent write `Cancellation requested for task ...` and `Aborting task ... at step 3`, and `GetTask` of that task says `TASK_STATE_CANCELED`; `ask` took 5.2 s, now by following the task with `GetTask` until it ended, and printed nothing, as before. |
 | 8 | 2026-10-05 | Linux, amd64; Node v22.22.0; `@modelcontextprotocol/sdk` 1.32.1; `@modelcontextprotocol/inspector` 2.9.0 | 0.0.0-dev | passed | The client of the SDK in TypeScript got a session id from the server, listed `Hello__greet`, `Notes__recall` and `Notes__remember`, got `Hello, Maria!`, and `Notes` remembered `Ana` in its session and nothing in another one; a missing value came back as an error of the tool with `Problem` and `Fix`; `terminateSession` (a `DELETE`) worked; without the token it was refused (`unauthorized`). The fetch of Node.js went through the door (F6 holds). The Inspector listed the tools and called `Hello__greet` (`Hello, Maria!`); with `--strict` it warns that the schema of each value says nothing of its type (F3). By hand: an `Origin` gets `403`, a `GET` gets `405` with `Allow: POST, DELETE`. The access log has `agent=Hello rpc=mcp message=greet task=... result=ok`, and no token. Not tried: behind a proxy, and with a desktop assistant. |
 | 9 | 2026-10-05 | Linux, amd64; Python 3.11.15; `a2a-sdk` 1.2.2 | 0.0.0-dev (the `master` of 0.2.0 with the changes of the port of the tests) | passed | The card was read with the token (name, the skills `ask` and `broken`, `JSONRPC` `1.0`). `ask` with the text `Lisbon` and the skill in the metadata came back as a message, `sunny in Lisbon`; `broken` as a task in `TASK_STATE_FAILED` with `the barometer exploded`. The SDK turned our errors into its own types: `GetTask` raised `TaskNotFoundError` and a skill that is not there `InvalidParamsError: this agent does not handle `dance`; it handles: ask, broken`. Without the token the card was refused with `401`. The access log had one line for each request, with `result=ok`, `failed` and `error`. |
+| 10 | 2026-10-05 | Linux, amd64; uv 0.8.17; `mcp-server-fetch` 2026.8.18 | 0.0.0-dev (the `master` of 0.3.0) | passed in part | `check --strict` passed with the version pinned, both as `==2026.8.18` and as `@2026.8.18`; without it there was the warning, and `--strict` refused it. `trust` listed `starts the program: uvx mcp-server-fetch==2026.8.18` as NEW. `uvx` started the server in the minimal environment, from its cache, our client listed its tools and called `fetch`, and the failure of the server came back as a problem that can be read. With `readonly` the call was refused, because the server marks none of its tools as read only. No process of the server was left after any run. **Not seen:** a page arriving, because the network of the environment where it ran does not reach those sites (its proxy answers 403); the fetch of a page is to be seen on a computer that reaches them. |
 
 ## What the checks found
 
