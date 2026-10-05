@@ -133,6 +133,8 @@ func trailFrom(ctx context.Context) []string {
 type skill struct {
 	ID          string
 	Description string
+	// TextOnly is true when the card says that the skill takes text and nothing that is JSON.
+	TextOnly bool
 }
 
 type card struct {
@@ -213,14 +215,16 @@ type cardInterface struct {
 }
 
 type cardSkill struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	InputModes  []string `json:"inputModes"`
 }
 
 type cardDocument struct {
-	Interfaces []cardInterface `json:"supportedInterfaces"`
-	Skills     []cardSkill     `json:"skills"`
+	Interfaces        []cardInterface `json:"supportedInterfaces"`
+	Skills            []cardSkill     `json:"skills"`
+	DefaultInputModes []string        `json:"defaultInputModes"`
 }
 
 // fetchCard asks for the card at the approved address and reads it.
@@ -267,7 +271,7 @@ func (a *agent) cardFrom(doc *cardDocument, base *url.URL) (*card, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &card{endpoint: endpoint.String(), skills: skillsOf(doc.Skills)}, nil
+	return &card{endpoint: endpoint.String(), skills: skillsOf(doc.Skills, doc.DefaultInputModes)}, nil
 }
 
 // jsonRPCInterface finds the way of talking that Metagente uses, in a version it
@@ -303,7 +307,7 @@ func (a *agent) endpointOf(in cardInterface, base *url.URL) (*url.URL, error) {
 }
 
 // skillsOf lists what the agent handles, by name.
-func skillsOf(listed []cardSkill) []skill {
+func skillsOf(listed []cardSkill, defaultModes []string) []skill {
 	skills := make([]skill, 0, len(listed))
 	for _, s := range listed {
 		if s.ID == "" {
@@ -313,7 +317,11 @@ func skillsOf(listed []cardSkill) []skill {
 		if description == "" {
 			description = s.Name
 		}
-		skills = append(skills, skill{ID: s.ID, Description: description})
+		modes := s.InputModes
+		if len(modes) == 0 {
+			modes = defaultModes
+		}
+		skills = append(skills, skill{ID: s.ID, Description: description, TextOnly: takesOnlyText(modes)})
 	}
 	sort.Slice(skills, func(i, j int) bool { return skills[i].ID < skills[j].ID })
 	return skills
@@ -499,27 +507,25 @@ func (t *tool) Call(ctx context.Context, action string, args tools.Args) (value.
 		return value.Nothing, err
 	}
 	ids := make([]string, len(c.skills))
-	found := false
-	for i, s := range c.skills {
-		ids[i] = s.ID
-		found = found || s.ID == action
+	var chosen *skill
+	for i := range c.skills {
+		ids[i] = c.skills[i].ID
+		if c.skills[i].ID == action {
+			chosen = &c.skills[i]
+		}
 	}
-	if !found {
+	if chosen == nil {
 		return value.Nothing, tools.UnknownAction(t.name, action, ids)
 	}
-
-	arguments := make(map[string]any, len(args))
-	for key, v := range args {
-		arguments[key] = v.ToJSON()
+	part, err := t.messagePart(chosen, action, args)
+	if err != nil {
+		return value.Nothing, err
 	}
 	params := map[string]any{
 		"message": map[string]any{
 			"messageId": newID("msg"),
 			"role":      "ROLE_USER",
-			"parts": []any{map[string]any{
-				"data":      map[string]any{"skill": action, "arguments": arguments},
-				"mediaType": "application/json",
-			}},
+			"parts":     []any{part},
 			"metadata": map[string]any{
 				"skill":     action,
 				"metagente": map[string]any{"chain": trailFrom(ctx)},
@@ -549,6 +555,64 @@ func (t *tool) Call(ctx context.Context, action string, args tools.Args) (value.
 		return value.Nothing, diag.Newf("agent %s answered with neither a task nor a message", a.spec.Name)
 	}
 	return t.finish(ctx, c.endpoint, action, sent.Task)
+}
+
+// messagePart is what the call is written as. An agent that says it takes only text is sent text:
+// the one value of the call, or a line `name: value` for each of several. Any other agent is sent
+// the block of data that names the skill and its values, which is what the agents of Metagente read.
+func (t *tool) messagePart(s *skill, action string, args tools.Args) (map[string]any, error) {
+	if !s.TextOnly {
+		arguments := make(map[string]any, len(args))
+		for key, v := range args {
+			arguments[key] = v.ToJSON()
+		}
+		return map[string]any{
+			"data":      map[string]any{"skill": action, "arguments": arguments},
+			"mediaType": "application/json",
+		}, nil
+	}
+	if len(args) == 0 {
+		return nil, diag.Newf("agent %s takes only text, and the call to `%s` has no value to send as text", t.agent.spec.Name, action).
+			Fixf("give it one, for example: %s.%s text: \"hello\"", t.name, action)
+	}
+	return map[string]any{"text": callText(args), "mediaType": "text/plain"}, nil
+}
+
+// callText writes the values of a call as text: the value itself when there is one, and a line
+// `name: value` for each of several, in the order of their names.
+func callText(args tools.Args) string {
+	if len(args) == 1 {
+		for _, v := range args {
+			return v.Display()
+		}
+	}
+	names := make([]string, 0, len(args))
+	for name := range args {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	lines := make([]string, len(names))
+	for i, name := range names {
+		lines[i] = name + ": " + args[name].Display()
+	}
+	return strings.Join(lines, "\n")
+}
+
+// takesOnlyText says whether a list of input modes lets in text and nothing that is JSON. A card
+// writes a mode as a type of media (`text/plain`, `application/json`) or, as the sample agent of
+// the SDK in JavaScript does, as a word (`text`). A card that says nothing is not taken for text.
+func takesOnlyText(modes []string) bool {
+	text, data := false, false
+	for _, mode := range modes {
+		m := strings.ToLower(strings.TrimSpace(mode))
+		if m == "text" || strings.HasPrefix(m, "text/") {
+			text = true
+		}
+		if m == "json" || m == "application/json" || strings.HasSuffix(m, "+json") {
+			data = true
+		}
+	}
+	return text && !data
 }
 
 // finish follows a task until it ends, looking at it again every PollEvery.

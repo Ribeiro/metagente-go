@@ -594,3 +594,109 @@ func TestABusyAgentIsToldAsSuchAndTheCallCanBeTriedAgain(t *testing.T) {
 	_, err := call(t, f.tool(t, nil), "ask")
 	mustContain(t, rendered(t, err), "agent Bob is busy and cannot take the call now", "try again in a moment")
 }
+
+// cardWithModes is a card whose agent says what it takes: the modes of the card, and
+// optionally the modes of the skill (a list written in JSON, such as ["text"]).
+func cardWithModes(defaults, skillModes string) func(base string) (int, string) {
+	return func(base string) (int, string) {
+		extra := ""
+		if skillModes != "" {
+			extra = `,"inputModes":` + skillModes
+		}
+		return 200, fmt.Sprintf(`{"name":"Bob","supportedInterfaces":[{"url":%q,"protocolBinding":"JSONRPC","protocolVersion":"1.0"}],
+ "defaultInputModes":%s,
+ "skills":[{"id":"ask","name":"Ask","description":"answer a question"%s}]}`, base, defaults, extra)
+	}
+}
+
+// sentPart is the first part of the first message that the fake agent was sent.
+func sentPart(t *testing.T, f *fakeAgent) map[string]any {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.requests) == 0 {
+		t.Fatal("nothing was sent")
+	}
+	params := f.requests[0]["params"].(map[string]any)
+	return params["message"].(map[string]any)["parts"].([]any)[0].(map[string]any)
+}
+
+func TestAnAgentThatTakesOnlyTextIsSentTheValueAsText(t *testing.T) {
+	f := newFakeAgent(t)
+	f.card = cardWithModes(`["text"]`, "")
+	if _, err := call(t, f.tool(t, nil), "ask", "text", "hello"); err != nil {
+		t.Fatal(rendered(t, err))
+	}
+	part := sentPart(t, f)
+	if part["text"] != "hello" || part["mediaType"] != "text/plain" || part["data"] != nil {
+		t.Errorf("part = %v", part)
+	}
+}
+
+func TestSeveralValuesGoAsOneLineEachInTheOrderOfTheirNames(t *testing.T) {
+	f := newFakeAgent(t)
+	f.card = cardWithModes(`["text/plain"]`, "")
+	args := tools.Args{"days": value.Number(3), "city": value.Text("Lisbon")}
+	if _, err := f.tool(t, nil).Call(context.Background(), "ask", args); err != nil {
+		t.Fatal(rendered(t, err))
+	}
+	if part := sentPart(t, f); part["text"] != "city: Lisbon\ndays: 3" {
+		t.Errorf("part = %v", part)
+	}
+}
+
+func TestAnAgentThatTakesOnlyTextIsNotSentAnEmptyCall(t *testing.T) {
+	f := newFakeAgent(t)
+	f.card = cardWithModes(`["text"]`, "")
+	_, err := f.tool(t, nil).Call(context.Background(), "ask", tools.Args{})
+	mustContain(t, rendered(t, err), "agent Bob takes only text", "no value to send as text", "Fix:")
+	for _, method := range f.methods() {
+		if method == "SendMessage" {
+			t.Error("a call with nothing to say was sent")
+		}
+	}
+}
+
+func TestAnAgentThatTakesJSONIsSentTheBlockOfDataEvenIfItAlsoTakesText(t *testing.T) {
+	f := newFakeAgent(t)
+	f.card = cardWithModes(`["application/json","text/plain"]`, "")
+	if _, err := call(t, f.tool(t, nil), "ask", "city", "Lisbon"); err != nil {
+		t.Fatal(rendered(t, err))
+	}
+	part := sentPart(t, f)
+	data, _ := part["data"].(map[string]any)
+	if data["skill"] != "ask" || part["mediaType"] != "application/json" || part["text"] != nil {
+		t.Errorf("part = %v", part)
+	}
+}
+
+func TestWhatTheSkillTakesIsWhatCountsOverWhatTheCardTakes(t *testing.T) {
+	f := newFakeAgent(t)
+	f.card = cardWithModes(`["application/json"]`, `["text/plain"]`)
+	if _, err := call(t, f.tool(t, nil), "ask", "text", "hi"); err != nil {
+		t.Fatal(rendered(t, err))
+	}
+	if part := sentPart(t, f); part["text"] != "hi" {
+		t.Errorf("part = %v", part)
+	}
+}
+
+func TestWhichModesTakeOnlyText(t *testing.T) {
+	for _, tt := range []struct {
+		modes []string
+		want  bool
+	}{
+		{nil, false},
+		{[]string{"text"}, true},
+		{[]string{"text/plain"}, true},
+		{[]string{"TEXT/Plain"}, true},
+		{[]string{"application/json"}, false},
+		{[]string{"text", "application/json"}, false},
+		{[]string{"application/vnd.example+json"}, false},
+		{[]string{"image/png"}, false},
+	} {
+		if got := takesOnlyText(tt.modes); got != tt.want {
+			t.Errorf("takesOnlyText(%q) = %v, want %v", tt.modes, got, tt.want)
+		}
+	}
+}
