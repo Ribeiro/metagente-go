@@ -121,6 +121,10 @@ func TestServeAnswersWithTheTokenAndNeverWithoutIt(t *testing.T) {
 	assertContains(t, stderr, "Serving 1 agent", "/agents/Hello", "Authorization: Bearer TOKEN",
 		"method=GET path=/agents/Hello/.well-known/agent-card.json status=200", "method=POST path=/agents/Hello status=200",
 		"status=401", "agent=Hello rpc=SendMessage message=greet task=task-", "result=ok")
+	// A server on this computer with nothing in front of it is where the banner says it is.
+	if strings.Contains(stderr, "Listening on") {
+		t.Errorf("the banner says where it listens, and it is the address that it already shows:\n%s", stderr)
+	}
 	if strings.Contains(stderr, testToken) || strings.Contains(stderr, "not-the-token") {
 		t.Errorf("a token reached the output:\n%s", stderr)
 	}
@@ -302,5 +306,10 @@ func TestServePutsTheNamesOfAProxyInTheCardAndNothingElseGetsThrough(t *testing.
 		t.Errorf("the right token was refused after wrong ones: %d", code)
 	}
 	_, stderr := live.stop(t)
-	assertContains(t, stderr, "https://agents.example.com/agents/Hello")
+	assertContains(t, stderr, "https://agents.example.com/agents/Hello",
+		// where the proxy has to send the requests, and with which Host
+		"Listening on "+live.address+", in plain HTTP, for the Host: agents.example.com",
+		// the log tells the request that came through the proxy from the one that went around it
+		"host=agents.example.com method=GET path=/agents/Hello/.well-known/agent-card.json status=200",
+		"host="+live.address+" method=GET path=/agents/Hello/.well-known/agent-card.json status=421")
 }

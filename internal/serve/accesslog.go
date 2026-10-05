@@ -9,11 +9,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"metagente/internal/clip"
 )
 
 // AccessLog writes one structured line (log/slog, key=value) for each request that
-// comes in (requirement P5): when, from where, what was asked, how it was answered
-// and how long it took; and, for a request that ran an agent, which agent, which
+// comes in (requirement P5): when, from where, to which host it was addressed, what was
+// asked, how it was answered and how long it took; and, for a request that ran an agent, which agent, which
 // message, which task and how it ended.
 //
 // It writes nothing that could be a secret. Not the headers, so not the token; not
@@ -24,7 +26,10 @@ func AccessLog(next http.Handler, out io.Writer) http.Handler {
 	return accessLog(next, slog.New(slog.NewTextHandler(out, nil)), time.Now)
 }
 
-const maxLoggedPath = 200
+const (
+	maxLoggedPath = 200
+	maxLoggedHost = 100
+)
 
 func accessLog(next http.Handler, logger *slog.Logger, now func() time.Time) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +42,7 @@ func accessLog(next http.Handler, logger *slog.Logger, now func() time.Time) htt
 			// that catches it.
 			attrs := []slog.Attr{
 				slog.String("remote", clientKey(r.RemoteAddr)),
+				slog.String("host", loggedHost(r)),
 				slog.String("method", r.Method),
 				slog.String("path", loggedPath(r)),
 				slog.Int("status", rec.status),
@@ -56,6 +62,13 @@ func loggedPath(r *http.Request) string {
 		path = path[:maxLoggedPath] + "..."
 	}
 	return strings.ToValidUTF8(path, "?")
+}
+
+// loggedHost is the header Host of the request: it tells a request that came through the proxy
+// from one that went around it, since behind a proxy all of them come from the same place. It
+// comes from outside, so it is cleaned of what is not text and cut like the path is.
+func loggedHost(r *http.Request) string {
+	return clip.Collapse(r.Host, maxLoggedHost)
 }
 
 // ---------- what the server tells the log about a request ----------

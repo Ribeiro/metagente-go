@@ -281,7 +281,7 @@ func runServer(ctx context.Context, s serving, stderr io.Writer, env serveEnv) i
 	if !s.quiet {
 		handler = serve.AccessLog(srv, stderr)
 	}
-	announce(stderr, s, srv, s.plan.BaseURL(port))
+	announce(stderr, s, srv, s.plan.BaseURL(port), ln.Addr().String(), port)
 	if env.ready != nil {
 		env.ready(ln.Addr().String(), s.token)
 	}
@@ -315,11 +315,16 @@ func secondsOf(n int) time.Duration { return time.Duration(n) * time.Second }
 // announce tells the person what is being served and where, and what a client has
 // to do to be answered. The token is written only when this run made it: then the
 // person is at the terminal on this computer, and has no other way to learn it.
-func announce(stderr io.Writer, s serving, srv *serve.Server, base string) {
+// base is how clients reach the server and listen is where it listens, which are not the same
+// when a proxy stands in front of it.
+func announce(stderr io.Writer, s serving, srv *serve.Server, base, listen string, port int) {
 	names := srv.Names()
 	fmt.Fprintf(stderr, "Serving %d %s on %s. Press Ctrl-C to stop.\n", len(names), plural(len(names), "agent"), base)
 	for _, name := range names {
 		fmt.Fprintf(stderr, "  %-12s %s/agents/%s\n", name, base, name)
+	}
+	if line := whereItListens(s.plan, base, listen, port); line != "" {
+		fmt.Fprintln(stderr, line)
 	}
 	fmt.Fprintln(stderr, "Every request needs the header  Authorization: Bearer TOKEN")
 	if s.generated {
@@ -328,6 +333,20 @@ func announce(stderr io.Writer, s serving, srv *serve.Server, base string) {
 	cfg := s.rt.Config
 	fmt.Fprintf(stderr, "Up to %d conversations at once, each may keep up to %d KiB of state.\n",
 		cfg.Serve.MaxRetainedTasks, cfg.Limits.MaxStateBytes/1024)
+}
+
+// whereItListens says where the server listens, and for which Host, when that is not what the
+// address of the banner says. Behind a proxy the banner shows the address of the outside, and the
+// person who writes the proxy needs the one of the inside.
+func whereItListens(plan *serve.Plan, base, listen string, port int) string {
+	scheme, protocol := "http", "plain HTTP"
+	if plan.TLS {
+		scheme, protocol = "https", "HTTPS"
+	}
+	if base == scheme+"://"+listen {
+		return ""
+	}
+	return fmt.Sprintf("Listening on %s, in %s, for the Host: %s", listen, protocol, strings.Join(plan.HostsFor(port), ", "))
 }
 
 // ---------- MCP over standard input and output ----------

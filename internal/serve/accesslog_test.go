@@ -71,7 +71,7 @@ func TestEachRequestIsOneStructuredEntryWithWhatWasAskedAndHowItWasAnswered(t *t
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = io.WriteString(w, "short")
 	}), func() *http.Request { return request("POST", "/agents/Bob") })
-	want := map[string]any{"msg": "request", "level": "INFO", "remote": "192.0.2.10", "method": "POST",
+	want := map[string]any{"msg": "request", "level": "INFO", "remote": "192.0.2.10", "host": "example.com", "method": "POST",
 		"path": "/agents/Bob", "status": float64(418), "bytes": float64(5), "duration_ms": float64(0)}
 	for key, value := range want {
 		if entry[key] != value {
@@ -260,5 +260,25 @@ func TestTheOutcomeOfAMessageIsNamed(t *testing.T) {
 		if got := outcomeOf(tt.result, tt.e); got != tt.want {
 			t.Errorf("%s: %s, want %s", name, got, tt.want)
 		}
+	}
+}
+
+// req: P5
+func TestAHostThatTriesToForgeAnEntryOnlyWritesAShortStrangeHost(t *testing.T) {
+	build := func() *http.Request {
+		r := request("GET", "/a")
+		r.Host = "evil.example\nlevel=INFO msg=request remote=10.0.0.1 " + strings.Repeat("x", 500)
+		return r
+	}
+	entry := one(t, http.NotFoundHandler(), build)
+	host, _ := entry["host"].(string)
+	if strings.ContainsAny(host, "\r\n") || len(host) > maxLoggedHost+len("...") || !strings.HasPrefix(host, "evil.example level=INFO") {
+		t.Errorf("host = %q", host)
+	}
+	// ...and in the form of text, the entry is still one line.
+	var out bytes.Buffer
+	AccessLog(http.NotFoundHandler(), &out).ServeHTTP(httptest.NewRecorder(), build())
+	if strings.Count(out.String(), "\n") != 1 {
+		t.Errorf("the host made more than one line:\n%q", out.String())
 	}
 }
