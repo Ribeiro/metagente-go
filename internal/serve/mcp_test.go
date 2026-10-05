@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,27 +211,26 @@ func TestACallThatTakesTooLongSaysSo(t *testing.T) {
 
 // req: S6
 func TestMCPCallsAreRefusedWhenTheServerIsBusy(t *testing.T) {
-	session := connect(t, newMCP(t, func(c *MCPConfig) { c.MaxInFlight = 1 }))
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
+	bob := newFake("Bob", defaultSkills...)
+	bob.hold = make(chan struct{})
+	session := connect(t, newMCP(t, func(c *MCPConfig) { c.MaxInFlight = 1 }, bob))
+	release := sync.OnceFunc(func() { close(bob.hold) })
+	t.Cleanup(release)
+	held := make(chan *sdk.CallToolResult, 1)
 	go func() {
-		defer close(done)
-		_, _ = session.CallTool(ctx, &sdk.CallToolParams{Name: "Bob__slow"})
+		r, _ := session.CallTool(context.Background(), &sdk.CallToolParams{Name: "Bob__hold"})
+		held <- r
 	}()
-	deadline := time.Now().Add(3 * time.Second)
-	var busy *sdk.CallToolResult
-	for time.Now().Before(deadline) {
-		r := mcpCall(t, session, "Bob__echo", map[string]any{"text": "x"})
-		if r.IsError {
-			busy = r
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	cancel()
-	<-done
-	if busy == nil || !strings.Contains(textOfResult(t, busy), "busy") {
+	// The second call must come after the first has taken the only place, or it is the first
+	// that is turned away.
+	eventually(t, "the first call takes the only place", func() bool { return bob.entered.Load() == 1 })
+	busy := mcpCall(t, session, "Bob__echo", map[string]any{"text": "x"})
+	release()
+	if !busy.IsError || !strings.Contains(textOfResult(t, busy), "busy") {
 		t.Errorf("the server never said it was busy: %+v", busy)
+	}
+	if r := <-held; r == nil || r.IsError || textOfResult(t, r) != "released" {
+		t.Errorf("the call that held the place did not finish: %+v", r)
 	}
 }
 
