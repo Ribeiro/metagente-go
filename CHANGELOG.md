@@ -15,11 +15,31 @@ minor versions.
   answer to the POST, as JSON; a stream of the server (`GET`) is refused with `405`. There are no more
   sessions at once than `max_retained_tasks` (one more is a `503`).
 - The access log says which agent, message and task an MCP call ran, and how it ended (`rpc=mcp`).
+- `metagente serve --token-file FILE`: the token from a file instead of `METAGENTE_TOKEN`. On Linux and macOS
+  a file that others may change is refused.
+- [The reference of the language](docs/LANGUAGE.md), for people who write agents. It is in the archives too.
+- A tag like `v0.2.0` publishes the release on GitHub by itself, with the archives, `SHA256SUMS` and the notes
+  of that version from this file.
 
 ### Changed
 
 - A2A and MCP share `max_running_tasks` and `max_retained_tasks`: they are limits of the server, not of
   each protocol.
+- `metagente.toml` is read by a TOML library: anything TOML allows is read (lists over several lines, keys in
+  quotes, every kind of text). The messages about a file that is not TOML are the ones of the library, with
+  the line, except in `[credentials]`, where neither the line nor those words are shown.
+- `max_state_bytes` is 256 KiB by default, not 1 MiB: with 1000 conversations, about 250 MiB at most.
+- **A token needs at least 12 different characters.** A token that repeats a few (`kkkk...`) was accepted
+  and is now refused, with a message that says how to make a good one (`metagente token`).
+
+### Security
+
+From [a review of the security of `serve`](docs/SECURITY-REVIEW.md):
+
+- A place that is stopped for sending wrong tokens stays stopped for its minute. Before, it could get out by
+  failing from a thousand other addresses.
+- The server closes a connection that it turned away (401, 403, 421, 429), so a stranger cannot keep its
+  connections open and idle.
 
 ## [0.1.0] - 2026-10-05
 

@@ -69,7 +69,7 @@ dist:
 		if [ "$$os" = windows ]; then ext=".exe"; fi; \
 		mkdir -p dist/$$name; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$$name/metagente$$ext ./cmd/metagente || exit 1; \
-		cp LICENSE NOTICE README.md dist/$$name/; \
+		cp LICENSE NOTICE README.md docs/LANGUAGE.md dist/$$name/; \
 		if [ "$$os" = windows ]; then (cd dist && zip -qr $$name.zip $$name); else tar -C dist -czf dist/$$name.tar.gz $$name; fi; \
 		rm -rf dist/$$name; \
 		echo "built $$name"; \

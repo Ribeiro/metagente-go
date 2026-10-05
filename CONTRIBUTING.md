@@ -32,7 +32,9 @@ Do not open a public issue. Use "Report a vulnerability", in the Security tab of
 
 ## A release
 
-1. Write what changed in `CHANGELOG.md`, under the new version.
-2. Tag it: `git tag v0.2.0 && git push --tags`.
-3. `make dist` builds an archive for each system in `dist/`, with the license and `SHA256SUMS`. The version
-   inside the binaries is the one of the tag.
+1. Write what changed in `CHANGELOG.md`, under `## [0.2.0] - DATE`, and add its link at the end.
+   `scripts/release-notes.sh 0.2.0` prints what the release will say.
+2. Tag it on `master`: `git tag v0.2.0 && git push origin v0.2.0`.
+3. The workflow `Release` runs the tests, builds an archive for each system with `make dist` (the version
+   inside the binaries is the one of the tag), and publishes the release with the archives, `SHA256SUMS` and
+   the notes. A version without its section in `CHANGELOG.md` is not published.

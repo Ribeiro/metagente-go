@@ -1,0 +1,65 @@
+name: Release
+
+# A tag like v0.2.0 publishes a release on GitHub: the tests run first, then `make dist` builds an archive
+# for each system with the version of the tag in the binaries, and the release is made with the archives,
+# SHA256SUMS and what CHANGELOG.md says about that version. How to make a release is in CONTRIBUTING.md.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+# Nothing here may write, except the job that publishes, and only to the releases.
+permissions:
+  contents: read
+
+# Two pushes of the same tag never publish at the same time.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Tests before the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: The version has its section in CHANGELOG.md
+        run: scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > /dev/null
+      - name: Format, vet, tests, race, acceptance
+        run: make check
+
+  publish:
+    name: Build and publish
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Archives for every system
+        run: make dist VERSION="${GITHUB_REF_NAME#v}"
+      - name: The binary of this system says the version of the tag
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          tar -xzf "dist/metagente-$version-linux-amd64.tar.gz" -C "$RUNNER_TEMP"
+          said="$("$RUNNER_TEMP/metagente-$version-linux-amd64/metagente" --version)"
+          echo "$said"
+          case "$said" in *"$version"*) ;; *) echo "the binary does not say $version"; exit 1 ;; esac
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          scripts/release-notes.sh "$version" > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Metagente $version" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag \
+            dist/*.tar.gz dist/*.zip dist/SHA256SUMS
