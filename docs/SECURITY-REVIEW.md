@@ -10,6 +10,10 @@ the rest of the code for the first time in that session. It looked for what an a
 test for each problem before changing anything, and kept the fixes small. It does not replace a review by
 a person from outside, which is still recommended before `--public`.
 
+The changes that 0.3.0 made to `serve` (the values of a message checked before an agent runs, the
+`ErrorInfo` of the errors, `A2A-Version`, the 404 of any method on a path that is not of the server) came
+from the contract tests of the original project, after this review, and were not part of it.
+
 ## How it was done
 
 Each part was read with one question: what can someone do who reaches the port **without** the token, and
