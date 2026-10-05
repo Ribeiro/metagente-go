@@ -2,240 +2,195 @@ package config
 
 import (
 	"errors"
-	"fmt"
-	"strconv"
+	"sort"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
+	"github.com/pelletier/go-toml/v2/unstable"
 
 	"metagente/internal/diag"
 )
 
-// entry is one `key = value` line with the section it belongs to.
+// entry is one setting with the section it belongs to and the line it is on.
 type entry struct {
 	section string
 	key     string
-	value   any // string, int64, bool or []string
+	value   any // what the TOML library read: string, int64, bool, float64, []any, a table...
 	line    int
 }
 
-// parseTOML reads the small part of TOML that metagente.toml uses: `[section]`
-// headers, `key = value` lines, comments, texts in double or single quotes,
-// whole numbers, true and false, and lists of texts that fit on one line. It
-// refuses everything else with a plain message, instead of guessing.
+// parseTOML reads metagente.toml with a TOML library, so that anything TOML allows is
+// read as TOML reads it (lists over several lines, inline tables, every kind of
+// text). What comes out is a list of settings with their lines, in the order of the
+// file; what each setting must be is checked by its setter, not here.
+//
+// A line of the credentials section may hold a token, so a problem there is told
+// without the words of the library and with the line hidden.
 func parseTOML(file, text string) ([]entry, error) {
-	r := &tomlReader{file: file, text: text, seen: map[string]bool{}}
-	for index, raw := range strings.Split(text, "\n") {
-		if err := r.line(index+1, strings.TrimSpace(strings.TrimRight(raw, "\r"))); err != nil {
-			return nil, err
-		}
+	var doc map[string]any
+	if err := toml.Unmarshal([]byte(text), &doc); err != nil {
+		return nil, syntaxProblem(file, text, err)
 	}
-	return r.entries, nil
-}
-
-// tomlReader holds what is known while the lines are read: the section that is open, the
-// keys already seen, and the entries.
-type tomlReader struct {
-	file    string
-	text    string
-	section string
-	seen    map[string]bool
-	entries []entry
-}
-
-// fail is the problem of a line. A line of the credentials section may hold a token, so it is
-// shown masked.
-func (r *tomlReader) fail(number int, message string) error {
-	source := r.text
-	if r.section == "credentials" {
-		source = maskLine(r.text, number)
-	}
-	return diag.New(message).At(r.file, number, 1).WithSource(source).
-		Fix("check the quotes and the [section] names in metagente.toml")
-}
-
-func (r *tomlReader) line(number int, line string) error {
-	switch {
-	case line == "" || strings.HasPrefix(line, "#"):
-		return nil
-	case strings.HasPrefix(line, "[["):
-		return r.fail(number, "this build does not read lists of tables written as `[[...]]`")
-	case strings.HasPrefix(line, "["):
-		return r.header(number, line)
-	}
-	return r.assignment(number, line)
-}
-
-// header reads `[section]` and opens that section.
-func (r *tomlReader) header(number int, line string) error {
-	end := strings.Index(line, "]")
-	if end < 0 {
-		return r.fail(number, "this section name is not closed with `]`")
-	}
-	name := strings.TrimSpace(line[1:end])
-	if !validKey(name) {
-		return r.fail(number, fmt.Sprintf("`%s` is not a section name I can read", name))
-	}
-	if rest := strings.TrimSpace(line[end+1:]); rest != "" && !strings.HasPrefix(rest, "#") {
-		return r.fail(number, "there is something after the section name")
-	}
-	r.section = name
-	return nil
-}
-
-// assignment reads `key = value` and keeps it as an entry of the open section.
-func (r *tomlReader) assignment(number int, line string) error {
-	eq := strings.Index(line, "=")
-	if eq < 0 {
-		return r.fail(number, "I expected `key = value` on this line")
-	}
-	key := strings.TrimSpace(line[:eq])
-	if !validKey(key) {
-		return r.fail(number, r.unreadableKey(key))
-	}
-	value, rest, err := parseValue(strings.TrimSpace(line[eq+1:]))
-	if err != nil {
-		return r.fail(number, r.unreadableValue(err))
-	}
-	if rest = strings.TrimSpace(rest); rest != "" && !strings.HasPrefix(rest, "#") {
-		return r.fail(number, "there is something after the value")
-	}
-	id := r.section + "\x00" + key
-	if r.seen[id] {
-		return r.fail(number, fmt.Sprintf("`%s` appears twice", key))
-	}
-	r.seen[id] = true
-	r.entries = append(r.entries, entry{section: r.section, key: key, value: value, line: number})
-	return nil
-}
-
-// unreadableKey says that a key cannot be read. In the credentials section it does not repeat the
-// key, which may be a token.
-func (r *tomlReader) unreadableKey(key string) string {
-	if r.section == "credentials" {
-		return "this is not a name I can read"
-	}
-	return fmt.Sprintf("`%s` is not a setting name I can read", key)
-}
-
-// unreadableValue says that a value cannot be read. In the credentials section the message of the
-// reader is not used, because it repeats the word that it could not read.
-func (r *tomlReader) unreadableValue(err error) string {
-	if r.section == "credentials" {
-		return "the value must be the NAME of an environment variable, in quotes, like \"BOB_TOKEN\", not the token itself"
-	}
-	return err.Error()
-}
-
-func validKey(name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, r := range name {
-		switch {
-		case r == '_' || r == '-' || r == '.':
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// parseValue reads one value from the start of s and returns what is left.
-func parseValue(s string) (value any, rest string, err error) {
-	if s == "" {
-		return nil, "", errors.New("a value is missing after `=`")
-	}
-	switch s[0] {
-	case '"':
-		return parseBasicString(s)
-	case '\'':
-		end := strings.IndexByte(s[1:], '\'')
-		if end < 0 {
-			return nil, "", errors.New("this text starts with a quote but never ends")
-		}
-		return s[1 : 1+end], s[end+2:], nil
-	case '[':
-		return parseList(s)
-	}
-	end := strings.IndexAny(s, " \t#,]")
-	if end < 0 {
-		end = len(s)
-	}
-	word, rest := s[:end], s[end:]
-	switch word {
-	case "true":
-		return true, rest, nil
-	case "false":
-		return false, rest, nil
-	}
-	n, parseErr := strconv.ParseInt(strings.ReplaceAll(word, "_", ""), 10, 64)
-	if parseErr != nil {
-		return nil, "", fmt.Errorf("I can read texts in quotes, whole numbers, true, false and lists of texts on one line, but not `%s`", word)
-	}
-	return n, rest, nil
-}
-
-func parseBasicString(s string) (any, string, error) {
-	var b strings.Builder
-	for i := 1; i < len(s); i++ {
-		switch c := s[i]; c {
-		case '"':
-			return b.String(), s[i+1:], nil
-		case '\\':
-			i++
-			if i >= len(s) {
-				return nil, "", errors.New("this text ends with a backslash")
+	lines := keyLines([]byte(text))
+	var entries []entry
+	for name, v := range doc {
+		switch v := v.(type) {
+		case map[string]any:
+			for key, value := range v {
+				entries = append(entries, entry{section: name, key: key, value: plain(value), line: lines[name+"\x00"+key]})
 			}
-			switch s[i] {
-			case 'n':
-				b.WriteByte('\n')
-			case 't':
-				b.WriteByte('\t')
-			case 'r':
-				b.WriteByte('\r')
-			case '"', '\\':
-				b.WriteByte(s[i])
-			default:
-				return nil, "", fmt.Errorf("I do not know the escape `\\%c` in this text", s[i])
+		case []map[string]any, []any:
+			if knownSections[name] {
+				return nil, diag.Newf("`[[%s]]` is a list of tables, and %s is a section, written once as `[%s]`", name, name, name).
+					At(file, lines["\x00"+name], 1).WithSource(text).
+					Fix("write it as [" + name + "]")
 			}
+			// An unknown section, written as a list: it is warned about like any other.
+			entries = append(entries, entry{section: name, value: v, line: lines["\x00"+name]})
 		default:
-			b.WriteByte(c)
+			entries = append(entries, entry{key: name, value: v, line: lines["\x00"+name]})
 		}
 	}
-	return nil, "", errors.New("this text starts with a quote but never ends")
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].line != entries[j].line {
+			return entries[i].line < entries[j].line
+		}
+		return entries[i].section+"."+entries[i].key < entries[j].section+"."+entries[j].key
+	})
+	for i := range entries {
+		if entries[i].line < 1 {
+			entries[i].line = 1
+		}
+	}
+	return entries, nil
 }
 
-func parseList(s string) (any, string, error) {
-	items := []string{}
-	rest := s[1:]
-	for {
-		rest = strings.TrimLeft(rest, " \t")
-		if rest == "" {
-			return nil, "", errors.New("this list is not closed with `]` (a list must fit on one line)")
-		}
-		if rest[0] == ']' {
-			return items, rest[1:], nil
-		}
-		value, after, err := parseValue(rest)
-		if err != nil {
-			return nil, "", err
-		}
-		text, ok := value.(string)
+// plain turns a list that holds only texts into a list of texts, which is the one kind
+// of list the settings take. Anything else stays as it was read, and its setter says
+// what it expected.
+func plain(value any) any {
+	list, ok := value.([]any)
+	if !ok {
+		return value
+	}
+	texts := make([]string, 0, len(list))
+	for _, item := range list {
+		text, ok := item.(string)
 		if !ok {
-			return nil, "", errors.New("lists can only hold texts in quotes")
+			return value
 		}
-		items = append(items, text)
-		rest = strings.TrimLeft(after, " \t")
-		switch {
-		case strings.HasPrefix(rest, ","):
-			rest = rest[1:]
-		case strings.HasPrefix(rest, "]"):
-		case rest == "":
-			return nil, "", errors.New("this list is not closed with `]` (a list must fit on one line)")
-		default:
-			return nil, "", errors.New("I expected `,` or `]` in this list")
+		texts = append(texts, text)
+	}
+	return texts
+}
+
+// syntaxProblem is a file that is not TOML. It says where, and what the library
+// found, except in the credentials section.
+func syntaxProblem(file, text string, err error) error {
+	line, column := 1, 1
+	message := err.Error()
+	var decodeErr *toml.DecodeError
+	if errors.As(err, &decodeErr) {
+		line, column = decodeErr.Position()
+	}
+	message = strings.TrimPrefix(message, "toml: ")
+	source := text
+	if sectionAt(text, line) == "credentials" {
+		message = "the value must be the NAME of an environment variable, in quotes, like \"BOB_TOKEN\", not the token itself"
+		source, column = maskLine(text, line), 1
+	} else {
+		message = "this is not TOML I can read: " + message
+	}
+	return diag.New(message).At(file, line, column).WithSource(source).
+		Fix("check the quotes, the commas and the [section] names in metagente.toml")
+}
+
+// sectionAt is the section that is open on a line of the text, as far as the headers
+// before it say. It is only used to decide whether a line is hidden, so a header it
+// cannot read counts as one that might be the credentials.
+func sectionAt(text string, line int) string {
+	section := ""
+	for i, raw := range strings.Split(text, "\n") {
+		if i+1 > line {
+			break
+		}
+		trimmed := strings.TrimSpace(raw)
+		if !strings.HasPrefix(trimmed, "[") {
+			continue
+		}
+		name := strings.Trim(strings.TrimSpace(strings.SplitN(trimmed, "#", 2)[0]), "[]")
+		name = strings.Trim(strings.TrimSpace(name), `"'`)
+		section = name
+		if strings.Contains(name, "credentials") {
+			section = "credentials"
 		}
 	}
+	return section
+}
+
+// keyLines finds the line of each setting: "section\x00key", and "\x00name" for a key
+// or a table at the top. The file was already read whole, so a problem here only
+// means a line is not known, and the first line is said instead.
+func keyLines(data []byte) map[string]int {
+	lines := map[string]int{}
+	var p unstable.Parser
+	p.Reset(data)
+	section := ""
+	for p.NextExpression() {
+		node := p.Expression()
+		switch node.Kind {
+		case unstable.Table, unstable.ArrayTable:
+			path := keyPath(node.Key())
+			if len(path) == 0 {
+				continue
+			}
+			section = path[0]
+			if _, seen := lines["\x00"+section]; !seen {
+				lines["\x00"+section] = lineOf(&p, node.Key())
+			}
+		case unstable.KeyValue:
+			path := keyPath(node.Key())
+			if len(path) == 0 {
+				continue
+			}
+			line := lineOf(&p, node.Key())
+			if section == "" {
+				lines["\x00"+path[0]] = line
+				if len(path) > 1 {
+					lines[path[0]+"\x00"+path[1]] = line
+				}
+				continue
+			}
+			lines[section+"\x00"+path[0]] = line
+		}
+	}
+	return lines
+}
+
+func keyPath(it unstable.Iterator) []string {
+	var path []string
+	for it.Next() {
+		path = append(path, string(it.Node().Data))
+	}
+	return path
+}
+
+// lineOf is the line of the first part of a key. A key in quotes may not point into
+// the file, and then its line is not known.
+func lineOf(p *unstable.Parser, it unstable.Iterator) (line int) {
+	defer func() {
+		if recover() != nil {
+			line = 0
+		}
+	}()
+	if !it.Next() {
+		return 0
+	}
+	node := it.Node()
+	if node.Raw.Length > 0 {
+		return p.Shape(node.Raw).Start.Line
+	}
+	return p.Shape(p.Range(node.Data)).Start.Line
 }
 
 // maskLine returns the text with the value on one line hidden, so an error can
