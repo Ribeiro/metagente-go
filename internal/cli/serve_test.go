@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const testToken = "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+const testToken = "kkkk-0123456789-abcdefghij-ABCDEFGHIJ"
 
 const helloAgent = `agent Hello
   goal "Greets people"

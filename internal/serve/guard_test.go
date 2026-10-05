@@ -176,6 +176,53 @@ func TestTheListOfPlacesThatFailedDoesNotGrowWithoutEnd(t *testing.T) {
 	}
 }
 
+// A place that is stopped stays stopped for its minute, however many other places fail
+// meanwhile: otherwise whoever is stopped could get out by failing from many other
+// addresses, which IPv6 gives by the million.
+func TestAPlaceThatIsStoppedCannotGetOutByFailingFromOtherAddresses(t *testing.T) {
+	g := newGuard()
+	wrong := func(addr string) func(*http.Request) {
+		return func(r *http.Request) {
+			r.RemoteAddr = addr
+			r.Header.Set("Authorization", "Bearer wrong")
+		}
+	}
+	for i := 0; i < defaultMaxFailures; i++ {
+		serveOne(g, post(wrong("192.0.2.10:1")))
+	}
+	for i := 0; i < maxTrackedClients*3; i++ {
+		serveOne(g, post(wrong(fmt.Sprintf("[2001:db8::%x]:1", i))))
+	}
+	if rec, _ := serveOne(g, post(nil)); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("the place that was stopped got through: %d", rec.Code)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.failures) > maxTrackedClients {
+		t.Errorf("%d places are being remembered", len(g.failures))
+	}
+}
+
+// A connection that the door turned away is closed, so a stranger cannot keep the
+// connections of the server open and idle; one that got through is kept.
+func TestTheDoorHangsUpOnWhomItTurnsAway(t *testing.T) {
+	g := newGuard()
+	for name, mutate := range map[string]func(*http.Request){
+		"no token":  func(r *http.Request) { r.Header.Del("Authorization") },
+		"wrong one": func(r *http.Request) { r.Header.Set("Authorization", "Bearer wrong") },
+		"host":      func(r *http.Request) { r.Host = "evil.example" },
+		"browser":   func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") },
+	} {
+		rec, _ := serveOne(g, post(mutate))
+		if rec.Code == http.StatusOK || rec.Header().Get("Connection") != "close" {
+			t.Errorf("%s: code %d, Connection %q", name, rec.Code, rec.Header().Get("Connection"))
+		}
+	}
+	if rec, _ := serveOne(g, post(nil)); rec.Code != http.StatusOK || rec.Header().Get("Connection") != "" {
+		t.Errorf("a good request: code %d, Connection %q", rec.Code, rec.Header().Get("Connection"))
+	}
+}
+
 // req: S2
 func TestADifferentHostIsRefusedBeforeAnythingElse(t *testing.T) {
 	for _, host := range []string{"evil.example", "evil.example:8080", "127.0.0.1", "127.0.0.1:9999", "127.0.0.1:8080.evil.example", "", "LOCALHOST:8081"} {

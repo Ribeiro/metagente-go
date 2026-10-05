@@ -1,8 +1,11 @@
 package serve
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -281,5 +284,33 @@ func TestAMistakeInARealAgentIsReportedWithoutItsFileOrItsLines(t *testing.T) {
 	}
 	if !strings.Contains(a.Raw, "needs a value for `what`") {
 		t.Errorf("the reason was lost:\n%s", a.Raw)
+	}
+}
+
+// The door hangs up for real: after a 401 the server closes the connection.
+func TestAConnectionThatWasTurnedAwayIsClosed(t *testing.T) {
+	base, _ := listen(t, nil, newFake("Bob", defaultSkills...))
+	address := strings.TrimPrefix(base, "http://")
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := conn.Write([]byte("GET /agents/Bob/.well-known/agent-card.json HTTP/1.1\r\nHost: " + address + "\r\n\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if _, err := reader.ReadByte(); err != io.EOF {
+		t.Errorf("the connection was kept open: %v", err)
 	}
 }

@@ -122,10 +122,12 @@ func (g *Guard) PublicGet(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		safeHeaders(w)
 		if !g.hostAllowed(r.Host) {
+			hangUp(w)
 			refuse(w, http.StatusMisdirectedRequest, "unexpected host")
 			return
 		}
 		if madeByABrowser(r) {
+			hangUp(w)
 			refuse(w, http.StatusForbidden, "browser requests are not accepted")
 			return
 		}
@@ -158,10 +160,12 @@ func (g *Guard) protect(next http.Handler, method string, jsonBody bool) http.Ha
 // the token. It answers the refusal itself, and says whether to go on.
 func (g *Guard) admit(w http.ResponseWriter, r *http.Request) bool {
 	if !g.hostAllowed(r.Host) {
+		hangUp(w)
 		refuse(w, http.StatusMisdirectedRequest, "unexpected host")
 		return false
 	}
 	if madeByABrowser(r) {
+		hangUp(w)
 		refuse(w, http.StatusForbidden, "browser requests are not accepted")
 		return false
 	}
@@ -175,12 +179,14 @@ func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	client := clientKey(r.RemoteAddr)
 	if wait, blocked := g.blocked(client); blocked {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
+		hangUp(w)
 		refuse(w, http.StatusTooManyRequests, "too many failed attempts; wait and try again")
 		return false
 	}
 	if !g.authentic(r) {
 		g.fail(client)
 		w.Header().Set("WWW-Authenticate", "Bearer")
+		hangUp(w)
 		refuse(w, http.StatusUnauthorized, "unauthorized")
 		return false
 	}
@@ -324,8 +330,8 @@ func (g *Guard) fail(client string) {
 	now := g.now()
 	f := g.failures[client]
 	if f == nil || now.Sub(f.since) > failureWindow {
-		if f == nil {
-			g.makeRoom(now)
+		if f == nil && !g.makeRoom(now) {
+			return // every place remembered is stopped; this one cannot be counted
 		}
 		f = &failure{since: now}
 		g.failures[client] = f
@@ -346,23 +352,34 @@ func (g *Guard) succeed(client string) {
 }
 
 // makeRoom keeps the list of clients that failed from growing without end: what
-// has run out goes first, and then whatever comes.
-func (g *Guard) makeRoom(now time.Time) {
+// has run out goes first, and then the ones that are not stopped. A client that is
+// stopped is never forgotten before its time, or failing from many other addresses
+// would set it free. It says false when every place is taken by a stopped client:
+// then the new one is not counted, which only means that it is not stopped yet.
+func (g *Guard) makeRoom(now time.Time) bool {
 	if len(g.failures) < maxTrackedClients {
-		return
+		return true
 	}
 	for key, f := range g.failures {
 		if !now.Before(f.blockedUntil) && now.Sub(f.since) > failureWindow {
 			delete(g.failures, key)
 		}
 	}
-	for len(g.failures) >= maxTrackedClients {
-		for key := range g.failures {
-			delete(g.failures, key)
+	for key, f := range g.failures {
+		if len(g.failures) < maxTrackedClients {
 			break
 		}
+		if !now.Before(f.blockedUntil) {
+			delete(g.failures, key)
+		}
 	}
+	return len(g.failures) < maxTrackedClients
 }
+
+// hangUp closes the connection after the answer. A client that the door turned away
+// has no reason to keep it, and a connection kept idle is one of the few that the
+// server may hold (max_connections), so a stranger could otherwise fill them all.
+func hangUp(w http.ResponseWriter) { w.Header().Set("Connection", "close") }
 
 func safeHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")

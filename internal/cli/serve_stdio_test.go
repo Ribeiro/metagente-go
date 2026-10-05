@@ -138,6 +138,7 @@ func TestServeStdioRefusesTheOptionsOfTheNetwork(t *testing.T) {
 	for _, option := range [][]string{
 		{"--port", "9000"}, {"--bind", "127.0.0.1"}, {"--public"}, {"--behind-proxy"}, {"--public-card"},
 		{"--tls-cert", "c.pem"}, {"--tls-key", "k.pem"}, {"--public-url", "https://a.example"}, {"--host", "a.example"},
+		{"--token-file", "token"},
 	} {
 		var errOut bytes.Buffer
 		args := append([]string{"hello.ag", "--stdio"}, option...)
