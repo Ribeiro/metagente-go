@@ -7,6 +7,8 @@ minor versions.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-05
+
 ### Added
 
 - [The City Briefing sample](samples/city-briefing/): two agents that work together over A2A and MCP, with
@@ -132,6 +134,7 @@ showed was fixed (the steps and the results are in `validation/README.md`):
 - Not tried against the real thing yet: a desktop assistant as a client of `serve --stdio`, Azure as a
   provider, tool servers started with `uvx`, and `--public` with a certificate of its own.
 
-[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Ribeiro/metagente-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ribeiro/metagente-go/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Ribeiro/metagente-go/releases/tag/v0.1.0
