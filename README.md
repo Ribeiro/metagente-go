@@ -448,8 +448,13 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 - the A2A client with servers of third parties: it was tried only with the SDK;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
-- Windows: the CI builds and tests it (without the race detector). The tests of symbolic links skip
-  themselves there, and `os.Root`, file permissions and the end of child processes were not looked at.
+- Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
+  and pass: the file tool does not leave its folder through a link, the approvals are not hidden behind one
+  and the log does not follow one. Five tests skip themselves there, each for its own reason: one is about
+  a file system that tells upper and lower case apart, which Windows does not; two ask for the permissions of
+  Unix (`rwx` for others), and their protection is not checked on Windows, which has ACLs; one is the end of
+  the group of processes of a tool server (E4), which does not exist there yet; and one is the detection of hard
+  links (F7).
 
 Not done on purpose: isolating a program at the level of the operating system (a
 sandbox). The SDK gives a minimal environment, not a sandbox; the approval is the
