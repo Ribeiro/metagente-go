@@ -431,19 +431,21 @@ so run `make fmt` after copying it over the project.
 
 ### Not verified yet
 
-The steps to check the first four of these against the real thing are in
-`validation/README.md`, with a table for the results.
+Checked against the real thing (the steps and the results are in `validation/README.md`):
 
-These work in the tests, which use doubles, or were run only on macOS:
+- the MCP server, with the MCP Inspector, a client of another team, in TypeScript;
+- a tool server started by `npx`, with the minimal environment of E1: what the shell had did not reach it;
+- `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
+- `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
+- the A2A server, with the command line of the official A2A SDK in JavaScript.
 
-- the MCP server with a client of a third party (a desktop assistant, an editor); the example of
-  the settings above is not checked;
-- `think` with a provider that speaks the OpenAI format (Ollama, Azure, ...), and with a real tool
-  server whose schema goes to the model (with Anthropic it was run, with a tool of the file kind);
-- a real tool server started with `npx` or `uvx`, with the minimal environment of E1;
-- `--public` and `--behind-proxy` with a real proxy and a real certificate;
-- the A2A server with clients of third parties (the official command line), and the A2A client with
-  servers of third parties: both were tried only with the SDK;
+These work in the tests, which use doubles, or were run only on macOS, and are not checked yet:
+
+- the MCP server with a desktop assistant (Claude Desktop); only the Inspector was tried;
+- `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
+- a tool server started with `uvx`;
+- `--public`, with a certificate of its own;
+- the A2A client with servers of third parties: it was tried only with the SDK;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector). The tests of symbolic links skip
