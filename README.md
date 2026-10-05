@@ -39,6 +39,23 @@ The project needs **Go 1.26 or newer** (`go.mod` says `go 1.26.0`, because the A
 for it). The tests keep the log in a folder of their own, never in yours. How to run them:
 [Running the tests](#running-the-tests).
 
+## Installing
+
+Each release on GitHub has an archive for macOS (arm64 and amd64), Linux (amd64 and arm64) and Windows
+(amd64), and `SHA256SUMS` to check them. With the command line of GitHub, in a folder of its own, the
+latest one for a Mac with an Apple chip:
+
+```text
+gh release download -R Ribeiro/metagente-go -p 'metagente-*-darwin-arm64.tar.gz' -p SHA256SUMS
+grep darwin-arm64 SHA256SUMS | shasum -a 256 -c -     # on Linux: grep linux-amd64 SHA256SUMS | sha256sum -c -
+tar -xzf metagente-*-darwin-arm64.tar.gz
+./metagente-*-darwin-arm64/metagente --version
+```
+
+The archive has the program, the license and its notice, this README and [the reference of the language](docs/LANGUAGE.md).
+What changed in each version is in [CHANGELOG.md](CHANGELOG.md). To build it from the sources instead:
+`make build` (see [Building and releasing](#building-and-releasing)).
+
 ## Serving agents
 
 ```text
@@ -173,10 +190,10 @@ lower one of the two.
 - `metagente serve FILE.ag ...`: the agents over A2A, on this computer, behind a token; open to
   the network with TLS of its own, or behind a proxy (see [Serving agents](#serving-agents)).
 - `metagente serve FILE.ag --stdio`: the same agents as MCP tools on standard input and output.
-- [`samples/city-briefing`](samples/city-briefing/): two agents that work together, over A2A and MCP, with
-  `think`; the tests run it offline.
 - `metagente serve FILE.ag --mcp`: the same agents as MCP tools over HTTP too, at `/mcp`, behind the
   token (see [Serving to a program that speaks MCP over HTTP](#serving-to-a-program-that-speaks-mcp-over-http)).
+- [`samples/city-briefing`](samples/city-briefing/): two agents that work together, over A2A and MCP, with
+  `think`; the tests run it offline.
 - `metagente token`: makes a token to keep and give to the server.
 - `[credentials]` in `metagente.toml`: the bearer token for a `remote` agent or for a tool server
   that is an address, named by the variable that holds it.
@@ -326,7 +343,11 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
   there is nothing to fill up. Streaming, push notifications and the extended card are
   not offered and say so. Batches are refused. An agent is served at `/agents/NAME`, its
   card at `/agents/NAME/.well-known/agent-card.json`, and a stranger cannot tell which
-  agents exist (without the token every other path is 401, with it, 404).
+  agents exist (without the token every other path is 401, with it, 404, whatever the method).
+  A request that cannot be run is refused before the agent hears of it, with the codes of A2A 1.0
+  and its `ErrorInfo`: a message that lacks a value its skill takes, or carries one it does not, is
+  -32602, and one that asks for a version of the protocol that is not 1.x (`A2A-Version`) is -32009;
+  one that names no version is served. The skills of a card have their names as tags.
 - **The card is for those who have the token.** `--public-card` gives anyone a
   minimal one: names only, never the goal or the values a message takes. Both say that a
   token is needed. The client sends the token with the card too, to the address that was
@@ -427,6 +448,8 @@ samples                projects that show Metagente doing real work, run offline
 scripts                what the release uses: the notes of a version, from CHANGELOG.md
 testdata/examples      example agents, copied from the Rust project
 testdata/script        acceptance cases (testscript)
+validation             the checks against programs of other people, their steps, and what they found
+spikes                 the first experiments with the two SDKs (a module of its own, kept as a record)
 ```
 
 ## Running the tests
@@ -552,11 +575,12 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
   and pass: the file tool does not leave its folder through a link, the approvals are not hidden behind one
-  and the log does not follow one. Five tests skip themselves there, each for its own reason: one is about
-  a file system that tells upper and lower case apart, which Windows does not; two ask for the permissions of
-  Unix (`rwx` for others), and their protection is not checked on Windows, which has ACLs; one is the end of
-  the group of processes of a tool server (E4), which does not exist there yet; and one is the detection of hard
-  links (F7).
+  and the log does not follow one. Six tests skip themselves there, each for its own reason: one is about
+  a file system that tells upper and lower case apart, which Windows does not; three ask for the permissions of
+  Unix (`rwx` for others: the folder of the log, the approvals, and the file of `--token-file`), and their
+  protection is not checked on Windows, which has ACLs; one is the end of the group of processes of a tool
+  server (E4), which does not exist there yet; and one is the detection of hard links (F7). The list is
+  printed by the job of Windows of the CI, in the step "What was skipped here".
 
 Not done on purpose: isolating a program at the level of the operating system (a
 sandbox). The SDK gives a minimal environment, not a sandbox; the approval is the

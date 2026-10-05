@@ -24,6 +24,9 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 What the tests cannot show: how a real client starts the program (a minimal environment, its own
 working folder), the order of its first messages, and how it shows the names of the tools.
 
+The checks use the program at `~/bin/metagente`: the one of a release (see "Installing" in the README of
+the project; copy the `metagente` of the archive to `~/bin`), or one built from the sources:
+
 ```text
 mkdir -p ~/bin
 go build -o ~/bin/metagente ./cmd/metagente          # from the root of the project

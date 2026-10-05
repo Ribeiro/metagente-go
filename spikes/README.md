@@ -1,5 +1,11 @@
 # Phase 1 spikes
 
+> **A record, not a part of the program.** These were the first experiments with the two SDKs, before any
+> SDK code went into `metagente`. The decisions they were made for are taken, and are in the README of the
+> project (E1, E3, E4, S2 to S6, P4, and the choice of the A2A client written by hand). The module still
+> compiles with the versions of the SDKs that the program uses (`go vet ./...` passes in this folder), and
+> is kept to show why each decision was taken. Nothing in it is run by `make check` or by the CI.
+
 Small tests that turn what the documentation of the two official SDKs *says*
 into what they *do*, before any SDK code goes into `metagente`. This is a
 separate Go module, so `go test ./...` of the project does not run it, and it
@@ -10,9 +16,8 @@ The documentation page of each flagged those as not being the latest, so newer
 versions exist. Run these as they are first; upgrade afterwards, one SDK at a
 time, and run them again.
 
-**Nothing here was compiled by the author.** The signatures come from the
-documentation, so the first thing to expect is a compiler error or two. They are
-cheap to fix, and `go doc <package> <Name>` shows the real signature.
+When this was first written nothing here had been compiled, and the signatures came
+from the documentation. They were fixed since, and the module compiles.
 
 ## Running
 
