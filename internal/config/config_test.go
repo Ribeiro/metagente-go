@@ -119,7 +119,7 @@ func TestDefaults(t *testing.T) {
 	if cfg.Serve.Bind != "127.0.0.1" || cfg.Serve.MaxRunningTasks != 64 || cfg.Serve.MaxBodyBytes != 1<<20 {
 		t.Errorf("serve = %+v", cfg.Serve)
 	}
-	if cfg.Limits.MaxFileBytes != 1<<20 || cfg.Limits.MaxHTTPBytes != 5<<20 || cfg.Limits.MaxStateEntries != 1000 {
+	if cfg.Limits.MaxFileBytes != 1<<20 || cfg.Limits.MaxHTTPBytes != 5<<20 || cfg.Limits.MaxStateEntries != 1000 || cfg.Limits.MaxStateBytes != 256<<10 {
 		t.Errorf("limits = %+v", cfg.Limits)
 	}
 	if cfg.LLM.MaxTokens != 4096 || !cfg.LLM.PromptCache {
@@ -181,36 +181,99 @@ func TestSyntaxThatIsNotReadIsRefusedWithAMessage(t *testing.T) {
 		name string
 		text string
 		want string
+		line string
 	}{
-		{"list of tables", "[[x]]\n", "lists of tables"},
-		{"section not closed", "[llm\n", "not closed"},
-		{"line without equals", "just words\n", "I expected `key = value`"},
-		{"missing value", "[llm]\nmodel =\n", "a value is missing"},
-		{"text not closed", "[llm]\nmodel = \"x\n", "never ends"},
-		{"fraction", "[runtime]\ntimeout_seconds = 1.5\n", "not `1.5`"},
-		{"list of numbers", "[serve]\nallowed_hosts = [1]\n", "only hold texts"},
-		{"list without comma", "[serve]\nallowed_hosts = [\"a\" \"b\"]\n", "expected `,` or `]`"},
-		{"list not closed", "[serve]\nallowed_hosts = [\"a\"\n", "not closed"},
-		{"something after the value", "[llm]\nmodel = \"x\" y\n", "something after the value"},
-		{"repeated setting", "[llm]\nmodel = \"x\"\nmodel = \"y\"\n", "`model` appears twice"},
-		{"quoted key", "[llm]\n\"model\" = \"x\"\n", "not a setting name"},
-		{"unknown escape", "[llm]\nmodel = \"\\q\"\n", "do not know the escape"},
-		{"something after the section", "[llm] x\n", "something after the section name"},
+		{"section not closed", "[llm\n", "expected ']' to close table name", "line 1"},
+		{"line without equals", "[llm]\njust words\n", "expected '=' after key", "line 2"},
+		{"missing value", "[llm]\nmodel =\n", "at start of value", "line 2"},
+		{"text not closed", "[llm]\nmodel = \"x\n", "basic strings cannot have new lines", "line 2"},
+		{"list without comma", "[serve]\nallowed_hosts = [\"a\" \"b\"]\n", "expected ',' or ']'", "line 2"},
+		{"list not closed", "[serve]\nallowed_hosts = [\"a\"\n", "array is incomplete", "line 2"},
+		{"something after the value", "[llm]\nmodel = \"x\" y\n", "expected newline", "line 2"},
+		{"repeated setting", "[llm]\nmodel = \"x\"\nmodel = \"y\"\n", "key model is already defined", "line 3"},
+		{"unknown escape", "[llm]\nmodel = \"\\q\"\n", "invalid escape character", "line 2"},
+		{"something after the section", "[llm] x\n", "expected newline", "line 1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := parseTOML("metagente.toml", tt.text)
+			err := Default().apply("metagente.toml", tt.text)
 			if err == nil {
 				t.Fatal("expected a problem")
 			}
 			text := problemText(t, err)
-			if !strings.Contains(text, tt.want) {
-				t.Errorf("missing %q in:\n%s", tt.want, text)
-			}
-			if !strings.Contains(text, "Problem on line ") || !strings.Contains(text, "Fix: ") {
-				t.Errorf("no place or fix in:\n%s", text)
+			for _, want := range []string{"this is not TOML I can read", tt.want, tt.line, "Fix: "} {
+				if !strings.Contains(text, want) {
+					t.Errorf("missing %q in:\n%s", want, text)
+				}
 			}
 		})
+	}
+}
+
+// What the small reader that came before could not read, and TOML allows.
+func TestEverythingTOMLAllowsIsRead(t *testing.T) {
+	text := `[llm]
+"model" = "quoted key"
+api_key_env = """ANTHROPIC_API_KEY"""
+
+[serve]
+allowed_hosts = [
+  "a.example.com",  # one
+  "b.example.com",  # two
+]
+max_body_bytes = 0x10_0000
+
+[credentials]
+"Bob Remote" = "BOB_TOKEN"
+`
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", text); err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	if cfg.LLM.Model != "quoted key" || cfg.LLM.APIKeyEnv != "ANTHROPIC_API_KEY" {
+		t.Errorf("llm = %+v", cfg.LLM)
+	}
+	if want := []string{"a.example.com", "b.example.com"}; !reflect.DeepEqual(cfg.Serve.AllowedHosts, want) || cfg.Serve.MaxBodyBytes != 1<<20 {
+		t.Errorf("serve = %+v", cfg.Serve)
+	}
+	if cfg.Credentials["Bob Remote"] != "BOB_TOKEN" || len(cfg.Warnings) != 0 {
+		t.Errorf("credentials = %v, warnings = %v", cfg.Credentials, cfg.Warnings)
+	}
+}
+
+// A value that TOML reads and a setting does not take is explained by the setting, on its line.
+func TestValuesOfTheWrongKindAreExplainedByTheSetting(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"fraction", "[runtime]\n\ntimeout_seconds = 1.5\n", []string{"must be a whole number", "line 3"}},
+		{"list of numbers", "[serve]\nallowed_hosts = [1]\n", []string{"must be a list of texts", "line 2"}},
+		{"table", "[llm]\nmodel = { name = \"x\" }\n", []string{"must be a text in quotes", "line 2"}},
+		{"date", "[llm]\nmodel = 2026-10-05\n", []string{"must be a text in quotes", "line 2"}},
+		{"a section written as a list of tables", "[[llm]]\nmodel = \"x\"\n", []string{"`[[llm]]` is a list of tables", "line 1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Default().apply("metagente.toml", tt.text)
+			if err == nil {
+				t.Fatal("expected a problem")
+			}
+			text := problemText(t, err)
+			for _, want := range tt.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("missing %q in:\n%s", want, text)
+				}
+			}
+		})
+	}
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", "[[mystery]]\na = 1\n[llm.deeper]\nb = 2\n"); err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	if joined := strings.Join(cfg.Warnings, "\n"); !strings.Contains(joined, "unknown section `[mystery]`") || !strings.Contains(joined, "unknown setting `deeper` in [llm]") {
+		t.Errorf("warnings = %v", cfg.Warnings)
 	}
 }
 
@@ -436,18 +499,25 @@ func TestCredentialsNameTheVariableThatHoldsTheTokenNeverTheTokenItself(t *testi
 func TestTheLineOfACredentialIsNeverShownInAnError(t *testing.T) {
 	const token = "tok-live-abcdef0123456789"
 	for name, text := range map[string]string{
-		"a token where the name goes": "[credentials]\nBob = \"" + token + "\"\n",
-		"a token without quotes":      "[credentials]\nBob = " + token + "\n",
-		"a token and a stray word":    "[credentials]\nBob = \"" + token + "\" oops\n",
-		"a line without a key":        "[credentials]\n" + token + "\n",
-		"a token as a list":           "[credentials]\nBob = [\"" + token + "\", 5, " + token + "]\n",
+		"a token where the name goes":   "[credentials]\nBob = \"" + token + "\"\n",
+		"a token without quotes":        "[credentials]\nBob = " + token + "\n",
+		"a token and a stray word":      "[credentials]\nBob = \"" + token + "\" oops\n",
+		"a line without a key":          "[credentials]\n" + token + "\n",
+		"a token as a list":             "[credentials]\nBob = [\"" + token + "\", 5, " + token + "]\n",
+		"a token on the next line":      "[credentials]\nBob = [\n\"" + token + "\",\n]\n",
+		"a bare token on the next line": "[credentials]\nBob = [\n" + token + ",\n]\n",
+		"a section in quotes":           "[\"credentials\"]\nBob = " + token + "\n",
 	} {
 		err := Default().apply("metagente.toml", text)
 		shown := problemText(t, err)
 		if strings.Contains(shown, token) || strings.Contains(shown, "tok-live") {
 			t.Errorf("%s: the token is in the message:\n%s", name, shown)
 		}
-		if !strings.Contains(shown, "line 2") {
+		want := "line 2"
+		if name == "a bare token on the next line" {
+			want = "line 3" // where the library finds that it is not a value
+		}
+		if !strings.Contains(shown, want) {
 			t.Errorf("%s: the message does not say where the problem is:\n%s", name, shown)
 		}
 	}

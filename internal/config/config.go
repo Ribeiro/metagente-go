@@ -132,7 +132,7 @@ func Default() *Config {
 			MaxMCPCalls:        8,
 			MaxMCPResultBytes:  5 << 20,
 			MaxStateEntries:    1000,
-			MaxStateBytes:      1 << 20,
+			MaxStateBytes:      256 << 10, // with 1000 conversations, about 250 MiB at most
 		},
 	}
 }

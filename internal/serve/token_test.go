@@ -1,6 +1,9 @@
 package serve
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -24,24 +27,27 @@ func TestAGeneratedTokenIsLongRandomAndFitForAHeader(t *testing.T) {
 
 // req: S1
 func TestOnlyALongPlainTokenIsAccepted(t *testing.T) {
-	long := strings.Repeat("a", 32)
-	for _, good := range []string{long, strings.Repeat("Ab3-_", 10), "A" + long} {
+	long := "abcdefghijklmnop0123456789ABCDEF"
+	for _, good := range []string{long, strings.Repeat("Ab3-_xyZ09~+", 3), "A" + long, strings.Repeat("0123456789abcdef", 4)} {
 		if err := CheckToken(good); err != nil {
 			t.Errorf("%q was refused: %v", good, err)
 		}
 	}
 	for name, bad := range map[string]string{
-		"short":       "tooshort",
-		"31":          strings.Repeat("a", 31),
-		"space":       long + " x",
-		"tab":         long + "\t",
-		"newline":     long + "\n",
-		"quote":       long + `"`,
-		"colon":       long + ":",
-		"non ascii":   long + "é",
-		"control":     long + "\x01",
-		"empty":       "",
-		"only spaces": strings.Repeat(" ", 40),
+		"short":        "tooshort",
+		"31":           strings.Repeat("a", 31),
+		"space":        long + " x",
+		"tab":          long + "\t",
+		"newline":      long + "\n",
+		"quote":        long + `"`,
+		"colon":        long + ":",
+		"non ascii":    long + "é",
+		"control":      long + "\x01",
+		"empty":        "",
+		"only spaces":  strings.Repeat(" ", 40),
+		"one letter":   strings.Repeat("k", 40),
+		"a word again": strings.Repeat("password", 5),
+		"two letters":  strings.Repeat("ab", 20),
 	} {
 		err := CheckToken(bad)
 		if err == nil {
@@ -57,7 +63,7 @@ func TestOnlyALongPlainTokenIsAccepted(t *testing.T) {
 
 // req: S1
 func TestTheTokenComesFromTheEnvironmentOrIsGeneratedOnlyWhereItIsSafeToShowIt(t *testing.T) {
-	good := strings.Repeat("k", 40)
+	good := "tok-0123456789-abcdefghij-ABCDEFGHIJ"
 	for name, tt := range map[string]tokenCase{
 		"given":                  {env: good, wantToken: good},
 		"given and public":       {env: good, terminal: false, loopback: false, wantToken: good},
@@ -126,5 +132,71 @@ func TestAnEmptyOrSpacedVariableIsTreatedAsNotSet(t *testing.T) {
 	_, _, err := ResolveToken(func(string) string { return "   " }, false, false)
 	if err == nil || !strings.Contains(err.Error(), "METAGENTE_TOKEN") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// req: S1
+func TestATokenFileHoldsTheTokenAndNothingThatIsRefusedIsRepeated(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, text string, mode os.FileMode) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(text), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, mode); err != nil { // the umask may have taken some bits away
+			t.Fatal(err)
+		}
+		return path
+	}
+	good := "tok-0123456789-abcdefghij-ABCDEFGHIJ"
+	token, note, err := ReadTokenFile(write("good", "  "+good+"\n", 0o600))
+	if err != nil || token != good || note != "" {
+		t.Errorf("token %q, note %q, err %v", token, note, err)
+	}
+	secret := "tok-live-short-secret"
+	for name, path := range map[string]string{
+		"empty":      write("empty", "\n\n", 0o600),
+		"short":      write("short", secret+"\n", 0o600),
+		"two words":  write("two", secret+" "+good+"\n", 0o600),
+		"too large":  write("large", strings.Repeat("k", maxTokenFile+1), 0o600),
+		"missing":    filepath.Join(dir, "nothing-here"),
+		"not a file": dir,
+	} {
+		_, _, err := ReadTokenFile(path)
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), good) {
+			t.Errorf("%s: the reason repeats what the file holds: %v", name, err)
+		}
+	}
+}
+
+// req: S1
+func TestATokenFileThatOthersMayChangeIsRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows keeps the permissions of a file in lists that this does not read")
+	}
+	good := "tok-0123456789-abcdefghij-ABCDEFGHIJ"
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []os.FileMode{0o620, 0o602, 0o666} {
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := ReadTokenFile(path); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+			t.Errorf("%04o: %v", mode, err)
+		}
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	token, note, err := ReadTokenFile(path)
+	if err != nil || token != good || !strings.Contains(note, "others on this computer may read") {
+		t.Errorf("0644: token %q, note %q, err %v", token, note, err)
 	}
 }

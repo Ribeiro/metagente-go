@@ -98,7 +98,7 @@ Usage:
                                        --mcp serves them as MCP tools too, at /mcp, behind the same token
   metagente serve ... --public --tls-cert FILE --tls-key FILE --host NAME
                                        open to the network: TLS of its own, the names it answers to,
-                                       and the token in METAGENTE_TOKEN
+                                       and the token in METAGENTE_TOKEN (or --token-file FILE)
   metagente serve ... --behind-proxy --host NAME --public-url https://NAME
                                        behind a proxy on this computer, which does the TLS
   metagente serve FILE.ag ... --stdio

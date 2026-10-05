@@ -70,7 +70,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		printError(stderr, err)
 		return 2
 	}
-	token, generated, err := serve.ResolveToken(env.getenv, env.terminal, plan.Loopback)
+	token, generated, err := serveToken(flags.tokenFile, plan, stderr, env)
 	if err != nil {
 		printError(stderr, err)
 		return 2
@@ -83,6 +83,23 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		return 1
 	}
 	return runServer(ctx, serving{rt: rt, plan: plan, agents: agents, token: token, generated: generated, quiet: flags.quiet, mcp: flags.mcp}, stderr, env)
+}
+
+// serveToken is the token of the server: from --token-file, or as ResolveToken says.
+// Both a file and the variable would leave a doubt about which one opens the server,
+// so that is refused.
+func serveToken(file string, plan *serve.Plan, stderr io.Writer, env serveEnv) (token string, generated bool, err error) {
+	if file == "" {
+		return serve.ResolveToken(env.getenv, env.terminal, plan.Loopback)
+	}
+	if strings.TrimSpace(env.getenv("METAGENTE_TOKEN")) != "" {
+		return "", false, errors.New("both --token-file and METAGENTE_TOKEN are set, and only one may say what the token is; leave out one of the two")
+	}
+	token, note, err := serve.ReadTokenFile(file)
+	if note != "" {
+		fmt.Fprintf(stderr, "Note: %s.\n", note)
+	}
+	return token, false, err
 }
 
 func usageProblem(stderr io.Writer, err error) {
@@ -100,6 +117,7 @@ type serveArgs struct {
 	quiet      bool
 	stdio      bool
 	mcp        bool
+	tokenFile  string
 }
 
 // listFlag is an option that can be given many times.
@@ -125,6 +143,7 @@ func parseServeArgs(args []string) (*serveArgs, error) {
 	fs.BoolVar(&a.quiet, "quiet", false, "")
 	fs.BoolVar(&a.stdio, "stdio", false, "")
 	fs.BoolVar(&a.mcp, "mcp", false, "")
+	fs.StringVar(&a.tokenFile, "token-file", "", "")
 	fs.Var(&hosts, "host", "")
 	fs.Var(&agents, "agent", "")
 
@@ -405,7 +424,7 @@ func checkStdioOptions(flags *serveArgs) error {
 	}{
 		{"--port", o.Port >= 0}, {"--bind", o.Bind != ""}, {"--public", o.Public}, {"--behind-proxy", o.BehindProxy},
 		{"--public-card", o.PublicCard}, {"--tls-cert", o.TLSCert != ""}, {"--tls-key", o.TLSKey != ""},
-		{"--public-url", o.PublicURL != ""}, {"--host", len(o.Hosts) > 0},
+		{"--public-url", o.PublicURL != ""}, {"--host", len(o.Hosts) > 0}, {"--token-file", flags.tokenFile != ""},
 	}
 	for _, option := range used {
 		if option.set {

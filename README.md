@@ -5,7 +5,8 @@ language for AI agents, from Rust to Go, with the hardening described in the
 specification ("Metagente em Go: inventário de testes e especificação de
 endurecimento").
 
-All code, comments and tests are written in English.
+All code, comments and tests are written in English. How to write agents is in
+[the reference of the language](docs/LANGUAGE.md).
 
 ## Status
 
@@ -26,6 +27,7 @@ All code, comments and tests are written in English.
 | 12 | The agents as MCP tools: `metagente serve --stdio` | Compiled; tests pass, also with `-race` |
 | 13 | The differences from the specification closed: E3, E4, S4, S6, S8, P5 | Compiled; the tests pass, also with `-race` |
 | 14 | MCP over HTTP behind the same door (S10): `metagente serve --mcp` | Compiled; tests pass, also with `-race`; tried with the client of the official SDK in TypeScript and with the command line of the MCP Inspector |
+| 15 | The smaller decisions: a TOML library, `--token-file`, a smaller default for `state`, a review of the security of `serve`; the reference of the language and releases from a tag | Compiled; the tests pass, also with `-race` |
 
 Every slice compiles and its tests pass. The CI runs them on Linux and Windows at every push, and on macOS once a
 week and when asked for; what was checked against programs of other people, and what was not, is in
@@ -46,8 +48,13 @@ curl -H "Authorization: Bearer $METAGENTE_TOKEN" http://127.0.0.1:8080/agents/He
 | Where | How | What it needs |
 |---|---|---|
 | This computer (the default) | `metagente serve FILE.ag` | a token: `METAGENTE_TOKEN`, or one is made and shown once if a person is at the terminal |
-| The network | `--public --tls-cert F --tls-key F --host NAME` | the token in `METAGENTE_TOKEN` (never made), TLS 1.2 or newer, the names it answers to |
-| Behind a proxy on this computer | `--behind-proxy --host NAME --public-url https://NAME` | the token in `METAGENTE_TOKEN`; the proxy does the TLS and has to limit the rate |
+| The network | `--public --tls-cert F --tls-key F --host NAME` | the token in `METAGENTE_TOKEN` or `--token-file` (never made), TLS 1.2 or newer, the names it answers to |
+| Behind a proxy on this computer | `--behind-proxy --host NAME --public-url https://NAME` | the token in `METAGENTE_TOKEN` or `--token-file`; the proxy does the TLS and has to limit the rate |
+
+`--token-file FILE` reads the token from a file instead of `METAGENTE_TOKEN` (not both), for where a
+secret is given as a file, as the secrets of containers are. The file holds the token and nothing else; on
+Linux and macOS a file that others may change is refused, and one that others may read is used with a note.
+It is read once, when the server starts.
 
 Other options: `--port N`, `--agent NAME` (repeatable: serve only those; by default all the
 agents of the files), `--public-card` (a card with the names only, for anyone), `--mcp` (the
@@ -125,9 +132,9 @@ is kept), `max_body_bytes`, `read_header_timeout_seconds`, `read_timeout_seconds
 place before it waits a minute). `allowed_origins` is **ignored**: no page in a browser can call this
 server, and `serve` says so when it is set.
 
-**Memory.** A conversation may keep `max_state_bytes` of `state` (1 MiB by default) and the
+**Memory.** A conversation may keep `max_state_bytes` of `state` (256 KiB by default) and the
 server keeps up to `max_retained_tasks` of them (1000 by default), of A2A and of MCP together. Together that is up to
-about 1 GiB that someone who holds the token could make the server use. On a small machine,
+about 250 MiB that someone who holds the token could make the server use. On a small machine,
 lower one of the two.
 
 ## What exists
@@ -207,14 +214,14 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 | L4 | done | prompt cache: the system prompt and the end of the conversation are marked, so each step reuses what came before (Anthropic) | `internal/llm/anthropic.go` |
 | L5 | done | a question is limited in steps, tokens and time (`think_max_steps`, `think_max_total_tokens`, `think_timeout_seconds`) | `internal/runtime/think.go` |
 | L6 | done | what a tool returns is wrapped in markers with a random tag and the model is told it is data, not orders | `internal/runtime/think.go` |
-| L7 | done | `using` limits the tools; a `readonly` tool offers only what changes nothing (for tool servers, what they mark as read only) | `internal/runtime/think.go`, `internal/mcp/pool.go` |
+| L7 | done | `using` limits the tools; a `readonly` tool offers only what changes nothing. For tool servers the pool can offer only what they mark as read only, but the language has no way to ask for it yet (see What comes next) | `internal/runtime/think.go`, `internal/mcp/pool.go` |
 | L8 | done | the key is taken out of every error from a provider; it is never in a message | `internal/llm/transport.go` |
 | P1 | done | what a remote caller (A2A or MCP) or a model reads about a failure is the short message and its fix, with no file, line, source or path | `internal/diag`, `internal/serve`, `internal/runtime/think.go` |
 | P2 | done | the log of failures is in the folder of the user (folder `0700`, file `0600`, never through a link, one file of history) | `internal/applog` |
 | P3 | done | every key, token and credential variable is taken out of the log and of every error; the access log never holds a header, a query or a body | `internal/applog`, `internal/secret`, `internal/serve/accesslog.go` |
 | P4 | done | a panic ends only that task or call and shows one plain sentence; the cause goes to the log | `internal/cli`, `internal/runtime`, `internal/serve` |
 | P5 | done | the access log is structured (`log/slog`, `key=value`): time, remote address, method, path, status, bytes and duration; and, for a request that ran an agent, the agent, the method of the protocol, the message, the task and how it ended (`ok`, `failed`, `error`, `busy`, `left`). Never a header, a query or a body. It is the log of `serve` over HTTP; the MCP over standard input and output has none | `internal/serve/accesslog.go`, `rpc.go` |
-| S1 | done, changed (agreed) | every route that runs an agent needs `Authorization: Bearer`; constant time comparison; the same short 401 for every failure; the token is never in a log. Changed: the Agent Card is also for those who have the token (`--public-card` gives a minimal one to anyone), and the token comes from `METAGENTE_TOKEN`, or is made only for a person at a terminal on this computer. **There is no `--token-file`** | `internal/serve/guard.go`, `token.go` |
+| S1 | done, changed (agreed) | every route that runs an agent needs `Authorization: Bearer`; constant time comparison; the same short 401 for every failure; the token is never in a log. Changed: the Agent Card is also for those who have the token (`--public-card` gives a minimal one to anyone), and the token comes from `METAGENTE_TOKEN` or `--token-file`, or is made only for a person at a terminal on this computer. A token has 32 characters or more, of at least 12 different ones; the door closes a connection that it turned away | `internal/serve/guard.go`, `token.go` |
 | S2 | done | a POST needs `application/json` (415 otherwise, before the body is read); no `OPTIONS`, no CORS header | `internal/serve/guard.go` |
 | S3 | done | the `Host` has to be a name the server answers to (421 otherwise, token or not): the ones of this computer by default, or `--host` | `internal/serve/guard.go`, `options.go` |
 | S4 | done, changed (agreed) | a request made by a browser is refused (403). Stricter than the specification, on purpose: **any** `Origin`, and the `Sec-Fetch-Site`, `Sec-Fetch-Dest` and `Sec-Fetch-User` that a browser adds to every request, are refused, and `allowed_origins` is ignored (the server says so). `Sec-Fetch-Mode` alone is not: the fetch of Node.js sends it in every request, and the official SDK in JavaScript is made on it, so refusing it kept that client out. Kept because it is safer; the specification is to be changed to say so | `internal/serve/guard.go` |
@@ -266,11 +273,11 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 - **Too many requests at the same time is a 503, and not a message of the protocol.** A proxy or a
   client that knows nothing of A2A understands it, and the client of this project says that the
   other side is busy.
-- **TOML.** The standard library has no TOML reader, so `internal/config/toml.go` reads
-  the small subset that `metagente.toml` uses: sections, texts, whole numbers,
-  true/false, lists of texts on one line, comments. Anything else is refused with a
-  plain message. Swap it for a real TOML library whenever you prefer; only
-  `parseTOML` has to change.
+- **TOML is read by a library, `pelletier/go-toml/v2`.** So `metagente.toml` may use anything TOML
+  allows (lists over several lines, keys in quotes, every kind of text). A value that TOML reads and a
+  setting does not take (a fraction where a whole number goes, a table where a text goes) is explained by
+  the setting, with its line. An unknown section or setting is ignored with a note, as before, and a
+  problem in `[credentials]` never shows the line or the words of the library, which may hold a token.
 - **`allow private` is narrower than the specification.** It opens loopback and
   private networks, but link-local addresses (where cloud metadata services live),
   multicast and unspecified addresses stay refused. The specification (H2) said
@@ -343,10 +350,14 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 - **The server issues the id of a conversation.** A caller cannot name one it was not
   given, an idle conversation expires, there is a limit of open ones, and one that is in
   use is never swept away in the middle of a call.
-- **The token is `METAGENTE_TOKEN`, 32 characters or more**, from `metagente token`. If it
-  is not set, one is made only for a person at a terminal on this computer; anywhere else
-  (a CI, a container, `--public`) the server does not start, because a secret shown there
-  stays in a log.
+- **The token is `METAGENTE_TOKEN` or `--token-file`, 32 characters or more, of at least 12
+  different ones**, from `metagente token`. Whether a token is random cannot be seen, but one that repeats
+  a few characters is not. If it is not given, one is made only for a person at a terminal on this
+  computer; anywhere else (a CI, a container, `--public`) the server does not start, because a secret
+  shown there stays in a log.
+- **The door hangs up on whom it turns away.** After a 401, 403, 421 or 429 the connection is closed, so a
+  stranger cannot keep the connections of the server open and idle. What is left of that (connections that
+  send their headers slowly) is in [the review of the security](docs/SECURITY-REVIEW.md).
 - **The log is for you, not for whoever called.** A failure inside Metagente shows one
   sentence and the place of the log. It lives in `~/.local/state/metagente` (Linux),
   `~/Library/Logs/metagente` (macOS) or `%LocalAppData%\\metagente` (Windows), or in
@@ -400,6 +411,8 @@ internal/clip          shortening a text that came from outside before a message
 internal/scaffold      `metagente new`
 internal/value         the values agents work with
 internal/acceptance    black-box suite (build tag `acceptance`)
+docs                   the reference of the language, the review of the security of `serve`
+scripts                what the release uses: the notes of a version, from CHANGELOG.md
 testdata/examples      example agents, copied from the Rust project
 testdata/script        acceptance cases (testscript)
 ```
@@ -444,6 +457,10 @@ make version      # the version that a build would have
 make dist         # dist/: an archive for each system, with the license, and SHA256SUMS
 ```
 
+A tag like `v0.2.0` pushed to GitHub publishes the release by itself (`.github/workflows/release.yml`): the
+tests run, `make dist` builds the archives with that version, and the release has them, `SHA256SUMS` and
+what `CHANGELOG.md` says about the version. A tag whose version has no section there is not published.
+
 The version comes from the git tag (`git tag v0.1.0` gives `0.1.0`); between two tags it is like
 `0.1.0-3-g56d1202`, and a plain `go build` says `0.0.0-dev`. `make dist` builds for macOS (arm64 and amd64),
 Linux (amd64 and arm64) and Windows (amd64), and the CI builds all of them at every push. What changed in each
@@ -479,17 +496,21 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    program has to be started with the pipes of this project, put in a job object right after `Start`, and
    ended the way the SDK ends it.
 2. **The port of the tests of the original project** (`contract/*`, `a2a_*`, `sample_city_briefing`,
-   `perf`).
+   `perf`). It needs the sources of the original project at hand.
 3. **Checks in real conditions** that cannot be automated (next section), most of which were done.
 4. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
    of `shorten` are one function (`internal/clip`). Run Sonar again to see what is left; the
    record of the language (above) is what makes the next change in `internal/lang` safe.
-5. **Distribution:** `make dist` builds the binaries for the three systems, with the version of the git tag, and
-   `CHANGELOG.md` and `CONTRIBUTING.md` exist. What is left is a reference of the language for people who write
-   agents, and publishing a release on GitHub from a tag: the archives are made by hand today.
-6. **Smaller decisions:** a smaller default for the memory a conversation may use (see Memory
-   above), `--token-file`, a real TOML library in place of the small reader, and a review of the
-   security of `serve` by someone who did not write it, before it is exposed to the internet.
+5. **Distribution is done:** the archives for the three systems, the release on GitHub from a tag, and
+   [the reference of the language](docs/LANGUAGE.md).
+6. **Smaller decisions, done:** the default of `max_state_bytes` is 256 KiB, `--token-file` exists, TOML is
+   read by a library, and `serve` had [a review of its security](docs/SECURITY-REVIEW.md), which fixed three
+   things and left four open. That review was made by the one who wrote part of it, so **a review by a person
+   from outside is still the thing to do before `--public`**.
+7. **`readonly` for tool servers:** the pool of tool servers can offer only the actions a server marks as
+   read only, but the language does not let an agent ask for it (`tool x from mcp "..." readonly` is
+   refused by the parser), so L7 holds for `file` and `http` only. Adding it changes the language, and
+   so the record of `internal/lang`.
 
 ### Not verified yet
 
