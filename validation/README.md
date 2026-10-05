@@ -157,14 +157,17 @@ on this computer (on Linux the root is `~/.local/share/caddy/pki/authorities/loc
 export METAGENTE_TOKEN=$(cat ~/metagente-demo/.token)
 c() { curl -sS --cacert "$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt" --resolve hello.localhost:8443:127.0.0.1 "$@"; }
 CARD=https://hello.localhost:8443/agents/Hello/.well-known/agent-card.json
+```
 
-c -H "Authorization: Bearer $METAGENTE_TOKEN" $CARD                              # 1
-c -o /dev/null -w '%{http_code}\n' $CARD                                         # 2
-c -o /dev/null -w '%{http_code}\n' -H "Origin: https://evil.example" -H "Authorization: Bearer $METAGENTE_TOKEN" $CARD   # 3
-c -H "Authorization: Bearer $METAGENTE_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"data":{"skill":"greet","arguments":{"name":"Maria"}}}]}}}' \
-  https://hello.localhost:8443/agents/Hello                                      # 4
-curl -s -i -H "Authorization: Bearer $METAGENTE_TOKEN" http://127.0.0.1:8080/agents/Hello/.well-known/agent-card.json | head -12   # 5
+Then the five calls, one line each (the `echo` names each answer; do not put a `#` comment at the end of a
+line when you paste into `zsh`, which does not read it as a comment and hands it to `curl`):
+
+```text
+echo "== 1"; c -H "Authorization: Bearer $METAGENTE_TOKEN" $CARD
+echo; echo "== 2"; c -o /dev/null -w '%{http_code}\n' $CARD
+echo "== 3"; c -o /dev/null -w '%{http_code}\n' -H "Origin: https://evil.example" -H "Authorization: Bearer $METAGENTE_TOKEN" $CARD
+echo "== 4"; c -H "Authorization: Bearer $METAGENTE_TOKEN" -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"data":{"skill":"greet","arguments":{"name":"Maria"}}}]}}}' https://hello.localhost:8443/agents/Hello
+echo; echo "== 5"; curl -s -i -H "Authorization: Bearer $METAGENTE_TOKEN" http://127.0.0.1:8080/agents/Hello/.well-known/agent-card.json | head -12
 ```
 
 **Expected:**
@@ -191,7 +194,7 @@ its data folder; nothing was installed in the system.
 | 1 | 2026-10-04 | macOS, arm64 | 0.0.0-dev | passed with the MCP Inspector 1.0.2 | `initialize`, `tools/list` and `tools/call` work; the answer was `Hello, Maria!`. Not tried with a desktop assistant. |
 | 2 | 2026-10-04 | macOS, arm64; Node 18.18.2, npm 9.8.1 | 0.0.0-dev | passed | `npx` started `@modelcontextprotocol/server-everything` (not pinned; its version was not recorded) with the minimal environment. `say` answered `Echo: hello`. In `get-env`, `SECRET_TEST` and `ANTHROPIC_API_KEY` did not appear, nor did any other variable of the shell. The tool is `get-env` in the version fetched, not `printEnv`. The server does receive the whole `PATH` and the `HOME`: the environment is minimal, not an isolation. |
 | 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
-| 4 | | | | not run | |
+| 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |
 
 ## What the checks found
 
@@ -202,3 +205,5 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 | F1 | 3 | The approval of `think` says "sends your key and what the agent asks the language model to" even when the address is of this computer and there is no key. It says more than what happens. | fixed: when no key is set and the address is of this computer, the approval says "with no key (none is set)" |
 | F2 | 3 | A small model can write a call to a tool as text and invent its result. The answer goes out as the answer of the agent. | open, a limit of the model |
 | F3 | 1 | The schema of a tool does not say the type of the values, so a generic client (the Inspector) shows a JSON editor and a text has to be written between quotes. | open, a choice: the language has no types in the interface |
+| F4 | 4 | Behind a proxy the banner shows only the public address (`https://hello.localhost:8443`), not the address where the server listens (`127.0.0.1:8080`), which is what the person who writes the proxy needs. | open |
+| F5 | 4 | Behind a proxy every line of the access log has `remote=127.0.0.1`, the one that went around the proxy too, so it looks like the others unless the status (421) is read. Writing the header `Host` that was received (shortened with `clip.Collapse`, since it comes from outside) would tell the two apart. | open |
