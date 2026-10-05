@@ -51,6 +51,26 @@ Maria. **Expected:** the tool is listed, and the answer has `Hello, Maria!`.
 If it does not work, the client keeps a log per server (Claude Desktop:
 `~/Library/Logs/Claude/mcp-server-hello.log`). Keep its first 40 lines.
 
+### With the MCP Inspector instead
+
+The Inspector is the debugging tool of the MCP project itself, written with the SDK in TypeScript,
+so it is a client from another team in another language. From the folder of the demo:
+
+```text
+cd ~/metagente-demo
+npx @modelcontextprotocol/inspector ~/bin/metagente serve hello.ag --stdio
+```
+
+Open the address it prints, press **Connect**, then **Tools**, **List Tools**, choose the tool and
+run it. Two things to know:
+
+- Do not give our `--config` to it directly: the Inspector has an option of the same name, takes it
+  for itself and fails with `Unexpected token '#', "# Settings"... is not valid JSON`. Run it from the
+  folder of `metagente.toml`, as above, or separate the two with `--`.
+- The schema of a tool does not say what type a value has (the interface of an agent names its
+  values, not their types), so the Inspector shows a JSON editor for each one. A text goes **between
+  quotes**: `"Maria"`. Without them, `{"name": "Maria"}` is an object, and the agent receives a record.
+
 ## 2. A tool server that is not ours, and the environment it receives (E1)
 
 What the tests cannot show: that `npx` finds what it needs in the minimal environment, and that
@@ -101,7 +121,7 @@ Written after 1 to 3, because it depends on what they show about the options of 
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
 |---|---|---|---|---|---|
-| 1 | | | | not run | |
+| 1 | 2026-10-04 | macOS, arm64 | 0.0.0-dev | passed with the MCP Inspector 1.0.2 | `initialize`, `tools/list` and `tools/call` work; the answer was `Hello, Maria!`. Not tried with a desktop assistant. |
 | 2 | | | | not run | |
 | 3 | | | | not run | |
 | 4 | | | | not run | |
