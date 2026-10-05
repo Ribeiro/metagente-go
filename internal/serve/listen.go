@@ -21,6 +21,11 @@ type RunOptions struct {
 	WriteTimeout time.Duration
 	// MaxConnections is the most connections open at once. Zero means no limit.
 	MaxConnections int
+	// MaxConnectionsPerAddress is the most connections open at once from one place
+	// (see addressGroup). Zero means no limit: it is only for a server that faces the
+	// network by itself, since on this computer, or behind a proxy, every client comes
+	// from the same address.
+	MaxConnectionsPerAddress int
 	// ReadHeaderTimeout, ReadTimeout and IdleTimeout are the usual ones of a server:
 	// 5 s, 30 s and 60 s when zero.
 	ReadHeaderTimeout time.Duration
@@ -55,6 +60,9 @@ func (p *Plan) TLSConfig() (*tls.Config, error) {
 // door of a protocol with more ways to be abused, for a server whose clients are
 // programs that make one request at a time.
 func Serve(ctx context.Context, ln net.Listener, handler http.Handler, tlsConfig *tls.Config, ro RunOptions) error {
+	if ro.MaxConnectionsPerAddress > 0 {
+		ln = LimitPerAddress(ln, ro.MaxConnectionsPerAddress)
+	}
 	if ro.MaxConnections > 0 {
 		ln = LimitListener(ln, ro.MaxConnections)
 	}
@@ -154,4 +162,53 @@ func (c *limitConn) Close() error {
 	err := c.Conn.Close()
 	c.once.Do(c.release)
 	return err
+}
+
+// LimitPerAddress makes a listener keep at most n connections at once from one place. A
+// connection over that is closed as soon as it is accepted, and never takes one of the
+// places of the server: one place cannot hold all of them by opening connections and
+// sending nothing, or sending it slowly.
+func LimitPerAddress(l net.Listener, n int) net.Listener {
+	return &perAddressListener{Listener: l, limit: n, open: map[string]int{}}
+}
+
+type perAddressListener struct {
+	net.Listener
+	limit int
+
+	mu   sync.Mutex
+	open map[string]int
+}
+
+func (l *perAddressListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		key := addressGroup(conn.RemoteAddr().String())
+		if !l.take(key) {
+			_ = conn.Close()
+			continue
+		}
+		return &limitConn{Conn: conn, release: func() { l.give(key) }}, nil
+	}
+}
+
+func (l *perAddressListener) take(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.open[key] >= l.limit {
+		return false
+	}
+	l.open[key]++
+	return true
+}
+
+func (l *perAddressListener) give(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.open[key]--; l.open[key] <= 0 {
+		delete(l.open, key)
+	}
 }

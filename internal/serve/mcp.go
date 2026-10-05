@@ -40,6 +40,9 @@ type MCPConfig struct {
 	MaxInFlight int
 	// MaxConversations is the most conversations held at once. 256 when zero.
 	MaxConversations int
+	// MaxCallDepth is how many agents may be running in a call, counting the ones
+	// that called this one through MCP (requirement D2). 8 when zero.
+	MaxCallDepth int
 	// Log keeps the details of failures inside the server. May be nil.
 	Log *applog.Log
 
@@ -105,6 +108,9 @@ func NewMCP(cfg MCPConfig, agents []Agent) (m *MCPServer, err error) {
 	}
 	if cfg.MaxConversations <= 0 {
 		cfg.MaxConversations = 256
+	}
+	if cfg.MaxCallDepth <= 0 {
+		cfg.MaxCallDepth = 8
 	}
 	if cfg.Version == "" {
 		cfg.Version = "0.0.0"
@@ -329,7 +335,11 @@ func (m *MCPServer) call(ctx context.Context, req *sdk.CallToolRequest, agent Ag
 	note := mcpNote(req)
 	note.setAgent(agent.Name())
 	note.setMessage(skill.ID)
+	var chain []string
 	values, e := argumentsOf(req.Params.Arguments)
+	if e == nil {
+		chain, e = callChain(req, agent, m.cfg.MaxCallDepth)
+	}
 	if e != nil {
 		note.setResult(resultError)
 		return toolError(e.Message)
@@ -343,7 +353,7 @@ func (m *MCPServer) call(ctx context.Context, req *sdk.CallToolRequest, agent Ag
 	defer cancel()
 	defer context.AfterFunc(m.stopping, cancel)()
 
-	call := Call{ID: newToken("task")}
+	call := Call{ID: newToken("task"), Chain: chain}
 	note.setTask(call.ID)
 	result, err := m.run(ctx, req.Session, agent, skill, call, values)
 	if err != nil {
@@ -366,6 +376,21 @@ func (m *MCPServer) run(ctx context.Context, session *sdk.ServerSession, agent A
 	defer slot.release()
 	return slot.conv.Run(ctx, call, skill.ID, values)
 }
+
+// callChain reads the agents already running in a call, which a Metagente that calls
+// this one puts in the `_meta` of the call, and refuses a call that goes too deep or
+// in a circle. A client that is not Metagente sends none.
+func callChain(req *sdk.CallToolRequest, agent Agent, limit int) ([]string, *rpcError) {
+	chain, e := parseChain(req.Params.Meta[mcpChainMeta])
+	if e != nil {
+		return nil, e
+	}
+	return chain, checkDepth(chain, agent, limit)
+}
+
+// mcpChainMeta is the key of the chain in the `_meta` of a call; the client of this
+// project (internal/mcp) writes it.
+const mcpChainMeta = "metagente/chain"
 
 // mcpOutcome says, for the access log, how a call that did not answer ended.
 func mcpOutcome(ctx context.Context, err error) string {

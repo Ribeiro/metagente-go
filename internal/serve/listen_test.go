@@ -280,3 +280,72 @@ func TestACertificateThatCannotBeReadIsExplainedWithoutItsPath(t *testing.T) {
 		t.Errorf("a plan without TLS: %v %v", config, err)
 	}
 }
+
+// req: S6
+func TestOnePlaceCannotHoldMoreThanItsConnections(t *testing.T) {
+	ln := LimitPerAddress(tcpListener(t), 2)
+	defer ln.Close()
+	accepted := make(chan net.Conn, 8)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- conn
+		}
+	}()
+	dial := func() net.Conn {
+		t.Helper()
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = c.Close() })
+		return c
+	}
+	dial()
+	dial()
+	first, second := <-accepted, <-accepted
+	third := dial()
+	// The third is closed by the server at once: reading it ends.
+	_ = third.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := third.Read(make([]byte, 1)); err == nil {
+		t.Fatal("a third connection from the same place was kept")
+	}
+	select {
+	case <-accepted:
+		t.Fatal("a third connection from the same place was handed to the server")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Closing one gives its place back.
+	_ = first.Close()
+	time.Sleep(20 * time.Millisecond)
+	dial()
+	select {
+	case c := <-accepted:
+		_ = c.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("a place that was given back was not taken")
+	}
+	_ = second.Close()
+}
+
+func TestAnIPv6NetworkIsOnePlace(t *testing.T) {
+	for _, tt := range []struct{ a, b string }{
+		{"[2001:db8:1:2::1]:5", "[2001:db8:1:2:ffff::9]:6"},
+		{"192.0.2.1:5", "192.0.2.1:9"},
+	} {
+		if addressGroup(tt.a) != addressGroup(tt.b) {
+			t.Errorf("%s and %s are not the same place: %s, %s", tt.a, tt.b, addressGroup(tt.a), addressGroup(tt.b))
+		}
+	}
+	for _, tt := range []struct{ a, b string }{
+		{"[2001:db8:1:2::1]:5", "[2001:db8:1:3::1]:5"},
+		{"192.0.2.1:5", "192.0.2.2:5"},
+	} {
+		if addressGroup(tt.a) == addressGroup(tt.b) {
+			t.Errorf("%s and %s are the same place: %s", tt.a, tt.b, addressGroup(tt.a))
+		}
+	}
+}

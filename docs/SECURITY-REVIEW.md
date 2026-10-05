@@ -50,12 +50,17 @@ that says why and how to make a good one. It is in the changelog.
 - **`--behind-proxy`** only listens on this computer, and turns off the slowing down, because all requests
   come from the proxy; `X-Forwarded-For` is never trusted.
 
+## Closed after the review
+
+| # | What | Fix | Test |
+|---|---|---|---|
+| O1 | Connections that send their headers slowly could hold the places of the listener | with `--public`, one place holds at most `max_connections_per_address` (32) connections; one more is closed as soon as it is accepted, without taking a place. A place is an IPv4 address or an IPv6 network of 64 bits, for this limit and for the wrong tokens. On this computer or behind a proxy there is no such limit, since every client has the same address there | `TestOnePlaceCannotHoldMoreThanItsConnections`, `TestAnIPv6NetworkIsOnePlace`, `TestTheAddressesOfAnIPv6NetworkShareTheirTries`, `TestOnlyAPublicServerLimitsTheConnectionsOfEachPlace` |
+| O2 | The call depth of D2 did not cross MCP | the chain goes in the `_meta` of a call (`metagente/chain`), only to a tool server that says it is Metagente; the MCP server refuses a call too deep or in a circle | `TestTheChainOfAgentsGoesOnlyToAServerOfMetagente`, `TestAnMCPCallCarriesTheChainOfAgentsAndIsStoppedInACircleOrTooDeep`, `mcp_chain_across_processes.txt` (three processes) |
+
 ## Open, with what is recommended
 
 | # | What | Why it is not fixed here | What to do |
 |---|---|---|---|
-| O1 | Connections that send their headers slowly can still hold the places of the listener for `read_header_timeout_seconds` (5) each, and a stranger can open them again and again | it needs a limit of connections for each address, which behind a proxy would stop everyone, and choosing that limit is a decision | for `--public`, put the server behind a proxy that limits connections for each address, or add such a limit to the listener (off with `--behind-proxy`) |
-| O2 | The call depth of D2 does not cross MCP over HTTP: a Metagente agent that calls another one through `tool x from mcp "https://.../mcp"` carries no chain, so a circle through MCP is not found | MCP has no place for the chain that both sides agree on | a circle ends anyway, at `timeout_seconds` and `max_running_tasks`; to find it, the chain could go in the `_meta` of the call |
 | O3 | Whoever holds the token can use up to `max_retained_tasks` × `max_state_bytes` of memory (about 250 MiB with the defaults), and keep `max_running_tasks` calls running | the token is meant to give that much | on a small machine lower the two settings (see Memory in the README) |
 | O4 | `--token-file` reads the token once, when the server starts | changing the token while it runs would need a decision about the requests that are running | restart the server to change the token |
 

@@ -55,9 +55,11 @@ type Serve struct {
 	AllowedOrigins       []string // S4
 	TaskRetentionSeconds int      // S9
 	MaxConnections       int      // S6
-	MaxRunningTasks      int      // S6
-	MaxRetainedTasks     int      // S6
-	MaxBodyBytes         int64    // S6
+	// MaxConnectionsPerAddress is the most connections one place may hold, with --public.
+	MaxConnectionsPerAddress int
+	MaxRunningTasks          int   // S6
+	MaxRetainedTasks         int   // S6
+	MaxBodyBytes             int64 // S6
 	// The timeouts and the limits of the listener, and how many wrong tokens a place may try.
 	ReadHeaderTimeoutSeconds int // S6
 	ReadTimeoutSeconds       int // S6
@@ -116,6 +118,7 @@ func Default() *Config {
 			Bind:                     "127.0.0.1",
 			TaskRetentionSeconds:     600,
 			MaxConnections:           256,
+			MaxConnectionsPerAddress: 32,
 			MaxRunningTasks:          64,
 			MaxRetainedTasks:         1000,
 			MaxBodyBytes:             1 << 20,
@@ -234,6 +237,7 @@ var settings = map[string]setter{
 	"serve.allowed_origins":             setStrings(func(c *Config) *[]string { return &c.Serve.AllowedOrigins }),
 	"serve.task_retention_seconds":      setInt(func(c *Config) *int { return &c.Serve.TaskRetentionSeconds }, 1),
 	"serve.max_connections":             setInt(func(c *Config) *int { return &c.Serve.MaxConnections }, 1),
+	"serve.max_connections_per_address": setInt(func(c *Config) *int { return &c.Serve.MaxConnectionsPerAddress }, 1),
 	"serve.max_running_tasks":           setInt(func(c *Config) *int { return &c.Serve.MaxRunningTasks }, 1),
 	"serve.max_retained_tasks":          setInt(func(c *Config) *int { return &c.Serve.MaxRetainedTasks }, 1),
 	"serve.max_body_bytes":              setInt64(func(c *Config) *int64 { return &c.Serve.MaxBodyBytes }, 1),

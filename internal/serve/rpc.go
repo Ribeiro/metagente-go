@@ -241,15 +241,21 @@ func (s *Server) checkChain(agent Agent, msg *wireMessage) ([]string, *rpcError)
 	if e != nil {
 		return nil, e
 	}
-	if len(chain) >= s.cfg.MaxCallDepth {
-		return nil, &rpcError{codeServer, "the agents are calling each other too deep"}
+	return chain, checkDepth(chain, agent, s.cfg.MaxCallDepth)
+}
+
+// checkDepth refuses a call that would go deeper than the limit, or come back to an agent
+// that is already running in it (requirement D2).
+func checkDepth(chain []string, agent Agent, limit int) *rpcError {
+	if len(chain) >= limit {
+		return &rpcError{codeServer, "the agents are calling each other too deep"}
 	}
 	for _, name := range chain {
 		if name == agent.Name() {
-			return nil, &rpcError{codeServer, "the agents are calling each other in a circle"}
+			return &rpcError{codeServer, "the agents are calling each other in a circle"}
 		}
 	}
-	return chain, nil
+	return nil
 }
 
 // acquire takes one of the places for requests that run at the same time. A
@@ -500,8 +506,12 @@ func firstSkill(agent Agent) string {
 // they are taken as the word of a peer, but they are still checked for shape.
 func chainOf(metadata map[string]any) ([]string, *rpcError) {
 	meta, _ := metadata["metagente"].(map[string]any)
-	list, present := meta["chain"]
-	if !present || list == nil {
+	return parseChain(meta["chain"])
+}
+
+// parseChain reads a chain of agents: a list of names, or nothing.
+func parseChain(list any) ([]string, *rpcError) {
+	if list == nil {
 		return nil, nil
 	}
 	items, ok := list.([]any)

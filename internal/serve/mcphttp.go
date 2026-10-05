@@ -46,6 +46,7 @@ func (s *Server) addMCP(agents []Agent) error {
 	m, err := NewMCP(MCPConfig{
 		Version:        s.cfg.Version,
 		RequestTimeout: s.cfg.RequestTimeout,
+		MaxCallDepth:   s.cfg.MaxCallDepth,
 		Log:            s.cfg.Log,
 		running:        s.inflight,
 		room:           s.room,

@@ -333,3 +333,39 @@ func TestAServerStoppedFromOutsideEndsToo(t *testing.T) {
 		t.Fatal("the server did not stop")
 	}
 }
+
+// req: D2
+func TestAnMCPCallCarriesTheChainOfAgentsAndIsStoppedInACircleOrTooDeep(t *testing.T) {
+	session := connect(t, newMCP(t, func(c *MCPConfig) { c.MaxCallDepth = 3 }))
+	callWith := func(chain any) *sdk.CallToolResult {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		r, err := session.CallTool(ctx, &sdk.CallToolParams{Name: "Bob__chain", Meta: sdk.Meta{mcpChainMeta: chain}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	if got := textOfResult(t, callWith([]any{"Alice", "Carol"})); got != "Alice>Carol" {
+		t.Errorf("the agent was told the chain %q", got)
+	}
+	for name, tt := range map[string]struct {
+		chain any
+		want  string
+	}{
+		"circle":    {[]any{"Alice", "Bob"}, "in a circle"},
+		"too deep":  {[]any{"A", "B", "C"}, "too deep"},
+		"not names": {[]any{"has space"}, "chain of agents is not valid"},
+		"not list":  {"Alice", "chain of agents is not valid"},
+	} {
+		r := callWith(tt.chain)
+		if !r.IsError || !strings.Contains(textOfResult(t, r), tt.want) {
+			t.Errorf("%s: %+v %q", name, r, textOfResult(t, r))
+		}
+	}
+	// A client that says nothing has an empty chain.
+	if got := textOfResult(t, mcpCall(t, session, "Bob__chain", nil)); got != "" {
+		t.Errorf("a call without a chain was told %q", got)
+	}
+}
