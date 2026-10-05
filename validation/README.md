@@ -87,10 +87,14 @@ metagente run probe.ag show_env
 ```
 
 **Expected:** `say` answers with the text echoed. `show_env` lists the variables of the server: `PATH`,
-`HOME`, `USER` and a few more are right; the ones that `npx` itself sets (`npm_*`, `NODE`, `INIT_CWD`)
-are not ours either. `SECRET_TEST`, `ANTHROPIC_API_KEY`, `SSH_AUTH_SOCK` or any other variable of
-your shell must **not** be there. If the server says that it has no tool `printEnv`, this version
-of it changed the name: keep the message.
+`HOME`, `USER`, `LANG` and `TMPDIR` are the ones that we pass; `npx` and the shell it uses add their own
+(`npm_*`, `NODE`, `INIT_CWD`, `COLOR`, `EDITOR`, `SHLVL`, `_`, and on macOS `__CF_USER_TEXT_ENCODING`),
+which `ChildEnv` could not pass because they are not in its list. `SECRET_TEST`, `ANTHROPIC_API_KEY`, `SSH_AUTH_SOCK` or any other variable of
+your shell must **not** be there.
+
+The package is not pinned (that is the warning of `check`), so what `npx` fetches changes with the
+time. The tool that prints the environment was called `printEnv` and is `get-env` in the version
+that was tried; if the server says that it has no such action, the message lists the ones it has.
 
 ## 3. A model that is not Anthropic's (Ollama)
 
@@ -122,6 +126,6 @@ Written after 1 to 3, because it depends on what they show about the options of 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
 |---|---|---|---|---|---|
 | 1 | 2026-10-04 | macOS, arm64 | 0.0.0-dev | passed with the MCP Inspector 1.0.2 | `initialize`, `tools/list` and `tools/call` work; the answer was `Hello, Maria!`. Not tried with a desktop assistant. |
-| 2 | | | | not run | |
+| 2 | 2026-10-04 | macOS, arm64; Node 18.18.2, npm 9.8.1 | 0.0.0-dev | passed | `npx` started `@modelcontextprotocol/server-everything` (not pinned; its version was not recorded) with the minimal environment. `say` answered `Echo: hello`. In `get-env`, `SECRET_TEST` and `ANTHROPIC_API_KEY` did not appear, nor did any other variable of the shell. The tool is `get-env` in the version fetched, not `printEnv`. The server does receive the whole `PATH` and the `HOME`: the environment is minimal, not an isolation. |
 | 3 | | | | not run | |
 | 4 | | | | not run | |

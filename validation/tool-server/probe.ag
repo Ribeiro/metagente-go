@@ -6,4 +6,4 @@ agent Probe
   on say
     reply everything.echo message: text within 120 seconds
   on show_env
-    reply everything.printEnv within 120 seconds
+    reply everything.get-env within 120 seconds
