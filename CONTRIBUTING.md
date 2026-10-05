@@ -16,7 +16,7 @@ tests with `-race` of the packages that run things at the same time, and the tes
   secret. What comes from outside goes through `internal/clip` before a message repeats it.
 - A part that talks to another program (MCP, A2A, a model, a proxy) is not checked by tests that use doubles
   alone. Try it against software that others wrote, and write the steps and what they showed in
-  `validation/README.md`: four of the seven checks there found a defect that no test had.
+  `validation/README.md`: four of the eight checks there found a defect that no test had.
 
 ## The language
 

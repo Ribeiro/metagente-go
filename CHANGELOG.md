@@ -7,6 +7,20 @@ minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- `metagente serve --mcp`: the agents as MCP tools over HTTP too, at `/mcp`, behind the same door and the
+  same token as A2A (S10). A session is a conversation with each agent; it ends when the client says so or
+  after `task_retention_seconds` without use, and what its agents kept is let go. The answer comes in the
+  answer to the POST, as JSON; a stream of the server (`GET`) is refused with `405`. There are no more
+  sessions at once than `max_retained_tasks` (one more is a `503`).
+- The access log says which agent, message and task an MCP call ran, and how it ended (`rpc=mcp`).
+
+### Changed
+
+- A2A and MCP share `max_running_tasks` and `max_retained_tasks`: they are limits of the server, not of
+  each protocol.
+
 ## [0.1.0] - 2026-10-05
 
 The first version: the interpreter of MetaAgent, written again in Go, for the agent files (`.ag`) that speak

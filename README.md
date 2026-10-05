@@ -25,6 +25,7 @@ All code, comments and tests are written in English.
 | 11 | The `serve` command: listener and its limits, TLS, the flags, the banner, the access log, a clean stop | Compiled; tests pass, also with `-race`; run by hand with two processes |
 | 12 | The agents as MCP tools: `metagente serve --stdio` | Compiled; tests pass, also with `-race` |
 | 13 | The differences from the specification closed: E3, E4, S4, S6, S8, P5 | Compiled; the tests pass, also with `-race` |
+| 14 | MCP over HTTP behind the same door (S10): `metagente serve --mcp` | Compiled; tests pass, also with `-race`; tried with the client of the official SDK in TypeScript and with the command line of the MCP Inspector |
 
 Every slice compiles and its tests pass. The CI runs them on Linux and Windows at every push, and on macOS once a
 week and when asked for; what was checked against programs of other people, and what was not, is in
@@ -49,10 +50,36 @@ curl -H "Authorization: Bearer $METAGENTE_TOKEN" http://127.0.0.1:8080/agents/He
 | Behind a proxy on this computer | `--behind-proxy --host NAME --public-url https://NAME` | the token in `METAGENTE_TOKEN`; the proxy does the TLS and has to limit the rate |
 
 Other options: `--port N`, `--agent NAME` (repeatable: serve only those; by default all the
-agents of the files), `--public-card` (a card with the names only, for anyone), `--quiet` (no
-access log), `--config FILE`. Files and options may come in any order.
+agents of the files), `--public-card` (a card with the names only, for anyone), `--mcp` (the
+agents as MCP tools too, see below), `--quiet` (no access log), `--config FILE`. Files and
+options may come in any order.
 
-### Serving to a program that speaks MCP
+### Serving to a program that speaks MCP over HTTP
+
+```text
+metagente serve hello.ag --mcp                # A2A at /agents/NAME, and MCP at /mcp
+```
+
+With `--mcp` the same agents are also MCP tools, over the streamable HTTP of MCP, at `/mcp`, behind
+the same door as A2A: the Host, no browser, the token, the size of the body, and the same limits.
+It works with every way of serving above (this computer, `--public`, `--behind-proxy`). The tools
+are the ones of `--stdio` (next section). A session is a conversation with each agent: the server
+issues its id, it ends when the client says so (a `DELETE`) or after `task_retention_seconds`
+without use, and what its agents kept is let go then.
+
+The answer to each call comes in the answer to its POST, as JSON. The server sends nothing on its
+own, so a `GET`, which would open a stream for that, gets `405`, as MCP allows. A2A and MCP share
+`max_running_tasks` (calls at once; an MCP call over it is an error of the tool that says the
+server is busy) and `max_retained_tasks` (conversations); there are no more MCP sessions at once
+than `max_retained_tasks`, and one more is a `503`.
+
+A client sends the token in every request:
+
+```json
+{ "url": "http://127.0.0.1:8080/mcp", "headers": { "Authorization": "Bearer ..." } }
+```
+
+### Serving to a program that speaks MCP, on standard input and output
 
 ```text
 metagente serve hello.ag --stdio
@@ -99,7 +126,7 @@ place before it waits a minute). `allowed_origins` is **ignored**: no page in a 
 server, and `serve` says so when it is set.
 
 **Memory.** A conversation may keep `max_state_bytes` of `state` (1 MiB by default) and the
-server keeps up to `max_retained_tasks` of them (1000 by default). Together that is up to
+server keeps up to `max_retained_tasks` of them (1000 by default), of A2A and of MCP together. Together that is up to
 about 1 GiB that someone who holds the token could make the server use. On a small machine,
 lower one of the two.
 
@@ -136,6 +163,8 @@ lower one of the two.
 - `metagente serve FILE.ag ...`: the agents over A2A, on this computer, behind a token; open to
   the network with TLS of its own, or behind a proxy (see [Serving agents](#serving-agents)).
 - `metagente serve FILE.ag --stdio`: the same agents as MCP tools on standard input and output.
+- `metagente serve FILE.ag --mcp`: the same agents as MCP tools over HTTP too, at `/mcp`, behind the
+  token (see [Serving to a program that speaks MCP over HTTP](#serving-to-a-program-that-speaks-mcp-over-http)).
 - `metagente token`: makes a token to keep and give to the server.
 - `[credentials]` in `metagente.toml`: the bearer token for a `remote` agent or for a tool server
   that is an address, named by the variable that holds it.
@@ -151,7 +180,7 @@ The specification has 47. The state of each one:
 - **differs (open)**: the port does something else than the specification says, and nobody decided it yet (none today);
 - **partial**: part of it is missing.
 
-Today: 40 done, 5 done, changed (agreed), 2 partial.
+Today: 41 done, 5 done, changed (agreed), 1 partial.
 
 | ID | State | What | Where |
 | --- | --- | --- | --- |
@@ -194,7 +223,7 @@ Today: 40 done, 5 done, changed (agreed), 2 partial.
 | S7 | done | `state` is kept per agent and per conversation, and the server issues the id of a conversation; an idle conversation expires after `task_retention_seconds` (600 s; the specification says 1 h) and its memory is let go | `internal/tools/state.go`, `internal/serve/contexts.go` |
 | S8 | done | the address in the Agent Card never comes from a request: it is `public_url`, else the first of the names the server answers to, else the address it listens on | `internal/serve/options.go`, `server.go` |
 | S9 | done | no task is kept, so there is nothing to sweep; conversations that are not used are swept in the background (`task_retention_seconds`) | `internal/serve/contexts.go` |
-| S10 | partial | the agents as MCP tools over standard input and output are done (no token: the program that starts it is who talks to it). **MCP over HTTP, with S1 to S4 and S6, is not done** | `internal/serve/mcp.go` |
+| S10 | done | the agents as MCP tools over standard input and output (no token: the program that starts it is who talks to it), and over HTTP with `--mcp`, at `/mcp`, behind the door of A2A: S1 to S4 and S6, the access log of P5, and the limits of calls and conversations shared with A2A. Sessions are issued by the server, expire and let go of what they kept (S7, S9). The answer is JSON in the answer to the POST; a stream of the server (`GET`) is refused with 405 | `internal/serve/mcp.go`, `mcphttp.go`, `guard.go` |
 | T1 | done | a program is started or an address reached only after the person approved it for this project; the approved set carries a SHA-256 that is checked on every read. `run` asks in a terminal, otherwise it refuses and says how to approve. The same for `remote` agents: the address, and the token that goes there | `internal/trust`, `internal/runtime/trust.go`, `internal/cli/trust.go` |
 | T2 | done | the approvals live in the folder of the user (`0600`, folder `0700`, written through a temporary file), never inside the project, also when the path is reached through a symbolic link or does not exist yet | `internal/trust` |
 | T3 | done | the key goes only to the address in the configuration; a non default address needs approval, plain `http` is allowed only on this machine, and a redirect is never followed | `internal/llm`, `internal/runtime/trust.go` |
@@ -218,6 +247,22 @@ Today: 40 done, 5 done, changed (agreed), 2 partial.
   `127.0.0.1` is not reached as `localhost` by a `remote` agent, which says that the card sends
   the calls to another address and names it. Use `--host` to choose the name, or write the
   address the card gives.
+- **MCP over HTTP is asked for with `--mcp`, and is not served by default.** It is a second protocol on
+  the same port, and `serve` listens as little as it can. It answers inside the POST, as JSON, and never
+  streams: no agent sends anything on its own, and a stream would be a long connection to hold for
+  nothing. A client that loses an answer asks again; nothing is kept to send again.
+- **The door checks the Host of MCP, not the SDK.** The SDK of MCP has a check of its own against DNS
+  rebinding (a request that reaches a loopback address with a Host that is not one), which is turned
+  off: the door already allows only the names the server answers to, which is stricter, and the check of
+  the SDK would refuse the name of a proxy (`--behind-proxy --host NAME`).
+- **The access log learns which agent an MCP call ran through the information of the token.** The SDK
+  runs a tool in the context of its session, not of the HTTP request, and the only thing it carries
+  from the request to the tool is that information (and the headers). So the token is checked by the
+  door, and then the note of the log travels as the information about it.
+- **A2A and MCP share their limits.** `max_running_tasks` and `max_retained_tasks` are of the server,
+  not of each protocol, so the memory note below holds whichever protocol a client speaks.
+- **Stopping the server cancels the MCP calls that are running.** A session waits for its calls
+  before it ends, so without that a stop would wait for the slowest call.
 - **Too many requests at the same time is a 503, and not a message of the protocol.** A proxy or a
   client that knows nothing of A2A understands it, and the client of this project says that the
   other side is busy.
@@ -346,7 +391,7 @@ internal/runtime       the interpreter, `run`, `think`, `link`, `remote`, the ap
 internal/tools         file, http, env, state, clock, and the registry
 internal/mcp           the pool of tool servers (MCP client)
 internal/remote        the A2A client
-internal/serve         the A2A server, the MCP server, the door, the conversations, the listener
+internal/serve         the A2A server, the MCP server (standard input and output, and HTTP), the door, the conversations, the listener
 internal/llm           the providers of language models (Anthropic, OpenAI compatible)
 internal/trust         what the person approved for a project
 internal/applog        the log of failures inside Metagente
@@ -420,7 +465,7 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 | `dynamic_link`, `link_cycle`, `link_interface` | B, C | `link_test.go`, `link_*.txt`. The MCP double of `dynamic_link` was replaced by a plain agent: the point of that test is the change picked up without editing the caller |
 | `mcp_client` | C | `internal/mcp/pool_test.go` (a real server built with the SDK, started from the test binary itself) and `mcp_end_to_end.txt` |
 | `llm_provider`, `think` | C | `internal/llm/llm_test.go` (servers that pretend to be the providers), `internal/runtime/think_test.go` (a scripted model) and the end to end tests of `cli_test.go` |
-| `mcp_server` | C | `internal/serve/mcp_test.go` (a client of the SDK, in memory) and `internal/cli/serve_stdio_test.go` (the whole command, through pipes) |
+| `mcp_server` | C | `internal/serve/mcp_test.go` (a client of the SDK, in memory), `internal/serve/mcphttp_test.go` (a client of the SDK over HTTP, and the door), `internal/cli/serve_stdio_test.go` (the whole command, through pipes) and `internal/cli/serve_mcp_test.go` (the whole command, over HTTP) |
 | `sample_city_briefing` | C | pending |
 | `contract/*`, `a2a_*`, `serve_*` | B | covered by the tests of `internal/serve` and `internal/cli`; a port of the original ones is pending |
 | `internal_error::an_internal_failure...` | E | `internal/cli` (`TestAnInternalFailureShowsOneSentence...`), `internal/runtime/internal_test.go` |
@@ -428,10 +473,11 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 
 ## What comes next
 
-1. **The missing part of S10** (MCP over HTTP, behind the same door), which needs to be tried before it is
-   promised. The CI on Linux, macOS (once a week) and Windows is done. **E4 on Windows** is left out on
-   purpose (see its row above); to take it up, the program has to be started with the pipes of this
-   project, put in a job object right after `Start`, and ended the way the SDK ends it.
+1. **S10 is done** (MCP over HTTP with `--mcp`), and the CI on Linux, macOS (once a week) and Windows is
+   done. What is left of it is to try it with a desktop assistant that reaches a server by its address,
+   and behind a proxy. **E4 on Windows** is left out on purpose (see its row above); to take it up, the
+   program has to be started with the pipes of this project, put in a job object right after `Start`, and
+   ended the way the SDK ends it.
 2. **The port of the tests of the original project** (`contract/*`, `a2a_*`, `sample_city_briefing`,
    `perf`).
 3. **Checks in real conditions** that cannot be automated (next section), most of which were done.
@@ -450,6 +496,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 Checked against the real thing (the steps and the results are in `validation/README.md`):
 
 - the MCP server, with the MCP Inspector, a client of another team, in TypeScript;
+- the MCP server over HTTP (`--mcp`), with the client of the official SDK in TypeScript and with the command
+  line of the MCP Inspector: the token, the session and its memory, the end of a session, the refusals;
 - a tool server started by `npx`, with the minimal environment of E1: what the shell had did not reach it;
 - `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
 - `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
@@ -464,6 +512,7 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
 - a tool server started with `uvx`;
 - `--public`, with a certificate of its own;
+- MCP over HTTP behind a proxy, and with a desktop assistant;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
