@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"syscall"
 	"strings"
+	"syscall"
 
 	"metagente/internal/applog"
 	"metagente/internal/config"
