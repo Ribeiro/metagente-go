@@ -557,6 +557,9 @@ Checked against the real thing (the steps and the results are in `validation/REA
 - the MCP server over HTTP (`--mcp`), with the client of the official SDK in TypeScript and with the command
   line of the MCP Inspector: the token, the session and its memory, the end of a session, the refusals;
 - a tool server started by `npx`, with the minimal environment of E1: what the shell had did not reach it;
+- a tool server in Python started by `uvx` (`mcp-server-fetch`, the one of the City Briefing sample), with
+  the minimal environment of E1: it fetched a page, nothing of it was left running, and `readonly` refused
+  its tool, which it does not mark as read only;
 - `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
 - `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
 - the A2A server, with the command line of the official A2A SDK in JavaScript, and with its client in Python;
@@ -568,8 +571,6 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 
 - the MCP server with a desktop assistant (Claude Desktop); only the Inspector was tried;
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
-- a tool server started with `uvx` fetching a page: check 10 saw `uvx` start the server in the minimal
-  environment, our client call it, and `readonly` refuse its tool, but not a page arrive;
 - `--public`, with a certificate of its own;
 - MCP over HTTP behind a proxy, and with a desktop assistant;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
