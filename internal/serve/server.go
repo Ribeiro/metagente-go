@@ -40,6 +40,10 @@ type Config struct {
 	ConversationTTL  time.Duration // 30 minutes when zero
 	MaxBody          int64         // 1 MiB when zero
 
+	// MCP serves the agents as MCP tools too, at /mcp, behind the same door
+	// (requirement S10). See mcphttp.go.
+	MCP bool
+
 	// Log keeps the details of failures inside the server. May be nil.
 	Log *applog.Log
 }
@@ -57,7 +61,9 @@ type Server struct {
 	guard    *Guard
 	agents   map[string]Agent
 	contexts *Contexts[*held]
-	inflight chan struct{}
+	inflight places
+	room     places // the conversations of both protocols
+	mcp      *mcpHTTP
 }
 
 // New makes a server for the agents. It refuses a token that is not good enough:
@@ -101,12 +107,14 @@ func New(cfg Config, agents []Agent) (*Server, error) {
 		}
 		byName[name] = agent
 	}
+	room := newPlaces(cfg.MaxConversations)
 	s := &Server{
 		cfg:      cfg,
 		guard:    NewGuard(cfg.Token, cfg.Hosts),
 		agents:   byName,
-		contexts: NewContexts[*held](cfg.MaxConversations, cfg.ConversationTTL),
-		inflight: make(chan struct{}, cfg.MaxInFlight),
+		contexts: newContextsIn[*held](room, cfg.ConversationTTL),
+		inflight: newPlaces(cfg.MaxInFlight),
+		room:     room,
 	}
 	if cfg.MaxBody > 0 {
 		s.guard.MaxBody = cfg.MaxBody
@@ -114,6 +122,11 @@ func New(cfg Config, agents []Agent) (*Server, error) {
 	s.guard.NoThrottle = cfg.NoThrottle
 	s.guard.MaxFailures = cfg.AuthFailuresPerMinute
 	s.contexts.OnRemove = func(_ string, h *held) { h.conv.Close() }
+	if cfg.MCP {
+		if err := s.addMCP(agents); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -135,11 +148,19 @@ func (s *Server) Names() []string {
 // context ends, and then lets go of everything that is left.
 func (s *Server) Run(ctx context.Context) {
 	s.contexts.Run(ctx, time.Minute)
+	s.Close()
+}
+
+// Close ends every MCP session and lets go of every conversation.
+func (s *Server) Close() {
+	if s.mcp != nil {
+		s.mcp.close()
+	}
 	s.contexts.CloseAll()
 }
 
-// Close lets go of every conversation.
-func (s *Server) Close() { s.contexts.CloseAll() }
+// ServesMCP says whether the agents are served as MCP tools too, at MCPPath.
+func (s *Server) ServesMCP() bool { return s.mcp != nil }
 
 type route int
 
@@ -147,6 +168,7 @@ const (
 	routeNone route = iota
 	routeRPC
 	routeCard
+	routeMCP
 )
 
 const cardSuffix = "/.well-known/agent-card.json"
@@ -154,6 +176,9 @@ const cardSuffix = "/.well-known/agent-card.json"
 // route tells what a path is for. Only the exact paths of the agents that are
 // served count: no cleaning, no trailing slash, no alias.
 func (s *Server) route(path string) (route, string) {
+	if path == MCPPath && s.mcp != nil {
+		return routeMCP, ""
+	}
 	rest, ok := strings.CutPrefix(path, "/agents/")
 	if !ok {
 		return routeNone, ""
@@ -193,6 +218,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.guard.ProtectGet(serve).ServeHTTP(w, r)
 		}
+	case routeMCP:
+		s.guard.ProtectMCP(s.mcp).ServeHTTP(w, r)
 	default:
 		s.guard.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			refuse(w, http.StatusNotFound, "not found")

@@ -24,10 +24,11 @@ import (
 // accepts is a tool, so a program that speaks MCP (an editor, a desktop assistant,
 // the `tool x from mcp` of another agent) can call it.
 //
-// It is served over standard input and output only. A program that starts this one
-// and talks to it through its pipes has no network to cross and nobody to
-// impersonate, and the one who started it is who decides who may use it. That is why
-// it asks for no token, and why it opens no port.
+// It is served over standard input and output, and over HTTP behind the door of the
+// A2A server (see mcphttp.go). A program that starts this one and talks to it
+// through its pipes has no network to cross and nobody to impersonate, and the one
+// who started it is who decides who may use it. That is why the first asks for no
+// token and opens no port; the second asks for everything the A2A server asks for.
 
 // MCPConfig is how the MCP server is set up.
 type MCPConfig struct {
@@ -41,14 +42,28 @@ type MCPConfig struct {
 	MaxConversations int
 	// Log keeps the details of failures inside the server. May be nil.
 	Log *applog.Log
+
+	// running and room, when set, are the places for calls and for conversations of
+	// another server, shared with this one; MaxInFlight and MaxConversations are then
+	// not used. makeRoom is asked to let go of what expired before a conversation is
+	// refused for want of a place.
+	running  places
+	room     places
+	makeRoom func()
 }
 
 // MCPServer serves agents as tools.
 type MCPServer struct {
-	cfg      MCPConfig
-	agents   []Agent
-	server   *sdk.Server
-	inflight chan struct{}
+	cfg     MCPConfig
+	agents  []Agent
+	server  *sdk.Server
+	running places
+	room    places
+
+	// stopping ends when the server stops, and cancels the calls that are running:
+	// a session waits for its calls before it ends.
+	stopping context.Context
+	stop     context.CancelFunc
 
 	mu    sync.Mutex
 	slots map[convKey]*convSlot
@@ -94,7 +109,14 @@ func NewMCP(cfg MCPConfig, agents []Agent) (m *MCPServer, err error) {
 	if cfg.Version == "" {
 		cfg.Version = "0.0.0"
 	}
-	m = &MCPServer{cfg: cfg, agents: agents, inflight: make(chan struct{}, cfg.MaxInFlight), slots: map[convKey]*convSlot{}}
+	m = &MCPServer{cfg: cfg, agents: agents, running: cfg.running, room: cfg.room, slots: map[convKey]*convSlot{}}
+	m.stopping, m.stop = context.WithCancel(context.Background())
+	if m.running == nil {
+		m.running = newPlaces(cfg.MaxInFlight)
+	}
+	if m.room == nil {
+		m.room = newPlaces(cfg.MaxConversations)
+	}
 	// The SDK refuses a tool it does not like by panicking; here that is an error.
 	defer func() {
 		if r := recover(); r != nil {
@@ -158,15 +180,40 @@ type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
 
-// Close lets go of every conversation.
+// Close cancels the calls that are running and lets go of every conversation.
 func (m *MCPServer) Close() {
+	m.stop()
+	m.forget(nil)
+}
+
+// forget lets go of the conversations of a session that ended, or of every
+// conversation when session is nil.
+func (m *MCPServer) forget(session *sdk.ServerSession) {
 	m.mu.Lock()
-	slots := m.slots
-	m.slots = map[convKey]*convSlot{}
+	var gone []*convSlot
+	for key, s := range m.slots {
+		if session == nil || key.session == session {
+			gone = append(gone, s)
+			delete(m.slots, key)
+			m.room.give()
+		}
+	}
 	m.mu.Unlock()
-	for _, s := range slots {
+	for _, s := range gone {
 		s.conv.Close()
 	}
+}
+
+// followSession lets go of the conversations of a session when it ends. A session
+// over HTTP ends when the client says so, when it was not used for the time of a
+// conversation, or when the server stops; without this, what its agents kept would
+// stay until the server stops.
+func (m *MCPServer) followSession(_ context.Context, req *sdk.InitializedRequest) {
+	session := req.Session
+	go func() {
+		_ = session.Wait()
+		m.forget(session)
+	}()
 }
 
 // ---------- the tools ----------
@@ -178,7 +225,8 @@ type mcpTool struct {
 }
 
 func (m *MCPServer) build() *sdk.Server {
-	server := sdk.NewServer(&sdk.Implementation{Name: "metagente", Version: m.cfg.Version}, nil)
+	server := sdk.NewServer(&sdk.Implementation{Name: "metagente", Version: m.cfg.Version},
+		&sdk.ServerOptions{InitializedHandler: m.followSession})
 	for _, t := range planTools(m.agents) {
 		server.AddTool(&sdk.Tool{
 			Name:        t.name,
@@ -278,32 +326,56 @@ func (m *MCPServer) recoverCall(result **sdk.CallToolResult, err *error, where s
 }
 
 func (m *MCPServer) call(ctx context.Context, req *sdk.CallToolRequest, agent Agent, skill Skill) *sdk.CallToolResult {
+	note := mcpNote(req)
+	note.setAgent(agent.Name())
+	note.setMessage(skill.ID)
 	values, e := argumentsOf(req.Params.Arguments)
 	if e != nil {
+		note.setResult(resultError)
 		return toolError(e.Message)
 	}
-	release, e := m.acquire()
-	if e != nil {
-		return toolError(e.Message)
+	if !m.running.take() {
+		note.setResult(resultBusy)
+		return toolError(errServerBusy.Message)
 	}
-	defer release()
+	defer m.running.give()
 	ctx, cancel := context.WithTimeout(ctx, m.cfg.RequestTimeout)
 	defer cancel()
+	defer context.AfterFunc(m.stopping, cancel)()
 
 	call := Call{ID: newToken("task")}
-	slot, err := m.slotFor(ctx, req.Session, agent, call)
+	note.setTask(call.ID)
+	result, err := m.run(ctx, req.Session, agent, skill, call, values)
 	if err != nil {
+		note.setResult(mcpOutcome(ctx, err))
 		return toolError(mcpFailure(ctx, err))
+	}
+	note.setResult(resultOK)
+	return toolResult(result)
+}
+
+// run runs the message in the conversation of the agent in this session.
+func (m *MCPServer) run(ctx context.Context, session *sdk.ServerSession, agent Agent, skill Skill, call Call, values map[string]value.Value) (value.Value, error) {
+	slot, err := m.slotFor(ctx, session, agent, call)
+	if err != nil {
+		return value.Value{}, err
 	}
 	if err := slot.acquire(ctx); err != nil {
-		return toolError(mcpFailure(ctx, err))
+		return value.Value{}, err
 	}
 	defer slot.release()
-	result, err := slot.conv.Run(ctx, call, skill.ID, values)
-	if err != nil {
-		return toolError(mcpFailure(ctx, err))
+	return slot.conv.Run(ctx, call, skill.ID, values)
+}
+
+// mcpOutcome says, for the access log, how a call that did not answer ended.
+func mcpOutcome(ctx context.Context, err error) string {
+	switch {
+	case errors.Is(err, ErrTooManyContexts):
+		return resultError // as the A2A server says of the same refusal
+	case errors.Is(ctx.Err(), context.Canceled):
+		return resultLeft
 	}
-	return toolResult(result)
+	return resultFailed
 }
 
 // argumentsOf reads the values of a call: an object, or nothing at all.
@@ -317,16 +389,6 @@ func argumentsOf(raw json.RawMessage) (map[string]value.Value, *rpcError) {
 	return toValues(arguments)
 }
 
-// acquire takes one of the places for calls that run at the same time.
-func (m *MCPServer) acquire() (release func(), e *rpcError) {
-	select {
-	case m.inflight <- struct{}{}:
-		return func() { <-m.inflight }, nil
-	default:
-		return nil, &rpcError{codeServer, "the server is busy; try again in a moment"}
-	}
-}
-
 // slotFor finds the conversation of an agent in a session, starting it with the
 // first call. The first call of a session waits for the others to start theirs; it
 // happens once for each agent.
@@ -337,16 +399,30 @@ func (m *MCPServer) slotFor(ctx context.Context, session *sdk.ServerSession, age
 	if s := m.slots[key]; s != nil {
 		return s, nil
 	}
-	if len(m.slots) >= m.cfg.MaxConversations {
+	if !m.takeRoom() {
 		return nil, ErrTooManyContexts
 	}
 	conv, err := agent.Begin(ctx, newContextID(), call)
 	if err != nil {
+		m.room.give()
 		return nil, err
 	}
 	s := &convSlot{conv: conv, busy: make(chan struct{}, 1)}
 	m.slots[key] = s
 	return s, nil
+}
+
+// takeRoom takes the place of a conversation, asking the one this server shares
+// them with to let go of what expired when there is none.
+func (m *MCPServer) takeRoom() bool {
+	if m.room.take() {
+		return true
+	}
+	if m.cfg.makeRoom == nil {
+		return false
+	}
+	m.cfg.makeRoom()
+	return m.room.take()
 }
 
 func mcpFailure(ctx context.Context, err error) string {

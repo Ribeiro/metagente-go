@@ -82,7 +82,7 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		printError(stderr, err)
 		return 1
 	}
-	return runServer(ctx, serving{rt: rt, plan: plan, agents: agents, token: token, generated: generated, quiet: flags.quiet}, stderr, env)
+	return runServer(ctx, serving{rt: rt, plan: plan, agents: agents, token: token, generated: generated, quiet: flags.quiet, mcp: flags.mcp}, stderr, env)
 }
 
 func usageProblem(stderr io.Writer, err error) {
@@ -99,6 +99,7 @@ type serveArgs struct {
 	configPath string
 	quiet      bool
 	stdio      bool
+	mcp        bool
 }
 
 // listFlag is an option that can be given many times.
@@ -123,6 +124,7 @@ func parseServeArgs(args []string) (*serveArgs, error) {
 	fs.StringVar(&a.configPath, "config", "", "")
 	fs.BoolVar(&a.quiet, "quiet", false, "")
 	fs.BoolVar(&a.stdio, "stdio", false, "")
+	fs.BoolVar(&a.mcp, "mcp", false, "")
 	fs.Var(&hosts, "host", "")
 	fs.Var(&agents, "agent", "")
 
@@ -238,6 +240,7 @@ type serving struct {
 	token     string
 	generated bool
 	quiet     bool
+	mcp       bool
 }
 
 // runServer opens the port and serves until the context ends.
@@ -270,6 +273,7 @@ func runServer(ctx context.Context, s serving, stderr io.Writer, env serveEnv) i
 		ConversationTTL:       secondsOf(cfg.Serve.TaskRetentionSeconds),
 		MaxBody:               cfg.Serve.MaxBodyBytes,
 		MaxCallDepth:          cfg.Runtime.MaxCallDepth,
+		MCP:                   s.mcp,
 		Log:                   s.rt.Log,
 	}, s.agents)
 	if err != nil {
@@ -323,6 +327,9 @@ func announce(stderr io.Writer, s serving, srv *serve.Server, base, listen strin
 	for _, name := range names {
 		fmt.Fprintf(stderr, "  %-12s %s/agents/%s\n", name, base, name)
 	}
+	if srv.ServesMCP() {
+		fmt.Fprintf(stderr, "  %-12s %s%s (the agents as MCP tools)\n", "MCP", base, serve.MCPPath)
+	}
 	if line := whereItListens(s.plan, base, listen, port); line != "" {
 		fmt.Fprintln(stderr, line)
 	}
@@ -355,7 +362,7 @@ func whereItListens(plan *serve.Plan, base, listen string, port int) string {
 // no port and no token: the program that started this one is who talks to it, and
 // who decides who may.
 func serveStdio(ctx context.Context, flags *serveArgs, cfg *config.Config, stdout, stderr io.Writer, env serveEnv) int {
-	if err := checkStdioOptions(flags.options); err != nil {
+	if err := checkStdioOptions(flags); err != nil {
 		printError(stderr, err)
 		return 2
 	}
@@ -386,7 +393,12 @@ func serveStdio(ctx context.Context, flags *serveArgs, cfg *config.Config, stdou
 
 // checkStdioOptions refuses the options of the network: with them the person would
 // believe the server listens somewhere, and it does not.
-func checkStdioOptions(o serve.Options) error {
+func checkStdioOptions(flags *serveArgs) error {
+	if flags.mcp {
+		return diag.New("--mcp serves MCP over HTTP, and --stdio serves it on standard input and output").
+			Fix("keep only one of the two")
+	}
+	o := flags.options
 	used := []struct {
 		name string
 		set  bool

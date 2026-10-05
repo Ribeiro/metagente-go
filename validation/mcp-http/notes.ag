@@ -1,0 +1,10 @@
+agent Notes
+  goal "Remember one thing"
+  tool state
+  accepts remember what
+  accepts recall
+  on remember
+    state.set key: "thing" value: what
+    reply "ok"
+  on recall
+    reply state.get key: "thing"

@@ -86,6 +86,36 @@ func (g *Guard) ProtectGet(next http.Handler) http.Handler {
 	return g.protect(next, http.MethodGet, false)
 }
 
+// ProtectMCP is the door of the MCP endpoint: the same as the one of JSON-RPC, and a
+// DELETE, with the token, that ends a session. A GET, which would open a stream of
+// messages from the server, is refused: this server sends none (the specification
+// of MCP lets a server answer it with 405).
+func (g *Guard) ProtectMCP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		safeHeaders(w)
+		if !g.admit(w, r) {
+			return
+		}
+		if r.URL.RawQuery != "" {
+			refuse(w, http.StatusBadRequest, "query strings are not accepted")
+			return
+		}
+		switch r.Method {
+		case http.MethodPost:
+			if !g.acceptBody(w, r) {
+				return
+			}
+		case http.MethodDelete:
+			r.Body = http.MaxBytesReader(w, r.Body, g.bodyLimit())
+		default:
+			w.Header().Set("Allow", "POST, DELETE")
+			refuse(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // PublicGet is the door of a page anyone may read: no token, but still only for
 // this host, only to GET, and never to a page of a browser.
 func (g *Guard) PublicGet(next http.Handler) http.Handler {

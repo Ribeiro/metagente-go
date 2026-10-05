@@ -16,6 +16,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 5 | `serve` (A2A server) | the command line of the official A2A SDK in JavaScript | 20 min |
 | 6 | `remote` (A2A client) | the sample agent of the official A2A SDK in JavaScript | 30 min |
 | 7 | `remote`, a task that takes time and a caller that gives up | the cancellable agent of the same SDK | 30 min |
+| 8 | `serve --mcp` (MCP over HTTP) | the client of the official SDK of MCP in TypeScript, and the command line of the MCP Inspector | 20 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -403,6 +404,55 @@ curl -s -X POST http://localhost:$PORT/ -H 'Content-Type: application/json' -H '
 the sample client and the agent wrote in the baseline, what each `run` printed and how long `ask` took, what A wrote during
 `ask` and during `hurry`, and the answer of `GetTask`. To end: `Ctrl-C` in A.
 
+## 8. A client of MCP over HTTP that is not ours
+
+What the tests cannot show: that a client of another team, in another language, gets through the door
+(the fetch of Node.js, the headers of the streamable HTTP of MCP), keeps the session the server issued,
+and ends it.
+
+In **A**, the server, with two agents: the `Hello` of check 1 and `notes.ag` of `validation/mcp-http`,
+which remembers one thing (the token goes to a file only for this test):
+
+```text
+cd ~/metagente-demo
+cp PROJECT/validation/mcp-http/notes.ag .            # PROJECT is the root of the project
+~/bin/metagente trust notes.ag
+umask 077; ~/bin/metagente token > .token
+export METAGENTE_TOKEN=$(cat .token)
+~/bin/metagente serve hello.ag notes.ag --mcp
+```
+
+The banner has a line `MCP ... /mcp (the agents as MCP tools)`.
+
+In **B**, the client of the official SDK in TypeScript (Node 20 or newer), in a folder of its own,
+with the script `client.mjs` of `validation/mcp-http`:
+
+```text
+mkdir -p ~/mcp-http-check && cd ~/mcp-http-check
+cp PROJECT/validation/mcp-http/client.mjs .
+npm install --ignore-scripts --no-audit --no-fund @modelcontextprotocol/sdk
+export METAGENTE_TOKEN=$(cat ~/metagente-demo/.token)
+node client.mjs http://127.0.0.1:8080/mcp
+```
+
+**Expected:** a session issued; the three tools; `Hello, Maria!`; `ok`, then `Ana` in the same session and
+an empty text in another one; a missing value refused with `Problem` and `Fix` and `isError`; the session
+ended; and, without the token, `unauthorized`.
+
+Then the command line of the Inspector, in the same folder:
+
+```text
+npm install --ignore-scripts --no-audit --no-fund @modelcontextprotocol/inspector
+npx --no-install mcp-inspector --cli http://127.0.0.1:8080/mcp --transport http --header "Authorization: Bearer $METAGENTE_TOKEN" --method tools/list
+npx --no-install mcp-inspector --cli http://127.0.0.1:8080/mcp --transport http --header "Authorization: Bearer $METAGENTE_TOKEN" --method tools/call --tool-name Hello__greet --tool-arg name=Maria
+```
+
+**Expected:** the three tools, and `Hello, Maria!`. Without `--header` the Inspector tries OAuth and stops:
+the server asks for a bearer token and offers no OAuth.
+
+Keep what B printed and the lines of the access log in A (`rpc=mcp message=...`). To end: `Ctrl-C` in A,
+`rm ~/metagente-demo/.token`, and `rm -rf ~/mcp-http-check`.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -414,6 +464,7 @@ the sample client and the agent wrote in the baseline, what each `run` printed a
 | 5 | 2026-10-04 | macOS, arm64; Node v22.17.0; `a2aproject/a2a-js` (the command line of the official SDK, protocol 1.0) | 0.0.0-dev | passed, after F6 | The card is found and read (name, description, version, the transport `JSONRPC` from `supportedInterfaces`); the client uses `sendMessageStream`, the card says that there is no streaming, and it falls back to one answer; a text typed as `Maria` became `Hello, Maria!` (a new session, `Ana`, gave `Hello, Ana!`), and the server gave the client a `contextId`. Without `--auth` the card is refused with `401`. The first attempt was refused with `403`: the fetch of Node.js sends `Sec-Fetch-Mode: cors`, and the rule of S4 took it for a browser (F6). A second message in the same session (`Beto`) was answered with `Hello, Beto!`, and the client did not print `Context ID updated`, which it does only when the server gives it another identifier: the conversation went on. On the side of the server this is tested in `TestARealAgentRemembersInItsConversationAndForgetsWhenItEnds`. |
 | 6 | 2026-10-05 | macOS, arm64; `agents/sample-agent` of `a2aproject/a2a-js` (`npm run agents:sample-agent`), port 41241 | 0.0.0-dev | passed, after F8 | The card is read (the address of the binding `JSONRPC`, the skill `sample_agent`, `streaming: true`, input only `text`) and its address is approved. The first call answered `Hello! Please provide a message for me to respond to.`: our client sent a block of data, and the agent reads only text (a call by hand with text answered `Hello World! Nice to meet you!`, and one with data gave the fallback). After the fix the client sends text to an agent whose card takes only text, and the answer was `Hello World! Nice to meet you!`. The agent answers a call that is not of streaming with a task that is already completed, so following a task that is still working (`GetTask`) and cancelling it were not tried with it, and neither was a call with several values. |
 | 7 | 2026-10-05 | macOS, arm64; `agents/cancellable-agent` of `a2aproject/a2a-js`, port 41241 | 0.0.0-dev | passed, after F9 | `ask` waited 5.1 s, as the agent runs five steps of one second. It printed nothing, and that is right: the task ended `COMPLETED` with no artifact and no message in its status, so there was nothing to print. `hurry` (`within 2 seconds`) failed after 2 s, as it should, but the agent went on and ran the five steps to the end: its log shows no `Cancellation requested`, and `GetTask` says `TASK_STATE_COMPLETED`, not `CANCELED`. After the fix (F9): `hurry` made the agent write `Cancellation requested for task ...` and `Aborting task ... at step 3`, and `GetTask` of that task says `TASK_STATE_CANCELED`; `ask` took 5.2 s, now by following the task with `GetTask` until it ended, and printed nothing, as before. |
+| 8 | 2026-10-05 | Linux, amd64; Node v22.22.0; `@modelcontextprotocol/sdk` 1.32.1; `@modelcontextprotocol/inspector` 2.9.0 | 0.0.0-dev | passed | The client of the SDK in TypeScript got a session id from the server, listed `Hello__greet`, `Notes__recall` and `Notes__remember`, got `Hello, Maria!`, and `Notes` remembered `Ana` in its session and nothing in another one; a missing value came back as an error of the tool with `Problem` and `Fix`; `terminateSession` (a `DELETE`) worked; without the token it was refused (`unauthorized`). The fetch of Node.js went through the door (F6 holds). The Inspector listed the tools and called `Hello__greet` (`Hello, Maria!`); with `--strict` it warns that the schema of each value says nothing of its type (F3). By hand: an `Origin` gets `403`, a `GET` gets `405` with `Allow: POST, DELETE`. The access log has `agent=Hello rpc=mcp message=greet task=... result=ok`, and no token. Not tried: behind a proxy, and with a desktop assistant. |
 
 ## What the checks found
 
