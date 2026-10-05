@@ -28,6 +28,7 @@ All code, comments and tests are written in English. How to write agents is in
 | 13 | The differences from the specification closed: E3, E4, S4, S6, S8, P5 | Compiled; the tests pass, also with `-race` |
 | 14 | MCP over HTTP behind the same door (S10): `metagente serve --mcp` | Compiled; tests pass, also with `-race`; tried with the client of the official SDK in TypeScript and with the command line of the MCP Inspector |
 | 15 | The smaller decisions: a TOML library, `--token-file`, a smaller default for `state`, a review of the security of `serve`; the reference of the language and releases from a tag | Compiled; the tests pass, also with `-race` |
+| 16 | `readonly` for tool servers, a limit of connections for each place with `--public`, the chain of agents over MCP | Compiled; the tests pass, also with `-race`; the chain was tried across three processes |
 
 Every slice compiles and its tests pass. The CI runs them on Linux and Windows at every push, and on macOS once a
 week and when asked for; what was checked against programs of other people, and what was not, is in
@@ -125,7 +126,8 @@ minimal environment.
 `serve` **never asks to approve** a tool server or a remote agent: if something is not
 approved it stops and says so, as `run` does when nobody is at the terminal. The settings
 in `[serve]` that it uses: `bind`, `a2a_port`, `public_url`, `allowed_hosts`,
-`max_connections`, `max_running_tasks` (requests at once; the next gets a 503),
+`max_connections`, `max_connections_per_address` (with `--public` only: connections from one place, 32 by
+default; one more is closed at once), `max_running_tasks` (requests at once; the next gets a 503),
 `max_retained_tasks` (conversations), `task_retention_seconds` (how long an idle conversation
 is kept), `max_body_bytes`, `read_header_timeout_seconds`, `read_timeout_seconds`,
 `idle_timeout_seconds`, `max_header_bytes` and `auth_failures_per_minute` (wrong tokens from one
@@ -192,7 +194,7 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 | ID | State | What | Where |
 | --- | --- | --- | --- |
 | D1 | done | `within` and `clock.wait` are limited by `max_wait_seconds` | `internal/runtime`, `internal/tools/clock.go` |
-| D2 | done | the depth of calls between agents is limited by `max_call_depth`: inside one process (`link`), and across processes in the metadata of the message, checked by the client before the call leaves and by the server when it arrives. A circle is found and shown | `internal/runtime/link.go`, `internal/runtime/remote.go`, `internal/serve/rpc.go` |
+| D2 | done | the depth of calls between agents is limited by `max_call_depth`: inside one process (`link`), and across processes: in the metadata of the message over A2A, and in the `_meta` of a call over MCP to a server that says it is Metagente (no other tool server is told the names). Checked by the client before the call leaves and by the server when it arrives. A circle is found and shown | `internal/runtime/link.go`, `internal/runtime/remote.go`, `internal/serve/rpc.go`, `internal/serve/mcp.go`, `internal/mcp/pool.go` |
 | D3 | done | ceiling on entries and bytes of `state` | `internal/tools/state.go` |
 | D4 | done | limits on the size of a file, of a line, on nesting and on the length of a list | `internal/lang/limits.go` |
 | E1 | done | a program receives `PATH`, `HOME` and a few more, plus only the variables the agent file names; a secret is refused even when it is named | `internal/mcp/pool.go` |
@@ -214,7 +216,7 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 | L4 | done | prompt cache: the system prompt and the end of the conversation are marked, so each step reuses what came before (Anthropic) | `internal/llm/anthropic.go` |
 | L5 | done | a question is limited in steps, tokens and time (`think_max_steps`, `think_max_total_tokens`, `think_timeout_seconds`) | `internal/runtime/think.go` |
 | L6 | done | what a tool returns is wrapped in markers with a random tag and the model is told it is data, not orders | `internal/runtime/think.go` |
-| L7 | done | `using` limits the tools; a `readonly` tool offers only what changes nothing. For tool servers the pool can offer only what they mark as read only, but the language has no way to ask for it yet (see What comes next) | `internal/runtime/think.go`, `internal/mcp/pool.go` |
+| L7 | done | `using` limits the tools; a `readonly` tool offers only what changes nothing: for a tool server (`tool x from mcp "..." readonly`), the actions it marks as read only, and calling another one is refused | `internal/runtime/think.go`, `internal/mcp/pool.go` |
 | L8 | done | the key is taken out of every error from a provider; it is never in a message | `internal/llm/transport.go` |
 | P1 | done | what a remote caller (A2A or MCP) or a model reads about a failure is the short message and its fix, with no file, line, source or path | `internal/diag`, `internal/serve`, `internal/runtime/think.go` |
 | P2 | done | the log of failures is in the folder of the user (folder `0700`, file `0600`, never through a link, one file of history) | `internal/applog` |
@@ -226,7 +228,7 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 | S3 | done | the `Host` has to be a name the server answers to (421 otherwise, token or not): the ones of this computer by default, or `--host` | `internal/serve/guard.go`, `options.go` |
 | S4 | done, changed (agreed) | a request made by a browser is refused (403). Stricter than the specification, on purpose: **any** `Origin`, and the `Sec-Fetch-Site`, `Sec-Fetch-Dest` and `Sec-Fetch-User` that a browser adds to every request, are refused, and `allowed_origins` is ignored (the server says so). `Sec-Fetch-Mode` alone is not: the fetch of Node.js sends it in every request, and the official SDK in JavaScript is made on it, so refusing it kept that client out. Kept because it is safer; the specification is to be changed to say so | `internal/serve/guard.go` |
 | S5 | done, changed (agreed) | a server only listens beyond this computer with `--public`, which needs the names it answers to. Changed: instead of a warning about the lack of TLS, `--public` needs TLS of its own (1.2 or newer), and `--behind-proxy` only counts when the server listens on this same computer | `internal/serve/options.go`, `listen.go` |
-| S6 | done | read of the header 5 s, read 30 s, idle 60 s, headers 16 KiB, body 1 MiB (413), 256 connections, 64 tasks at the same time (the 65th gets 503 with `Retry-After`), 1000 conversations kept, and 10 wrong tokens a minute from one place (then 429 for a minute). **All of them are settings of `[serve]`.** Tested on a real port: a body of 2 MiB, 100 slow connections beside a normal request, the 65th task, and 50 requests at once | `internal/serve/guard.go`, `listen.go`, `server.go`, `load_test.go` |
+| S6 | done | read of the header 5 s, read 30 s, idle 60 s, headers 16 KiB, body 1 MiB (413), 256 connections, 64 tasks at the same time (the 65th gets 503 with `Retry-After`), 1000 conversations kept, 10 wrong tokens a minute from one place (then 429 for a minute), and, with `--public`, 32 connections from one place. A place is an IPv4 address or an IPv6 network of 64 bits. **All of them are settings of `[serve]`.** Tested on a real port: a body of 2 MiB, 100 slow connections beside a normal request, the 65th task, and 50 requests at once | `internal/serve/guard.go`, `listen.go`, `server.go`, `load_test.go` |
 | S7 | done | `state` is kept per agent and per conversation, and the server issues the id of a conversation; an idle conversation expires after `task_retention_seconds` (600 s; the specification says 1 h) and its memory is let go | `internal/tools/state.go`, `internal/serve/contexts.go` |
 | S8 | done | the address in the Agent Card never comes from a request: it is `public_url`, else the first of the names the server answers to, else the address it listens on | `internal/serve/options.go`, `server.go` |
 | S9 | done | no task is kept, so there is nothing to sweep; conversations that are not used are swept in the background (`task_retention_seconds`) | `internal/serve/contexts.go` |
@@ -343,6 +345,12 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
   wrong, ten wrong tries from one place stop that place for a minute, only a POST of
   `application/json` is taken, the body has a limit, and nothing ever says that another
   site may call the server (there is no CORS, and a preflight gets 405).
+- **Only a server with `--public` limits the connections of each place.** On this computer every client
+  is `127.0.0.1`, and behind a proxy every client is the proxy, so a limit for each address would be a
+  limit for everyone. An IPv6 network of 64 bits counts as one place, for this and for the wrong tokens.
+- **The chain of agents goes only to a tool server that says it is Metagente.** Any other tool server has
+  no use for the names of the agents that are running. One that pretends to be Metagente learns them, and
+  nothing else.
 - **Behind a proxy the slowing down is turned off, and the proxy has to limit the rate.**
   Every request then comes from the address of the proxy, so ten wrong tokens from anyone
   would stop everyone. Trusting `X-Forwarded-For` would let whoever sets the header pick
@@ -356,8 +364,8 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
   computer; anywhere else (a CI, a container, `--public`) the server does not start, because a secret
   shown there stays in a log.
 - **The door hangs up on whom it turns away.** After a 401, 403, 421 or 429 the connection is closed, so a
-  stranger cannot keep the connections of the server open and idle. What is left of that (connections that
-  send their headers slowly) is in [the review of the security](docs/SECURITY-REVIEW.md).
+  stranger cannot keep the connections of the server open and idle; with `--public`, one place cannot hold
+  more than `max_connections_per_address` either (see [the review of the security](docs/SECURITY-REVIEW.md)).
 - **The log is for you, not for whoever called.** A failure inside Metagente shows one
   sentence and the place of the log. It lives in `~/.local/state/metagente` (Linux),
   `~/Library/Logs/metagente` (macOS) or `%LocalAppData%\\metagente` (Windows), or in
@@ -505,12 +513,10 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    [the reference of the language](docs/LANGUAGE.md).
 6. **Smaller decisions, done:** the default of `max_state_bytes` is 256 KiB, `--token-file` exists, TOML is
    read by a library, and `serve` had [a review of its security](docs/SECURITY-REVIEW.md), which fixed three
-   things and left four open. That review was made by the one who wrote part of it, so **a review by a person
-   from outside is still the thing to do before `--public`**.
-7. **`readonly` for tool servers:** the pool of tool servers can offer only the actions a server marks as
-   read only, but the language does not let an agent ask for it (`tool x from mcp "..." readonly` is
-   refused by the parser), so L7 holds for `file` and `http` only. Adding it changes the language, and
-   so the record of `internal/lang`.
+   things; two of the four it left open are closed since (a limit of connections for each place, and the
+   chain of agents over MCP). That review was made by the one who wrote part of it, so **a review by a
+   person from outside is still the thing to do before `--public`**.
+7. **`readonly` for tool servers is done**, as the record of the language shows.
 
 ### Not verified yet
 

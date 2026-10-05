@@ -7,6 +7,8 @@ minor versions.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
+
 ### Added
 
 - `metagente serve --mcp`: the agents as MCP tools over HTTP too, at `/mcp`, behind the same door and the
@@ -20,6 +22,14 @@ minor versions.
 - [The reference of the language](docs/LANGUAGE.md), for people who write agents. It is in the archives too.
 - A tag like `v0.2.0` publishes the release on GitHub by itself, with the archives, `SHA256SUMS` and the notes
   of that version from this file.
+- `readonly` for tool servers: `tool x from mcp "..." readonly` offers, to the agent and to `think`, only the
+  actions that the server marks as read only, and refuses the others. The clauses `env` and `readonly` may
+  come in any order.
+- `max_connections_per_address` in `[serve]` (32 by default): with `--public`, one place holds at most that many
+  connections, and one more is closed at once.
+- The chain of agents crosses MCP too: a call to a tool server that says it is Metagente carries the agents
+  that are running, and that server refuses a call that goes too deep or in a circle, as over A2A (D2). No
+  other tool server is told their names.
 
 ### Changed
 
@@ -40,6 +50,8 @@ From [a review of the security of `serve`](docs/SECURITY-REVIEW.md):
   failing from a thousand other addresses.
 - The server closes a connection that it turned away (401, 403, 421, 429), so a stranger cannot keep its
   connections open and idle.
+- The addresses of one IPv6 network of 64 bits count as one place, for the wrong tokens and for the limit of
+  connections: they all belong to whoever has the network.
 
 ## [0.1.0] - 2026-10-05
 
@@ -98,5 +110,6 @@ showed was fixed (the steps and the results are in `validation/README.md`):
 - Not tried against the real thing yet: a desktop assistant as a client of `serve --stdio`, Azure as a
   provider, tool servers started with `uvx`, and `--public` with a certificate of its own.
 
-[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Ribeiro/metagente-go/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Ribeiro/metagente-go/releases/tag/v0.1.0

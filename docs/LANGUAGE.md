@@ -103,8 +103,15 @@ The tools an agent may use. An agent can only call what it declared.
 | `tool weather from mcp "npx -y weather-mcp@1.2.0"` | a tool server (MCP) started by that command |
 | `tool search from mcp "https://mcp.example.com/mcp"` | a tool server at that address |
 | `tool weather from mcp "..." env "HTTPS_PROXY"` | give the program these variables too |
+| `tool weather from mcp "..." readonly` | only the actions that the server marks as read only |
 
-The clauses of `http` (`allow`, `readonly`) may come in any order and more than once.
+The clauses of `http` (`allow`, `readonly`) and of a tool server (`env`, `readonly`) may come in any
+order and more than once.
+
+`readonly` on a tool server offers, to the agent and to `think`, only the actions that the server marks
+as read only (`readOnlyHint` in MCP); calling another one is a problem that says why. That mark is the
+word of the server: it keeps a model or a mistake from using an action that changes things, not a
+server that lies about its own actions.
 
 A tool server started by a command gets a minimal environment (`PATH`, `HOME` and a few more) plus
 the variables named with `env`; a variable that holds a secret (the key of the model, the token of
@@ -146,7 +153,9 @@ is looked for in the same file, then next to this file, then in `agents/`. It is
 call, so a change to it applies without restarting the caller. `check` refuses a link to an agent
 that is not found, and a call with a message or values that the agent does not accept. A `from` that
 leaves the project is warned about (refused with `--strict`). A circle of agents calling each other
-is stopped, and so is a chain deeper than `max_call_depth`.
+is stopped, and so is a chain deeper than `max_call_depth`. That holds across processes too: over A2A
+(`remote`), and over MCP when the tool server is another Metagente (`metagente serve --stdio` or
+`--mcp`), which is the only kind of tool server that is told the names of the agents running.
 
 ### remote
 
