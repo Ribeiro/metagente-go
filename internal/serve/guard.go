@@ -206,16 +206,22 @@ func (g *Guard) now() time.Time {
 
 func (g *Guard) hostAllowed(host string) bool { return g.hostSet[strings.ToLower(host)] }
 
-// madeByABrowser is true for a request that carries what a browser adds and a
-// program does not. The clients of this server are programs, so a page in a
-// browser is only ever someone else's page trying to reach a server on this
-// computer.
+// madeByABrowser is true for a request that carries what only a browser adds. The clients of this
+// server are programs, so a page in a browser is only ever someone else's page trying to reach a
+// server on this computer.
+//
+// Two things tell a browser: the header Origin, and the metadata of the fetch, which a browser adds
+// to every request and a page can neither leave out nor change: Sec-Fetch-Site, Sec-Fetch-Dest and
+// Sec-Fetch-User. Sec-Fetch-Mode alone does not tell it. The fetch of Node.js sends it in every
+// request, and the clients of the official SDKs in JavaScript are made on that fetch, while a
+// browser sends it together with Sec-Fetch-Site and is caught by that one.
 func madeByABrowser(r *http.Request) bool {
 	if _, ok := r.Header["Origin"]; ok {
 		return true
 	}
 	for name := range r.Header {
-		if strings.HasPrefix(strings.ToLower(name), "sec-fetch-") {
+		switch strings.ToLower(name) {
+		case "sec-fetch-site", "sec-fetch-dest", "sec-fetch-user":
 			return true
 		}
 	}

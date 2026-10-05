@@ -313,3 +313,36 @@ func TestServePutsTheNamesOfAProxyInTheCardAndNothingElseGetsThrough(t *testing.
 		"host=agents.example.com method=GET path=/agents/Hello/.well-known/agent-card.json status=200",
 		"host="+live.address+" method=GET path=/agents/Hello/.well-known/agent-card.json status=421")
 }
+
+// req: S3
+func TestServeAdmitsTheFetchOfNodeJSAndRefusesAPage(t *testing.T) {
+	dir := project(t)
+	writeFile(t, dir, "hello.ag", helloAgent)
+	live := startServe(t, []string{"hello.ag", "--port", "0"}, map[string]string{"METAGENTE_TOKEN": testToken}, false)
+	card := func(header, value string) int {
+		req, err := http.NewRequest(http.MethodGet, "http://"+live.address+"/agents/Hello/.well-known/agent-card.json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		req.Header.Set(header, value)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	// What the fetch of Node.js sends in every request.
+	if code := card("Sec-Fetch-Mode", "cors"); code != http.StatusOK {
+		t.Errorf("the fetch of Node.js: %d, want 200", code)
+	}
+	for _, page := range [][2]string{
+		{"Sec-Fetch-Site", "cross-site"}, {"Sec-Fetch-Dest", "empty"}, {"Sec-Fetch-User", "?1"}, {"Origin", "https://evil.example"},
+	} {
+		if code := card(page[0], page[1]); code != http.StatusForbidden {
+			t.Errorf("%s: %d, want 403", page[0], code)
+		}
+	}
+	live.stop(t)
+}

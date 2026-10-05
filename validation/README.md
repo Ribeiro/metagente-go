@@ -13,6 +13,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 2 | tool servers (MCP client), E1 | a server started by `npx` | 15 min |
 | 3 | `think` with `openai-compatible` | a model that runs on this computer (Ollama) | 20 min |
 | 4 | `--behind-proxy` | a reverse proxy with a certificate (Caddy) | 30 min |
+| 5 | `serve` (A2A server) | the command line of the official A2A SDK in JavaScript | 20 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -187,6 +188,76 @@ header `Host`: keep the output of `c -v ... $CARD`.
 To end: `Ctrl-C` in A and in B, and `rm ~/metagente-demo/.token`. Caddy keeps its local authority in
 its data folder; nothing was installed in the system.
 
+## 5. A client of A2A that is not ours
+
+What the tests cannot show: that a client written by the people who wrote the protocol, in another
+language, finds the Agent Card of our server, understands it, and talks to it. Until now the server
+was only tried with the Go SDK.
+
+The client is the command line that comes with the official SDK in JavaScript (`a2aproject/a2a-js`,
+version 1.0 of the protocol). It sends the token with `--auth`, also when it fetches the card, which is
+where our server asks for it. It sends the message as **text**; our server gives that text to the one
+value of a skill that takes only one, so for the `Hello` agent (a skill, `greet`, with a value, `name`)
+there is no JSON to write.
+
+In **A**, the server, as in check 1, on this computer and with no proxy:
+
+```text
+cd ~/metagente-demo
+umask 077; ~/bin/metagente token > .token
+export METAGENTE_TOKEN=$(cat .token)
+~/bin/metagente serve hello.ag
+```
+
+In **B**, the client. It needs Node 20 or newer (`nvm use 22`), and it installs the dependencies of the SDK
+with npm, so do it in a folder of its own, outside of this project:
+
+```text
+nvm use 22
+git clone https://github.com/a2aproject/a2a-js ~/a2a-js
+cd ~/a2a-js
+npm install --no-save --ignore-scripts @grpc/grpc-js @bufbuild/protobuf
+ls node_modules/@grpc node_modules/@bufbuild       # has to list grpc-js and protobuf
+cd src/samples
+export METAGENTE_TOKEN=$(cat ~/metagente-demo/.token)
+npx tsx ./cli.ts http://127.0.0.1:8080/agents/Hello/ --transport JSONRPC --auth "Bearer $METAGENTE_TOKEN"
+```
+
+The install is made in the root of the clone and not in `src/samples`: the command line imports the
+transport of gRPC, which is in `src/` of the SDK, and Node looks for its packages from there upwards. The two
+packages are peer dependencies that the README of the SDK asks to install for gRPC, and npm does not
+install them by itself. Without them the client stops with `Cannot find package '@grpc/grpc-js'`, before it
+has talked to the server.
+
+`--ignore-scripts` does not run the scripts of installation of the packages. A plain `npm install` in the root
+of the clone failed here because `sharp` (a library of images that the SDK uses to be developed) tried to
+build from source, and it is not needed to run the client. Not running the scripts of other people's
+packages is also the right care for something that is installed only to be tried. Do **not** add
+`--omit=dev`: the repository lists the two packages of gRPC as development dependencies, and with that
+option npm leaves them out even when they are named in the command (only `jose` is installed, and the
+client stops with the same `Cannot find package`). If the full install fails, the two packages alone can
+go where Node looks for them, with
+`npm install --prefix ~/a2a-js/src --no-save --no-package-lock --ignore-scripts @grpc/grpc-js @bufbuild/protobuf`.
+
+(`npm run a2a:cli -- URL --auth ...` is the same command. The address is the one of the agent, not of the
+server, and **ends with a `/`**: the client adds `.well-known/agent-card.json` to it the way a browser resolves a
+relative address, so without the bar it takes `Hello` out and asks for `/agents/.well-known/agent-card.json`.)
+
+**Expected:** the client prints the card it found (name `Hello`, the description, the version, `Streaming: Not
+Supported`, the transport `JSONRPC`) and `Connected via JsonRpcTransport`, then waits at a prompt. Type
+`Maria` and press Enter: the answer has `Hello, Maria!`. `/exit` ends it.
+
+Then once more **without** `--auth`, to see the refusal from the side of the client:
+
+```text
+npx tsx ./cli.ts http://127.0.0.1:8080/agents/Hello/ --transport JSONRPC
+```
+
+**Expected:** an error while the card is fetched, and in it the status `401`.
+
+Keep all that the client prints, and the lines that the server wrote in **A**. To end: `/exit` in B, `Ctrl-C`
+in A, `rm ~/metagente-demo/.token`, and `rm -rf ~/a2a-js` if you do not want to keep the SDK.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -195,6 +266,7 @@ its data folder; nothing was installed in the system.
 | 2 | 2026-10-04 | macOS, arm64; Node 18.18.2, npm 9.8.1 | 0.0.0-dev | passed | `npx` started `@modelcontextprotocol/server-everything` (not pinned; its version was not recorded) with the minimal environment. `say` answered `Echo: hello`. In `get-env`, `SECRET_TEST` and `ANTHROPIC_API_KEY` did not appear, nor did any other variable of the shell. The tool is `get-env` in the version fetched, not `printEnv`. The server does receive the whole `PATH` and the `HOME`: the environment is minimal, not an isolation. |
 | 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
 | 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |
+| 5 | | | | not run | |
 
 ## What the checks found
 
@@ -207,3 +279,4 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 | F3 | 1 | The schema of a tool does not say the type of the values, so a generic client (the Inspector) shows a JSON editor and a text has to be written between quotes. | open, a choice: the language has no types in the interface |
 | F4 | 4 | Behind a proxy the banner shows only the public address (`https://hello.localhost:8443`), not the address where the server listens (`127.0.0.1:8080`), which is what the person who writes the proxy needs. | fixed: when the address of the banner is not where the server listens, a line says where, and for which Host |
 | F5 | 4 | Behind a proxy every line of the access log has `remote=127.0.0.1`, the one that went around the proxy too, so it looks like the others unless the status (421) is read. Writing the header `Host` that was received (shortened with `clip.Collapse`, since it comes from outside) would tell the two apart. | fixed: every line of the log has `host=`, shortened and without control characters |
+| F6 | 5 | The fetch of Node.js sends `Sec-Fetch-Mode: cors` in every request, and the rule of S4 (any `Sec-Fetch-*`) refused the official client in JavaScript with `403`. | fixed in the code if the rule is narrowed (S4): only `Origin`, `Sec-Fetch-Site`, `Sec-Fetch-Dest` and `Sec-Fetch-User` tell a browser |

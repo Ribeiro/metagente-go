@@ -197,13 +197,28 @@ func TestARequestMadeByABrowserPageIsRefused(t *testing.T) {
 		"null origin":    func(r *http.Request) { r.Header.Set("Origin", "null") },
 		"same origin":    func(r *http.Request) { r.Header.Set("Origin", "http://127.0.0.1:8080") },
 		"fetch site":     func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") },
-		"fetch mode":     func(r *http.Request) { r.Header.Set("Sec-Fetch-Mode", "cors") },
+		"fetch dest":     func(r *http.Request) { r.Header.Set("Sec-Fetch-Dest", "empty") },
+		"fetch user":     func(r *http.Request) { r.Header.Set("Sec-Fetch-User", "?1") },
 		"fetch site own": func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "same-origin") },
 	} {
 		rec, next := serveOne(newGuard(), post(mutate))
 		if rec.Code != http.StatusForbidden || next.count != 0 {
 			t.Errorf("%s: code %d, reached %d", name, rec.Code, next.count)
 		}
+	}
+}
+
+// req: S3
+func TestTheFetchOfNodeJSIsNotTakenForABrowser(t *testing.T) {
+	// What the fetch of Node.js sends in every request, and what the clients of the official SDK in
+	// JavaScript are made on. A browser sends Sec-Fetch-Mode together with Sec-Fetch-Site, and is refused.
+	rec, next := serveOne(newGuard(), post(func(r *http.Request) {
+		r.Header.Set("Sec-Fetch-Mode", "cors")
+		r.Header.Set("Accept-Language", "*")
+		r.Header.Set("User-Agent", "node")
+	}))
+	if rec.Code != http.StatusOK || next.count != 1 {
+		t.Errorf("code %d, reached %d", rec.Code, next.count)
 	}
 }
 
