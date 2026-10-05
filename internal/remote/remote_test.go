@@ -208,7 +208,7 @@ func TestTheRequestHasTheShapeOfA2A(t *testing.T) {
 	if metadata["skill"] != "ask" || len(chain) != 2 || chain[0] != "Planner" || chain[1] != "Helper" {
 		t.Errorf("metadata = %v", metadata)
 	}
-	if params["configuration"].(map[string]any)["returnImmediately"] != false {
+	if params["configuration"].(map[string]any)["returnImmediately"] != true {
 		t.Errorf("configuration = %v", params["configuration"])
 	}
 }
@@ -698,5 +698,42 @@ func TestWhichModesTakeOnlyText(t *testing.T) {
 		if got := takesOnlyText(tt.modes); got != tt.want {
 			t.Errorf("takesOnlyText(%q) = %v, want %v", tt.modes, got, tt.want)
 		}
+	}
+}
+
+// An agent like the cancellable one of the SDK in JavaScript answers only when the task ends, unless it is
+// asked to answer at once. A caller that gives up while it waits has to be able to cancel the task.
+func TestGivingUpWhileTheOtherSideWouldHaveKeptUsWaitingStillCancelsTheTask(t *testing.T) {
+	f := newFakeAgent(t)
+	f.answer = func(method string, params map[string]any) (int, string) {
+		switch method {
+		case "SendMessage":
+			configuration, _ := params["configuration"].(map[string]any)
+			if configuration["returnImmediately"] != true {
+				time.Sleep(600 * time.Millisecond) // it answers when the task ends
+				return okResult(`{"task":{"id":"t7","status":{"state":"TASK_STATE_COMPLETED"}}}`)
+			}
+			return okResult(`{"task":{"id":"t7","status":{"state":"TASK_STATE_WORKING"}}}`)
+		case "CancelTask":
+			return okResult(`{"id":"t7","status":{"state":"TASK_STATE_CANCELED"}}`)
+		}
+		return okResult(`{"id":"t7","status":{"state":"TASK_STATE_WORKING"}}`) // GetTask: the task itself
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_, err := f.tool(t, nil).Call(ctx, "ask", tools.Args{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cancelled := false
+	for _, request := range f.requests {
+		if request["method"] == "CancelTask" && request["params"].(map[string]any)["id"] == "t7" {
+			cancelled = true
+		}
+	}
+	if !cancelled {
+		t.Errorf("the task was not cancelled on the other side: %v", f.requests)
 	}
 }

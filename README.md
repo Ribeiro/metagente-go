@@ -130,7 +130,7 @@ lower one of the two.
 - `remote Bob at "https://host"`: an agent that runs somewhere else, called like a tool
   (`Bob.ask city: "Lisbon"`) over A2A. The skills of its card are its actions, and the
   model sees them too. The call is sent as a block of data, or as text to an agent whose card says that
-  it takes only text: the one value, or a line `name: value` for each of several. A task that takes time is followed until it ends, and cancelled
+  it takes only text: the one value, or a line `name: value` for each of several. The other side is asked to answer at once, so that the task is known and can be cancelled if the caller gives up. A task that takes time is followed until it ends, and cancelled
   on the other side if the call is given up.
 - `metagente serve FILE.ag ...`: the agents over A2A, on this computer, behind a token; open to
   the network with TLS of its own, or behind a proxy (see [Serving agents](#serving-agents)).

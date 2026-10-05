@@ -531,7 +531,10 @@ func (t *tool) Call(ctx context.Context, action string, args tools.Args) (value.
 				"metagente": map[string]any{"chain": trailFrom(ctx)},
 			},
 		},
-		"configuration": map[string]any{"returnImmediately": false},
+		// The other side is asked to answer at once, with the task if it is not done. A server that is asked to wait
+		// until the task ends keeps the caller in this very request, without the number of the task, and if the
+		// caller gives up there is nothing to cancel on the other side and the task goes on working for nothing.
+		"configuration": map[string]any{"returnImmediately": true},
 	}
 	result, err := a.rpc(ctx, c.endpoint, "SendMessage", params)
 	if err != nil {

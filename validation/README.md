@@ -15,6 +15,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 4 | `--behind-proxy` | a reverse proxy with a certificate (Caddy) | 30 min |
 | 5 | `serve` (A2A server) | the command line of the official A2A SDK in JavaScript | 20 min |
 | 6 | `remote` (A2A client) | the sample agent of the official A2A SDK in JavaScript | 30 min |
+| 7 | `remote`, a task that takes time and a caller that gives up | the cancellable agent of the same SDK | 30 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -328,6 +329,80 @@ curl -s -X POST ADDRESS-OF-THE-BINDING -H 'Content-Type: application/json' -H 'A
 Keep: the card (the part with the skills and the address), what the official client got for `hello`, everything
 `run` printed, the call by hand if you made it, and what A wrote. To end: `Ctrl-C` in A.
 
+## 7. A task that takes time, and a caller that gives up
+
+What the tests cannot show: what our client does with a slow agent of a third party, and, above all, whether the
+agent is told when whoever called gives up. The sample is `agents/cancellable-agent` of the SDK in JavaScript. According
+to its README it runs a task of five steps of one second and checks, before each step, whether the task was cancelled. In
+the terminal of the agent, a cancellation that arrived looks like `Cancellation requested for task <id>` and
+`Aborting task <id> at step N`.
+
+Two things that this check is not: it does not follow a task with `GetTask`, because a call that is not of streaming waits
+for the task to end and gets it finished, as in check 6; and the cancelling client of the sample is only used to see what a
+cancellation looks like.
+
+In **A**, the agent. Stop the sample agent of check 6 first, if it is running: both use the port 41241.
+
+```text
+nvm use 22
+cd ~/a2a-js/src/samples
+npm run agents:cancellable-agent
+```
+
+In **B**, the card, and the baseline: the client of the sample cancels its own task after 2.5 seconds.
+
+```text
+export PORT=41241
+curl -s http://localhost:$PORT/.well-known/agent-card.json | python3 -m json.tool | head -60
+cd ~/a2a-js/src/samples
+npm run agents:cancellable-client
+```
+
+Look at the terminal **A**: the lines of the steps, `Cancellation requested for task ...` and `Aborting task ...`. That is what a
+cancellation that arrives looks like. Note the `id` of the skill in the card. In **C**, our client, with two messages: one
+that waits, and one that gives up after two seconds (the value of the skill is only a text, which this agent does not read):
+
+```text
+export PORT=41241
+export SKILL=THE-ID-OF-THE-SKILL
+: "${PORT:?PORT is empty}" "${SKILL:?SKILL is empty}"
+mkdir -p ~/metagente-demo/slow && cd ~/metagente-demo/slow
+~/bin/metagente new slow
+cat > slow.ag <<EOF
+agent Slow
+  goal "Call the slow agent of the A2A SDK in JavaScript"
+  remote Worker at "http://localhost:$PORT"
+  accepts ask text
+  accepts hurry text
+  on ask
+    reply Worker.$SKILL text: text
+  on hurry
+    reply Worker.$SKILL text: text within 2 seconds
+EOF
+~/bin/metagente check slow.ag
+~/bin/metagente trust slow.ag
+time ~/bin/metagente run slow.ag ask text=hello
+~/bin/metagente run slow.ag hurry text=hello
+```
+
+`trust` lists the address as NEW; answer `y`, and run it alone.
+
+**Expected for `ask`:** it ends after about five seconds with the text of the artifact, and the terminal A shows the
+five steps. **Expected for `hurry`:** it ends after about two seconds with `did not finish within 2 seconds`. What this check
+is for is what the terminal **A** shows next: either `Cancellation requested for task ...` and `Aborting task ...`, which means that our
+client told the agent that nobody waits any more, or the steps going on to `5/5`, which means that it did not. In the second case
+the task goes on working for nothing. To see how the task of the agent ended, wait six seconds and ask for it by hand (the
+`id` is the one in the lines of the terminal A):
+
+```text
+curl -s -X POST http://localhost:$PORT/ -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"GetTask","params":{"id":"THE-ID-OF-THE-TASK"}}' | python3 -m json.tool | head -30
+```
+
+`TASK_STATE_CANCELED` means that the agent was told; `TASK_STATE_COMPLETED` means that it was not. Keep: the card, what
+the sample client and the agent wrote in the baseline, what each `run` printed and how long `ask` took, what A wrote during
+`ask` and during `hurry`, and the answer of `GetTask`. To end: `Ctrl-C` in A.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -338,6 +413,7 @@ Keep: the card (the part with the skills and the address), what the official cli
 | 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |
 | 5 | 2026-10-04 | macOS, arm64; Node v22.17.0; `a2aproject/a2a-js` (the command line of the official SDK, protocol 1.0) | 0.0.0-dev | passed, after F6 | The card is found and read (name, description, version, the transport `JSONRPC` from `supportedInterfaces`); the client uses `sendMessageStream`, the card says that there is no streaming, and it falls back to one answer; a text typed as `Maria` became `Hello, Maria!` (a new session, `Ana`, gave `Hello, Ana!`), and the server gave the client a `contextId`. Without `--auth` the card is refused with `401`. The first attempt was refused with `403`: the fetch of Node.js sends `Sec-Fetch-Mode: cors`, and the rule of S4 took it for a browser (F6). A second message in the same session (`Beto`) was answered with `Hello, Beto!`, and the client did not print `Context ID updated`, which it does only when the server gives it another identifier: the conversation went on. On the side of the server this is tested in `TestARealAgentRemembersInItsConversationAndForgetsWhenItEnds`. |
 | 6 | 2026-10-05 | macOS, arm64; `agents/sample-agent` of `a2aproject/a2a-js` (`npm run agents:sample-agent`), port 41241 | 0.0.0-dev | passed, after F8 | The card is read (the address of the binding `JSONRPC`, the skill `sample_agent`, `streaming: true`, input only `text`) and its address is approved. The first call answered `Hello! Please provide a message for me to respond to.`: our client sent a block of data, and the agent reads only text (a call by hand with text answered `Hello World! Nice to meet you!`, and one with data gave the fallback). After the fix the client sends text to an agent whose card takes only text, and the answer was `Hello World! Nice to meet you!`. The agent answers a call that is not of streaming with a task that is already completed, so following a task that is still working (`GetTask`) and cancelling it were not tried with it, and neither was a call with several values. |
+| 7 | 2026-10-05 | macOS, arm64; `agents/cancellable-agent` of `a2aproject/a2a-js`, port 41241 | 0.0.0-dev | found F9, fixed in the code; to be run again | `ask` waited 5.1 s, as the agent runs five steps of one second. It printed nothing, and that is right: the task ended `COMPLETED` with no artifact and no message in its status, so there was nothing to print. `hurry` (`within 2 seconds`) failed after 2 s, as it should, but the agent went on and ran the five steps to the end: its log shows no `Cancellation requested`, and `GetTask` says `TASK_STATE_COMPLETED`, not `CANCELED`. |
 
 ## What the checks found
 
@@ -353,3 +429,4 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 | F6 | 5 | The fetch of Node.js sends `Sec-Fetch-Mode: cors` in every request, and the rule of S4 (any `Sec-Fetch-*`) refused the official client in JavaScript with `403`. | fixed (S4): only `Origin`, `Sec-Fetch-Site`, `Sec-Fetch-Dest` and `Sec-Fetch-User` tell a browser, checked with the official client |
 | F7 | CI | On Windows the tool of files does not detect hard links: `linkCount` (links_other.go) always says 1, so a write through a hard link that leads outside the folder is not refused there (F4). Making a hard link takes someone else; the agent has no tool for it. The test of this is skipped on Windows, with that reason in the message. | open; GetFileInformationByHandle in the standard `syscall` gives the number, but it needs the handle of the file |
 | F8 | 6 | `remote` always sent the call as a block of data. The sample agent of the SDK in JavaScript takes only text (`defaultInputModes: ["text"]`), found no text in the message and answered `Please provide a message for me to respond to`. | fixed in the code: an agent whose card takes only text is sent text, the one value or a line `name: value` for each of several; one that takes JSON, or says nothing, is sent the data as before. checked with the sample agent |
+| F9 | 7 | When the time of a call ends while the other side works, `remote` gave up without telling the agent, and the task went on to the end for nothing. The call asked the other side to answer only when the task ended (`returnImmediately: false`), so the number of the task was only known at the end, and there was nothing to cancel. | fixed in the code: it asks to be answered at once, follows the task with `GetTask` and cancels it when the caller gives up. To be checked with the cancellable agent |
