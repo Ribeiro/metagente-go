@@ -439,8 +439,9 @@ Checked against the real thing (the steps and the results are in `validation/REA
 - `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
 - `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
 - the A2A server, with the command line of the official A2A SDK in JavaScript;
-- the A2A client (`remote`), with the sample agent of the same SDK. It showed that an agent whose card takes
-  only text has to be sent text; a task that is still working was not followed with it.
+- the A2A client (`remote`), with two sample agents of the same SDK. The first showed that an agent whose card
+  takes only text has to be sent text. The second, that the other side has to be asked to answer at once: a
+  task that is still working is followed with `GetTask`, and cancelled if the caller gives up.
 
 These work in the tests, which use doubles, or were run only on macOS, and are not checked yet:
 
@@ -448,7 +449,6 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
 - a tool server started with `uvx`;
 - `--public`, with a certificate of its own;
-- the following and the cancelling of a task that is still working, by a server of a third party;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
