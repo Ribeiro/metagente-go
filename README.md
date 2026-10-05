@@ -129,7 +129,8 @@ lower one of the two.
   the model, not to the person.
 - `remote Bob at "https://host"`: an agent that runs somewhere else, called like a tool
   (`Bob.ask city: "Lisbon"`) over A2A. The skills of its card are its actions, and the
-  model sees them too. A task that takes time is followed until it ends, and cancelled
+  model sees them too. The call is sent as a block of data, or as text to an agent whose card says that
+  it takes only text: the one value, or a line `name: value` for each of several. A task that takes time is followed until it ends, and cancelled
   on the other side if the call is given up.
 - `metagente serve FILE.ag ...`: the agents over A2A, on this computer, behind a token; open to
   the network with TLS of its own, or behind a proxy (see [Serving agents](#serving-agents)).
@@ -437,7 +438,9 @@ Checked against the real thing (the steps and the results are in `validation/REA
 - a tool server started by `npx`, with the minimal environment of E1: what the shell had did not reach it;
 - `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
 - `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
-- the A2A server, with the command line of the official A2A SDK in JavaScript.
+- the A2A server, with the command line of the official A2A SDK in JavaScript;
+- the A2A client (`remote`), with the sample agent of the same SDK. It showed that an agent whose card takes
+  only text has to be sent text; a task that is still working was not followed with it.
 
 These work in the tests, which use doubles, or were run only on macOS, and are not checked yet:
 
@@ -445,7 +448,7 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
 - a tool server started with `uvx`;
 - `--public`, with a certificate of its own;
-- the A2A client with servers of third parties: it was tried only with the SDK;
+- the following and the cancelling of a task that is still working, by a server of a third party;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there

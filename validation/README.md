@@ -298,7 +298,9 @@ In **C**, our client. The skill that is called is one of the ids of the card (if
 cannot have, such as a dot or a space, write that down: the `.ag` cannot name it):
 
 ```text
+export PORT=41241
 export SKILL=THE-ID-OF-THE-SKILL
+: "${PORT:?PORT is empty}" "${SKILL:?SKILL is empty}"
 mkdir -p ~/metagente-demo/remote && cd ~/metagente-demo/remote
 ~/bin/metagente new caller
 cat > caller.ag <<EOF
@@ -314,14 +316,9 @@ EOF
 ~/bin/metagente run caller.ag ask text=hello
 ```
 
-`trust` lists the address of the agent as NEW; answer `y`.
+`trust` lists the address of the agent as NEW; answer `y`. Run it **alone**: it asks, and a line pasted after it is read as the answer. The line with `: "${PORT:?...}"` stops the script if a variable is empty (writing `export sample_agent` instead of `export SKILL=sample_agent` leaves `SKILL` empty, and the line of the `.ag` comes out as `reply Sample. text: text`).
 
-**Expected:** the call ends, it does not hang, with the text that the agent put in the artifact of the task. That would show
-that `SendMessage` is understood, that our client follows a task until `completed` (it asks again with `GetTask`), and
-that it reads the artifact. Our client always sends the call as a block of **data** (`{"skill": ..., "arguments": ...}`) and
-never as text, which is what our own server expects; an agent that reads only the parts of text of a message may answer
-something that has nothing to do with `hello`, or fail the task. If the answer is odd, the call by hand tells whether it
-is the agent or the client (the address is the one of `supportedInterfaces`):
+**Expected:** the call ends, it does not hang, with the text that the agent put in the artifact of the task: `Hello World! Nice to meet you!`. That shows that `SendMessage` is understood, that our client reads a task that is already completed (the agent answers a call that is not of streaming with one task) and the artifact, and that it sends **text** to an agent whose card says that it takes only text (`defaultInputModes: ["text"]`): the one value of the call, or a line `name: value` for each of several. To an agent that takes JSON, or says nothing, it sends the block of data `{"skill": ..., "arguments": ...}`, which is what our own agents read. Before F8 was fixed the client sent the data to this agent too, and it answered `Hello! Please provide a message for me to respond to.`: it had not read the data. If the answer is odd, the call by hand tells whether it is the agent or the client (the address is the one of `supportedInterfaces`):
 
 ```text
 curl -s -X POST ADDRESS-OF-THE-BINDING -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
@@ -340,7 +337,7 @@ Keep: the card (the part with the skills and the address), what the official cli
 | 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
 | 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |
 | 5 | 2026-10-04 | macOS, arm64; Node v22.17.0; `a2aproject/a2a-js` (the command line of the official SDK, protocol 1.0) | 0.0.0-dev | passed, after F6 | The card is found and read (name, description, version, the transport `JSONRPC` from `supportedInterfaces`); the client uses `sendMessageStream`, the card says that there is no streaming, and it falls back to one answer; a text typed as `Maria` became `Hello, Maria!` (a new session, `Ana`, gave `Hello, Ana!`), and the server gave the client a `contextId`. Without `--auth` the card is refused with `401`. The first attempt was refused with `403`: the fetch of Node.js sends `Sec-Fetch-Mode: cors`, and the rule of S4 took it for a browser (F6). A second message in the same session (`Beto`) was answered with `Hello, Beto!`, and the client did not print `Context ID updated`, which it does only when the server gives it another identifier: the conversation went on. On the side of the server this is tested in `TestARealAgentRemembersInItsConversationAndForgetsWhenItEnds`. |
-| 6 | | | | not run | |
+| 6 | 2026-10-05 | macOS, arm64; `agents/sample-agent` of `a2aproject/a2a-js` (`npm run agents:sample-agent`), port 41241 | 0.0.0-dev | passed, after F8 | The card is read (the address of the binding `JSONRPC`, the skill `sample_agent`, `streaming: true`, input only `text`) and its address is approved. The first call answered `Hello! Please provide a message for me to respond to.`: our client sent a block of data, and the agent reads only text (a call by hand with text answered `Hello World! Nice to meet you!`, and one with data gave the fallback). After the fix the client sends text to an agent whose card takes only text, and the answer was `Hello World! Nice to meet you!`. The agent answers a call that is not of streaming with a task that is already completed, so following a task that is still working (`GetTask`) and cancelling it were not tried with it, and neither was a call with several values. |
 
 ## What the checks found
 
@@ -355,3 +352,4 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 | F5 | 4 | Behind a proxy every line of the access log has `remote=127.0.0.1`, the one that went around the proxy too, so it looks like the others unless the status (421) is read. Writing the header `Host` that was received (shortened with `clip.Collapse`, since it comes from outside) would tell the two apart. | fixed: every line of the log has `host=`, shortened and without control characters |
 | F6 | 5 | The fetch of Node.js sends `Sec-Fetch-Mode: cors` in every request, and the rule of S4 (any `Sec-Fetch-*`) refused the official client in JavaScript with `403`. | fixed (S4): only `Origin`, `Sec-Fetch-Site`, `Sec-Fetch-Dest` and `Sec-Fetch-User` tell a browser, checked with the official client |
 | F7 | CI | On Windows the tool of files does not detect hard links: `linkCount` (links_other.go) always says 1, so a write through a hard link that leads outside the folder is not refused there (F4). Making a hard link takes someone else; the agent has no tool for it. The test of this is skipped on Windows, with that reason in the message. | open; GetFileInformationByHandle in the standard `syscall` gives the number, but it needs the handle of the file |
+| F8 | 6 | `remote` always sent the call as a block of data. The sample agent of the SDK in JavaScript takes only text (`defaultInputModes: ["text"]`), found no text in the message and answered `Please provide a message for me to respond to`. | fixed in the code: an agent whose card takes only text is sent text, the one value or a line `name: value` for each of several; one that takes JSON, or says nothing, is sent the data as before. checked with the sample agent |
