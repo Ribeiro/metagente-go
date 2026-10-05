@@ -132,7 +132,13 @@ func NewAgent(rt *Runtime, def *lang.AgentDef, contextID string) (*Agent, error)
 			if lang.IsURL(decl.Command) {
 				spec.Credential = rt.Config.Credentials[decl.Name] // only an address gets a token
 			}
-			registry[decl.Name] = rt.MCP.Tool(decl.Name, spec)
+			var inner tools.Tool
+			if decl.ReadOnly {
+				inner = rt.MCP.ReadOnlyTool(decl.Name, spec)
+			} else {
+				inner = rt.MCP.Tool(decl.Name, spec)
+			}
+			registry[decl.Name] = &serverTool{inner: inner}
 		}
 	}
 	return &Agent{Def: def, RT: rt, Caps: lang.CapabilitiesOf(def), Tools: registry}, nil

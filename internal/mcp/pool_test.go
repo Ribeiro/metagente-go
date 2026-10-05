@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,7 +38,7 @@ func TestMain(m *testing.M) {
 		time.Sleep(10 * time.Minute)
 		os.Exit(0)
 	}
-	if os.Getenv(helperEnv) == "1" {
+	if os.Getenv(helperEnv) != "" {
 		for i, arg := range os.Args {
 			if arg == "--marker" && i+1 < len(os.Args) {
 				_ = os.WriteFile(os.Args[i+1], []byte("started"), 0o644)
@@ -80,7 +81,17 @@ func reply(text string) *sdk.CallToolResult {
 }
 
 func newHelperServer() *sdk.Server {
-	server := sdk.NewServer(&sdk.Implementation{Name: "helper", Version: "v0.0.1"}, nil)
+	// The helper calls itself Metagente when it is asked to, to see what such a server is sent.
+	name := "helper"
+	if os.Getenv(helperEnv) == metagenteName {
+		name = metagenteName
+	}
+	server := sdk.NewServer(&sdk.Implementation{Name: name, Version: "v0.0.1"}, nil)
+	sdk.AddTool(server, &sdk.Tool{Name: "chain", Description: "the chain of agents that the call carried"},
+		func(_ context.Context, req *sdk.CallToolRequest, _ struct{}) (*sdk.CallToolResult, any, error) {
+			raw, _ := json.Marshal(req.Params.Meta[ChainMeta])
+			return reply(string(raw)), nil, nil
+		})
 	sdk.AddTool(server, &sdk.Tool{Name: "echo", Description: "send the text back"},
 		func(_ context.Context, _ *sdk.CallToolRequest, in textIn) (*sdk.CallToolResult, any, error) {
 			return reply(in.Text), nil, nil
@@ -197,7 +208,7 @@ func TestAToolServerAnswersThroughThePool(t *testing.T) {
 			t.Errorf("the parameters of echo are %+v", a.Params)
 		}
 	}
-	if got := strings.Join(names, " "); got != "die echo env fail peek pid slow" {
+	if got := strings.Join(names, " "); got != "chain die echo env fail peek pid slow" {
 		t.Errorf("actions: %s", got)
 	}
 }
@@ -608,5 +619,58 @@ func TestAProgramNeverGetsAToken(t *testing.T) {
 	t.Setenv("SOME_TOKEN", "tok-live-0123456789")
 	if got := mustWork(t, pool.Tool("srv", spec), "env", "name", "SOME_TOKEN"); got != "" {
 		t.Errorf("the program received the token: %q", got)
+	}
+}
+
+// req: L7
+func TestAReadOnlyToolServerOffersAndRunsOnlyWhatTheServerMarksAsReadOnly(t *testing.T) {
+	pool, spec := newPool(t, nil)
+	srv := pool.ReadOnlyTool("srv", spec)
+	actions, err := srv.Actions(context.Background())
+	if err != nil {
+		t.Fatal(rendered(t, err))
+	}
+	if len(actions) != 1 || actions[0].Name != "peek" {
+		t.Errorf("a readonly tool offers %+v", actions)
+	}
+	if _, err := call(t, srv, "peek"); err != nil {
+		t.Errorf("the action marked read only was refused: %s", rendered(t, err))
+	}
+	_, err = call(t, srv, "echo", "text", "hi")
+	if err == nil || !strings.Contains(rendered(t, err), "declared readonly") {
+		t.Errorf("an action that may change things ran: %v", err)
+	}
+	_, err = call(t, srv, "nothing-like-this")
+	if err == nil || strings.Contains(rendered(t, err), "echo") {
+		t.Errorf("an unknown action listed the actions that are not offered: %v", err)
+	}
+	// The same server, declared without readonly by another agent, still offers everything.
+	if got := mustWork(t, pool.Tool("other", spec), "echo", "text", "hi"); got != "hi" {
+		t.Errorf("echo returned %q", got)
+	}
+}
+
+// req: D2
+func TestTheChainOfAgentsGoesOnlyToAServerOfMetagente(t *testing.T) {
+	ctx := WithChain(context.Background(), []string{"Outer", "Inner"})
+	run := func(tool tools.Tool) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		v, err := tool.Call(ctx, "chain", tools.Args{})
+		if err != nil {
+			t.Fatal(rendered(t, err))
+		}
+		return v.Display()
+	}
+	pool, spec := newPool(t, nil)
+	if got := run(pool.Tool("srv", spec)); got != "null" {
+		t.Errorf("a server that is not Metagente was told the agents: %s", got)
+	}
+
+	other, spec := newPool(t, nil)
+	t.Setenv(helperEnv, metagenteName) // read when the program starts, at the first call
+	if got := run(other.Tool("srv", spec)); got != `["Outer","Inner"]` {
+		t.Errorf("a server of Metagente was told %s", got)
 	}
 }

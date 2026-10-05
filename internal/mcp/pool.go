@@ -114,6 +114,14 @@ func (p *Pool) Tool(name string, spec Spec) tools.Tool {
 	return &tool{pool: p, name: name, srv: p.server(spec)}
 }
 
+// ReadOnlyTool is the tool of a declaration that says `readonly`: it offers and runs only
+// the actions that the server marks as read only (requirement L7). That mark is the word
+// of the server, so this protects from a model or an agent that asks for the wrong
+// action, not from a server that lies about its own.
+func (p *Pool) ReadOnlyTool(name string, spec Spec) tools.Tool {
+	return &tool{pool: p, name: name, srv: p.server(spec), readOnly: true}
+}
+
 // Close ends every session, and with it every program the pool started.
 func (p *Pool) Close() error {
 	p.mu.Lock()
@@ -413,9 +421,10 @@ func (s *server) tools(ctx context.Context) ([]*sdk.Tool, error) {
 // ---------- the tool an agent sees ----------
 
 type tool struct {
-	pool *Pool
-	name string
-	srv  *server
+	pool     *Pool
+	name     string
+	srv      *server
+	readOnly bool
 }
 
 func (t *tool) Name() string { return t.name }
@@ -427,6 +436,9 @@ func (t *tool) Actions(ctx context.Context) ([]lang.ActionInfo, error) {
 	}
 	actions := make([]lang.ActionInfo, 0, len(listed))
 	for _, item := range listed {
+		if t.readOnly && mutates(item) {
+			continue
+		}
 		actions = append(actions, lang.ActionInfo{
 			Name:        item.Name,
 			Description: item.Description,
@@ -445,12 +457,21 @@ func (t *tool) Call(ctx context.Context, action string, args tools.Args) (value.
 		return value.Nothing, err
 	}
 	names := make([]string, 0, len(listed))
-	found := false
+	var found *sdk.Tool
 	for _, item := range listed {
+		if t.readOnly && mutates(item) {
+			if item.Name == action {
+				return value.Nothing, diag.Newf("`%s.%s` is not available because `tool %s` was declared readonly, and the tool server does not mark it as read only", t.name, action, t.name).
+					Fix("remove `readonly` from the declaration if this agent really needs it")
+			}
+			continue
+		}
 		names = append(names, item.Name)
-		found = found || item.Name == action
+		if item.Name == action {
+			found = item
+		}
 	}
-	if !found {
+	if found == nil {
 		sort.Strings(names)
 		return value.Nothing, tools.UnknownAction(t.name, action, names)
 	}
@@ -472,7 +493,11 @@ func (t *tool) Call(ctx context.Context, action string, args tools.Args) (value.
 	for key, v := range args {
 		arguments[key] = v.ToJSON()
 	}
-	result, err := session.CallTool(ctx, &sdk.CallToolParams{Name: action, Arguments: arguments})
+	params := &sdk.CallToolParams{Name: action, Arguments: arguments}
+	if chain := chainFrom(ctx); len(chain) > 0 && isMetagente(session) {
+		params.Meta = sdk.Meta{ChainMeta: chain}
+	}
+	result, err := session.CallTool(ctx, params)
 	if err != nil {
 		if ctx.Err() != nil {
 			return value.Nothing, ctx.Err()
@@ -626,4 +651,35 @@ func ChildEnv(declared, hidden []string, getenv func(string) string) ([]string, 
 	}
 	sort.Strings(env)
 	return env, nil
+}
+
+// ---------- the chain of agents ----------
+
+// ChainMeta is the key, in the `_meta` of a call, of the agents that are running in it,
+// outermost first. With it a Metagente that serves its agents over MCP refuses a call
+// that goes too deep or comes back to an agent that is already running (requirement
+// D2), as it does over A2A.
+const ChainMeta = "metagente/chain"
+
+// metagenteName is the name a server of Metagente gives itself when a session starts.
+const metagenteName = "metagente"
+
+type chainKey struct{}
+
+// WithChain attaches the agents running now to the context of a call.
+func WithChain(ctx context.Context, chain []string) context.Context {
+	return context.WithValue(ctx, chainKey{}, append([]string(nil), chain...))
+}
+
+func chainFrom(ctx context.Context) []string {
+	chain, _ := ctx.Value(chainKey{}).([]string)
+	return chain
+}
+
+// isMetagente says whether the server of a session said that it is Metagente. Only such a
+// server is told the names of the agents that are running: any other tool server has no
+// use for them. A server that pretends to be Metagente learns only those names.
+func isMetagente(session *sdk.ClientSession) bool {
+	result := session.InitializeResult()
+	return result != nil && result.ServerInfo != nil && result.ServerInfo.Name == metagenteName
 }

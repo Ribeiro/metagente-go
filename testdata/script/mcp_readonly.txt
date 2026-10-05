@@ -1,0 +1,24 @@
+# A tool server declared readonly offers and runs only what it marks as read only (L7):
+# `mcpecho` marks `env` as read only, and not `echo`.
+
+exec metagente check agent.ag
+stdout 'No problems found'
+exec metagente trust --yes agent.ag
+
+exec metagente run agent.ag peek name=HOME
+stdout '^value: '
+
+! exec metagente run agent.ag say text=hello
+stderr '`server.echo` is not available because `tool server` was declared readonly'
+! stdout 'echo: hello'
+
+-- agent.ag --
+agent Reader
+  goal "Read through a tool server, and never change anything with it"
+  tool server from mcp "mcpecho" readonly
+  accepts say text
+  accepts peek name
+  on say
+    reply server.echo text: text
+  on peek
+    reply server.env name: name

@@ -191,7 +191,7 @@ func TestAPlaceThatIsStoppedCannotGetOutByFailingFromOtherAddresses(t *testing.T
 		serveOne(g, post(wrong("192.0.2.10:1")))
 	}
 	for i := 0; i < maxTrackedClients*3; i++ {
-		serveOne(g, post(wrong(fmt.Sprintf("[2001:db8::%x]:1", i))))
+		serveOne(g, post(wrong(fmt.Sprintf("[2001:db8:%x::1]:1", i)))) // each in a network of its own
 	}
 	if rec, _ := serveOne(g, post(nil)); rec.Code != http.StatusTooManyRequests {
 		t.Errorf("the place that was stopped got through: %d", rec.Code)
@@ -220,6 +220,26 @@ func TestTheDoorHangsUpOnWhomItTurnsAway(t *testing.T) {
 	}
 	if rec, _ := serveOne(g, post(nil)); rec.Code != http.StatusOK || rec.Header().Get("Connection") != "" {
 		t.Errorf("a good request: code %d, Connection %q", rec.Code, rec.Header().Get("Connection"))
+	}
+}
+
+// The addresses of one IPv6 network are one place: changing the address inside it does not give
+// ten more tries.
+func TestTheAddressesOfAnIPv6NetworkShareTheirTries(t *testing.T) {
+	g := newGuard()
+	for i := 0; i < defaultMaxFailures; i++ {
+		serveOne(g, post(func(r *http.Request) {
+			r.RemoteAddr = fmt.Sprintf("[2001:db8:7:7::%x]:1", i+1)
+			r.Header.Set("Authorization", "Bearer wrong")
+		}))
+	}
+	rec, _ := serveOne(g, post(func(r *http.Request) { r.RemoteAddr = "[2001:db8:7:7::abcd]:1" }))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("another address of the same network got through: %d", rec.Code)
+	}
+	other, _ := serveOne(g, post(func(r *http.Request) { r.RemoteAddr = "[2001:db8:7:8::1]:1" }))
+	if other.Code != http.StatusOK {
+		t.Errorf("another network was slowed down too: %d", other.Code)
 	}
 }
 

@@ -478,7 +478,8 @@ func (p *parser) envTool(c *cursor, span Span) (*ToolDecl, error) {
 	return &ToolDecl{Name: "env", Kind: ToolEnv, Span: span, EnvNames: names}, nil
 }
 
-// serverTool reads `tool name from mcp "command" [env "NAME"]`, a tool that is a separate program.
+// serverTool reads `tool name from mcp "command"` and its clauses, `env "NAME" ...` and `readonly`,
+// which may come in any order: a tool that is a separate program, or an address.
 func (p *parser) serverTool(c *cursor, span Span, name string) (*ToolDecl, error) {
 	c.i++ // from
 	if !c.peekWord("mcp") {
@@ -492,14 +493,24 @@ func (p *parser) serverTool(c *cursor, span Span, name string) (*ToolDecl, error
 		return nil, err
 	}
 	decl := &ToolDecl{Name: name, Kind: ToolMCP, Span: span, Command: joinLit(parts)}
-	if c.peekWord("env") {
-		c.i++
-		decl.MCPEnv = p.readNames(c)
-		if len(decl.MCPEnv) == 0 {
-			return nil, p.missing(c,
-				"`env` needs the names of the variables to give the tool server, in quotes",
-				`write: tool x from mcp "command" env "HTTPS_PROXY"`)
+	for {
+		switch {
+		case c.peekWord("readonly"):
+			c.i++
+			decl.ReadOnly = true
+			continue
+		case c.peekWord("env"):
+			c.i++
+			names := p.readNames(c)
+			if len(names) == 0 {
+				return nil, p.missing(c,
+					"`env` needs the names of the variables to give the tool server, in quotes",
+					`write: tool x from mcp "command" env "HTTPS_PROXY"`)
+			}
+			decl.MCPEnv = append(decl.MCPEnv, names...)
+			continue
 		}
+		break
 	}
 	if err := p.finish(c); err != nil {
 		return nil, err

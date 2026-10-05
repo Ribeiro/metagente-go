@@ -9071,6 +9071,270 @@ Problem on line 3 of case.ag: `É` is not a valid environment variable name
     |   ^
 Fix: use letters, digits and underscores, starting with a letter or underscore
 warnings: 0
+=== tool/tool-w-from-mcp-cmd-readonly ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"cmd\" readonly"
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["cmd"]@19 word(readonly)@25
+-- parse --
+agent #0 &AgentDef{
+  Name: "A"
+  Span: @1:1
+  Goal: &GoalDecl{Text: "g", Span: @2:3}
+  Tools: [
+    &ToolDecl{
+      Name: "w"
+      Kind: 5
+      Span: @3:3
+      Scope: ""
+      HasScope: false
+      EnvNames: nil
+      Command: "cmd"
+      MCPEnv: nil
+      ReadOnly: true
+      Allow: nil
+      AllowPrivate: false
+    }
+  ]
+  Links: nil
+  Remotes: nil
+  Accepts: nil
+  Handlers: nil
+  Start: nil
+  Source: source("case.ag", "case.ag")
+}
+-- check --
+problems: 0
+warnings: 0
+=== tool/tool-w-from-mcp-cmd-readonly-env-a ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"cmd\" readonly env \"A\""
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["cmd"]@19 word(readonly)@25 word(env)@34 string["A"]@38
+-- parse --
+agent #0 &AgentDef{
+  Name: "A"
+  Span: @1:1
+  Goal: &GoalDecl{Text: "g", Span: @2:3}
+  Tools: [
+    &ToolDecl{
+      Name: "w"
+      Kind: 5
+      Span: @3:3
+      Scope: ""
+      HasScope: false
+      EnvNames: nil
+      Command: "cmd"
+      MCPEnv: ["A"]
+      ReadOnly: true
+      Allow: nil
+      AllowPrivate: false
+    }
+  ]
+  Links: nil
+  Remotes: nil
+  Accepts: nil
+  Handlers: nil
+  Start: nil
+  Source: source("case.ag", "case.ag")
+}
+-- check --
+problems: 0
+warnings: 0
+=== tool/tool-w-from-mcp-cmd-env-a-readonly ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"cmd\" env \"A\" readonly"
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["cmd"]@19 word(env)@25 string["A"]@29 word(readonly)@33
+-- parse --
+agent #0 &AgentDef{
+  Name: "A"
+  Span: @1:1
+  Goal: &GoalDecl{Text: "g", Span: @2:3}
+  Tools: [
+    &ToolDecl{
+      Name: "w"
+      Kind: 5
+      Span: @3:3
+      Scope: ""
+      HasScope: false
+      EnvNames: nil
+      Command: "cmd"
+      MCPEnv: ["A"]
+      ReadOnly: true
+      Allow: nil
+      AllowPrivate: false
+    }
+  ]
+  Links: nil
+  Remotes: nil
+  Accepts: nil
+  Handlers: nil
+  Start: nil
+  Source: source("case.ag", "case.ag")
+}
+-- check --
+problems: 0
+warnings: 0
+=== tool/tool-w-from-mcp-cmd-env-a-readonly-env-b ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"cmd\" env \"A\" readonly env \"B\""
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["cmd"]@19 word(env)@25 string["A"]@29 word(readonly)@33 word(env)@42 string["B"]@46
+-- parse --
+agent #0 &AgentDef{
+  Name: "A"
+  Span: @1:1
+  Goal: &GoalDecl{Text: "g", Span: @2:3}
+  Tools: [
+    &ToolDecl{
+      Name: "w"
+      Kind: 5
+      Span: @3:3
+      Scope: ""
+      HasScope: false
+      EnvNames: nil
+      Command: "cmd"
+      MCPEnv: ["A", "B"]
+      ReadOnly: true
+      Allow: nil
+      AllowPrivate: false
+    }
+  ]
+  Links: nil
+  Remotes: nil
+  Accepts: nil
+  Handlers: nil
+  Start: nil
+  Source: source("case.ag", "case.ag")
+}
+-- check --
+problems: 0
+warnings: 0
+=== tool/tool-w-from-mcp-cmd-readonly-readonly ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"cmd\" readonly readonly"
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["cmd"]@19 word(readonly)@25 word(readonly)@34
+-- parse --
+agent #0 &AgentDef{
+  Name: "A"
+  Span: @1:1
+  Goal: &GoalDecl{Text: "g", Span: @2:3}
+  Tools: [
+    &ToolDecl{
+      Name: "w"
+      Kind: 5
+      Span: @3:3
+      Scope: ""
+      HasScope: false
+      EnvNames: nil
+      Command: "cmd"
+      MCPEnv: nil
+      ReadOnly: true
+      Allow: nil
+      AllowPrivate: false
+    }
+  ]
+  Links: nil
+  Remotes: nil
+  Accepts: nil
+  Handlers: nil
+  Start: nil
+  Source: source("case.ag", "case.ag")
+}
+-- check --
+problems: 0
+warnings: 0
+=== tool/tool-w-from-mcp-cmd-readonly-extra ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"cmd\" readonly extra"
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["cmd"]@19 word(readonly)@25 word(extra)@34
+-- parse --
+error:
+Problem on line 3 of case.ag: I did not expect `extra` here; the line should have ended
+  3 |   tool w from mcp "cmd" readonly extra
+    |                                  ^
+Fix: remove it, or check for a missing quote or colon before it
+=== tool/tool-w-from-mcp-cmd-readonly-env ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"cmd\" readonly env"
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["cmd"]@19 word(readonly)@25 word(env)@34
+-- parse --
+error:
+Problem on line 3 of case.ag: `env` needs the names of the variables to give the tool server, in quotes
+  3 |   tool w from mcp "cmd" readonly env
+    |                                   ^
+Fix: write: tool x from mcp "command" env "HTTPS_PROXY"
+=== tool/tool-w-from-mcp-https-x-example-mcp-readonly ===
+-- source --
+1 "agent A"
+2 "  goal \"g\""
+3 "  tool w from mcp \"https://x.example/mcp\" readonly"
+-- lex --
+L1 indent=0 word(agent)@1 word(A)@7
+L2 indent=1 word(goal)@3 string["g"]@8
+L3 indent=1 word(tool)@3 word(w)@8 word(from)@10 word(mcp)@15 string["https://x.example/mcp"]@19 word(readonly)@43
+-- parse --
+agent #0 &AgentDef{
+  Name: "A"
+  Span: @1:1
+  Goal: &GoalDecl{Text: "g", Span: @2:3}
+  Tools: [
+    &ToolDecl{
+      Name: "w"
+      Kind: 5
+      Span: @3:3
+      Scope: ""
+      HasScope: false
+      EnvNames: nil
+      Command: "https://x.example/mcp"
+      MCPEnv: nil
+      ReadOnly: true
+      Allow: nil
+      AllowPrivate: false
+    }
+  ]
+  Links: nil
+  Remotes: nil
+  Accepts: nil
+  Handlers: nil
+  Start: nil
+  Source: source("case.ag", "case.ag")
+}
+-- check --
+problems: 0
+warnings: 0
 === tool/the-same-tool-twice ===
 -- source --
 1 "agent A"

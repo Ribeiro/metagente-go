@@ -308,21 +308,27 @@ func runServer(ctx context.Context, s serving, stderr io.Writer, env serveEnv) i
 	if env.ready != nil {
 		env.ready(ln.Addr().String(), s.token)
 	}
-	return serveUntilDone(ctx, ln, handler, tlsConfig, srv, cfg, stderr)
+	perAddress := 0
+	if s.plan.PerAddress {
+		perAddress = cfg.Serve.MaxConnectionsPerAddress
+	}
+	return serveUntilDone(ctx, ln, handler, tlsConfig, srv, cfg, perAddress, stderr)
 }
 
 // serveUntilDone runs the server and its janitor, and waits for both to end.
-func serveUntilDone(ctx context.Context, ln net.Listener, handler http.Handler, tlsConfig *tls.Config, srv *serve.Server, cfg *config.Config, stderr io.Writer) int {
+func serveUntilDone(ctx context.Context, ln net.Listener, handler http.Handler, tlsConfig *tls.Config, srv *serve.Server, cfg *config.Config, perAddress int, stderr io.Writer) int {
 	janitorCtx, stopJanitor := context.WithCancel(ctx)
 	janitorDone := make(chan struct{})
 	go func() { srv.Run(janitorCtx); close(janitorDone) }()
 	err := serve.Serve(ctx, ln, handler, tlsConfig, serve.RunOptions{
-		WriteTimeout:      srv.WriteTimeout(),
-		MaxConnections:    cfg.Serve.MaxConnections,
-		ReadHeaderTimeout: secondsOf(cfg.Serve.ReadHeaderTimeoutSeconds),
-		ReadTimeout:       secondsOf(cfg.Serve.ReadTimeoutSeconds),
-		IdleTimeout:       secondsOf(cfg.Serve.IdleTimeoutSeconds),
-		MaxHeaderBytes:    cfg.Serve.MaxHeaderBytes,
+		WriteTimeout:   srv.WriteTimeout(),
+		MaxConnections: cfg.Serve.MaxConnections,
+		// Only with --public: on this computer or behind a proxy, every client has the same address.
+		MaxConnectionsPerAddress: perAddress,
+		ReadHeaderTimeout:        secondsOf(cfg.Serve.ReadHeaderTimeoutSeconds),
+		ReadTimeout:              secondsOf(cfg.Serve.ReadTimeoutSeconds),
+		IdleTimeout:              secondsOf(cfg.Serve.IdleTimeoutSeconds),
+		MaxHeaderBytes:           cfg.Serve.MaxHeaderBytes,
 	})
 	stopJanitor()
 	<-janitorDone
@@ -396,6 +402,7 @@ func serveStdio(ctx context.Context, flags *serveArgs, cfg *config.Config, stdou
 		Version:          Version,
 		MaxInFlight:      cfg.Serve.MaxRunningTasks,
 		MaxConversations: cfg.Serve.MaxRetainedTasks,
+		MaxCallDepth:     cfg.Runtime.MaxCallDepth,
 		Log:              rt.Log,
 	}, agents)
 	if err != nil {

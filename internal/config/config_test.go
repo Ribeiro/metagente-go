@@ -539,19 +539,19 @@ func TestTheLimitsOfTheListenerAreSettingsWithTheValuesOfTheSpecification(t *tes
 	d := Default().Serve
 	if d.ReadHeaderTimeoutSeconds != 5 || d.ReadTimeoutSeconds != 30 || d.IdleTimeoutSeconds != 60 ||
 		d.MaxHeaderBytes != 16<<10 || d.AuthFailuresPerMinute != 10 || d.MaxConnections != 256 ||
-		d.MaxRunningTasks != 64 || d.MaxRetainedTasks != 1000 || d.MaxBodyBytes != 1<<20 {
+		d.MaxRunningTasks != 64 || d.MaxRetainedTasks != 1000 || d.MaxBodyBytes != 1<<20 || d.MaxConnectionsPerAddress != 32 {
 		t.Errorf("defaults = %+v", d)
 	}
 	cfg := Default()
-	text := "[serve]\nread_header_timeout_seconds = 2\nread_timeout_seconds = 3\nidle_timeout_seconds = 4\nmax_header_bytes = 8192\nauth_failures_per_minute = 20\n"
+	text := "[serve]\nread_header_timeout_seconds = 2\nread_timeout_seconds = 3\nidle_timeout_seconds = 4\nmax_header_bytes = 8192\nauth_failures_per_minute = 20\nmax_connections_per_address = 8\n"
 	if err := cfg.apply("metagente.toml", text); err != nil {
 		t.Fatal(problemText(t, err))
 	}
 	s := cfg.Serve
-	if s.ReadHeaderTimeoutSeconds != 2 || s.ReadTimeoutSeconds != 3 || s.IdleTimeoutSeconds != 4 || s.MaxHeaderBytes != 8192 || s.AuthFailuresPerMinute != 20 || len(cfg.Warnings) != 0 {
+	if s.ReadHeaderTimeoutSeconds != 2 || s.ReadTimeoutSeconds != 3 || s.IdleTimeoutSeconds != 4 || s.MaxHeaderBytes != 8192 || s.AuthFailuresPerMinute != 20 || s.MaxConnectionsPerAddress != 8 || len(cfg.Warnings) != 0 {
 		t.Errorf("serve = %+v, warnings = %v", s, cfg.Warnings)
 	}
-	for _, key := range []string{"read_header_timeout_seconds", "read_timeout_seconds", "idle_timeout_seconds", "max_header_bytes", "auth_failures_per_minute"} {
+	for _, key := range []string{"read_header_timeout_seconds", "read_timeout_seconds", "idle_timeout_seconds", "max_header_bytes", "auth_failures_per_minute", "max_connections_per_address"} {
 		if err := Default().apply("metagente.toml", "[serve]\n"+key+" = 0\n"); err == nil {
 			t.Errorf("%s = 0 was accepted", key)
 		}

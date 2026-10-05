@@ -277,3 +277,22 @@ func TestAnAddressWrittenWithBracketsDoesNotGetThemTwice(t *testing.T) {
 		}
 	}
 }
+
+// req: S6
+func TestOnlyAPublicServerLimitsTheConnectionsOfEachPlace(t *testing.T) {
+	public, err := Resolve(Options{Port: -1, Public: true, TLSCert: "c", TLSKey: "k", Hosts: []string{"a.example"}}, Defaults{Port: 8443})
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := Resolve(Options{Port: -1}, Defaults{Port: 8080})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, err := Resolve(Options{Port: -1, BehindProxy: true, Hosts: []string{"a.example"}, PublicURL: "https://a.example"}, Defaults{Port: 8080})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !public.PerAddress || local.PerAddress || proxy.PerAddress {
+		t.Errorf("public %v, local %v, behind a proxy %v", public.PerAddress, local.PerAddress, proxy.PerAddress)
+	}
+}

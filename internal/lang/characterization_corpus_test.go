@@ -275,6 +275,10 @@ func charToolCases(add charAdd) {
 		// names of variables that a tool server may be given
 		`tool w from mcp "cmd" env "A1"`, `tool w from mcp "cmd" env "_X" "a_b9" "Z"`, `tool w from mcp "cmd" env "9A"`,
 		`tool w from mcp "cmd" env "A.B"`, `tool w from mcp "cmd" env "A B"`, `tool w from mcp "cmd" env "É"`,
+		// readonly on a tool server, and its clauses in any order
+		`tool w from mcp "cmd" readonly`, `tool w from mcp "cmd" readonly env "A"`, `tool w from mcp "cmd" env "A" readonly`,
+		`tool w from mcp "cmd" env "A" readonly env "B"`, `tool w from mcp "cmd" readonly readonly`,
+		`tool w from mcp "cmd" readonly extra`, `tool w from mcp "cmd" readonly env`, `tool w from mcp "https://x.example/mcp" readonly`,
 	} {
 		add("tool/"+charSlug(d), charDecl(d))
 	}

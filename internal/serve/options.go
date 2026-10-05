@@ -55,6 +55,9 @@ type Plan struct {
 	// NoThrottle is for a server behind a proxy; see Guard.NoThrottle.
 	NoThrottle bool
 	PublicCard bool
+	// PerAddress is true when the server faces the network by itself, the one case
+	// where a limit of connections for each address tells clients apart.
+	PerAddress bool
 }
 
 // Resolve puts the flags and the configuration together. The rules are the ones
@@ -105,6 +108,7 @@ func Resolve(o Options, d Defaults) (*Plan, error) {
 		PublicURL:  publicURL,
 		NoThrottle: o.BehindProxy,
 		PublicCard: o.PublicCard,
+		PerAddress: o.Public,
 	}, nil
 }
 

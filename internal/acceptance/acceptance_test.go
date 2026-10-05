@@ -40,7 +40,7 @@ func mcpEcho() int {
 		func(_ context.Context, _ *sdk.CallToolRequest, in textIn) (*sdk.CallToolResult, any, error) {
 			return answer("echo: " + in.Text), nil, nil
 		})
-	sdk.AddTool(server, &sdk.Tool{Name: "env", Description: "read a variable of this process"},
+	sdk.AddTool(server, &sdk.Tool{Name: "env", Description: "read a variable of this process", Annotations: &sdk.ToolAnnotations{ReadOnlyHint: true}},
 		func(_ context.Context, _ *sdk.CallToolRequest, in nameIn) (*sdk.CallToolResult, any, error) {
 			return answer("value: " + os.Getenv(in.Name)), nil, nil
 		})

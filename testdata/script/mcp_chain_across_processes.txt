@@ -1,0 +1,48 @@
+# The chain of agents crosses processes over MCP too (D2): Outer calls Inner, which runs in
+# another process (`metagente serve --stdio`), and Inner calls Outer back, in a third. The
+# third process is told that Outer is already running, and refuses.
+#
+# A tool server never receives a variable of Metagente, so the processes find the approvals where
+# a real installation keeps them: in the configuration folder of the user, outside the project.
+env METAGENTE_CONFIG_DIR=
+env HOME=$WORK/home
+env USERPROFILE=$WORK/home
+env APPDATA=$WORK/home/appdata
+env XDG_CONFIG_HOME=$WORK/home/.config
+mkdir $WORK/home
+cd project
+
+exec metagente trust --yes outer.ag
+exec metagente trust --yes inner.ag
+
+# One hop works, and Inner knows who called.
+exec metagente run outer.ag hello
+stdout '^Inner was called$'
+
+# The circle is stopped, and says so.
+! exec metagente run outer.ag loop
+stderr 'calling each other in a circle'
+
+-- project/outer.ag --
+agent Outer
+  goal "Call Inner, and be called back by it"
+  tool inner from mcp "metagente serve inner.ag --stdio"
+  accepts hello
+  accepts loop
+  accepts ping
+  on hello
+    reply inner.Inner__hello
+  on loop
+    reply inner.Inner__back
+  on ping
+    reply "pong"
+-- project/inner.ag --
+agent Inner
+  goal "Answer, or call Outer back"
+  tool outer from mcp "metagente serve outer.ag --stdio"
+  accepts hello
+  accepts back
+  on hello
+    reply "Inner was called"
+  on back
+    reply outer.Outer__ping

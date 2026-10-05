@@ -176,7 +176,7 @@ func (g *Guard) admit(w http.ResponseWriter, r *http.Request) bool {
 // often. The answer to a wrong token is always the same one, and a place that is
 // being slowed down is not even asked for the token.
 func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request) bool {
-	client := clientKey(r.RemoteAddr)
+	client := addressGroup(r.RemoteAddr)
 	if wait, blocked := g.blocked(client); blocked {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 		hangUp(w)
@@ -282,6 +282,18 @@ func bearer(header string) (string, bool) {
 		return "", false
 	}
 	return token, true
+}
+
+// addressGroup is who a place is, for the limits that count places: an IPv4 address, or
+// the network of 64 bits of an IPv6 one. A single network of IPv6 has billions of
+// addresses, and they all belong to whoever has the network.
+func addressGroup(remoteAddr string) string {
+	host := clientKey(remoteAddr)
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() != nil {
+		return host
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 func clientKey(remoteAddr string) string {
