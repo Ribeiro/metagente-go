@@ -737,3 +737,24 @@ func TestGivingUpWhileTheOtherSideWouldHaveKeptUsWaitingStillCancelsTheTask(t *t
 		t.Errorf("the task was not cancelled on the other side: %v", f.requests)
 	}
 }
+
+// A card refused for the token says so, and names the variable, never what it holds; any other
+// status is about the address.
+func TestACardRefusedForTheTokenSaysWhatToDoAboutTheToken(t *testing.T) {
+	refusing := func(status int) *fakeAgent {
+		f := newFakeAgent(t)
+		f.card = func(string) (int, string) { return status, `unauthorized` }
+		return f
+	}
+	const secret = "the-token-0123456789-abcdefghij-XYZ"
+	_, err := refusing(401).toolWithCredential(t, "BOB_TOKEN", map[string]string{"BOB_TOKEN": secret}).Actions(context.Background())
+	text := rendered(t, err)
+	mustContain(t, text, "answered 401", "the token in BOB_TOKEN is not one that agent takes")
+	if strings.Contains(text, secret) {
+		t.Errorf("the token was shown:\n%s", text)
+	}
+	_, err = refusing(403).tool(t, nil).Actions(context.Background())
+	mustContain(t, rendered(t, err), "answered 403", "[credentials]", `Bob = "BOB_TOKEN"`)
+	_, err = refusing(404).tool(t, nil).Actions(context.Background())
+	mustContain(t, rendered(t, err), "answered 404", "http://127.0.0.1:8080/agents/Bob")
+}

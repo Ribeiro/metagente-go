@@ -27,7 +27,7 @@ func card(agent Agent, endpoint, version string, full bool) map[string]any {
 			"id":          skill.ID,
 			"name":        skill.ID,
 			"description": description,
-			"tags":        []string{},
+			"tags":        []string{skill.ID}, // A2A 1.0 asks for the tags of a skill; its name is the honest one
 		})
 	}
 	description := "A Metagente agent."

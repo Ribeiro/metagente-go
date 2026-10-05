@@ -268,21 +268,23 @@ func TestARealAgentRemembersInItsConversationAndForgetsWhenItEnds(t *testing.T) 
 // req: P1
 func TestAMistakeInARealAgentIsReportedWithoutItsFileOrItsLines(t *testing.T) {
 	rt := realRuntime(t)
-	defs, err := lang.ParseFile("/home/someone/private/notes.ag", "", notesSource)
+	// A mistake that only shows when the agent runs: the problem carries the file and the line.
+	source := "agent Notes\n  goal \"Remember\"\n  accepts remember what\n  on remember\n    count = 5\n    reply count.secret_field\n"
+	defs, err := lang.ParseFile("/home/someone/private/notes.ag", "", source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := newTestServer(t, nil, NewRuntimeAgent(rt, defs[0]))
-	a := decodeAnswer(t, do(s, http.MethodPost, "/agents/Notes", rpcBody("SendMessage", message(dataPart("remember", `{}`), "")), nil))
+	a := decodeAnswer(t, do(s, http.MethodPost, "/agents/Notes", rpcBody("SendMessage", message(dataPart("remember", `{"what":"x"}`), "")), nil))
 	if a.Error != nil || a.Result["task"] == nil {
-		t.Fatalf("a missing value should be a failed task: %s", a.Raw)
+		t.Fatalf("a mistake inside the agent should be a failed task: %s", a.Raw)
 	}
-	for _, leak := range []string{"/home/someone", "notes.ag", "state.set", "on remember"} {
+	for _, leak := range []string{"/home/someone", "notes.ag", "count.secret_field", "on remember", "line 6"} {
 		if strings.Contains(a.Raw, leak) {
 			t.Errorf("the answer tells %q:\n%s", leak, a.Raw)
 		}
 	}
-	if !strings.Contains(a.Raw, "needs a value for `what`") {
+	if !strings.Contains(a.Raw, "has no field `secret_field`") {
 		t.Errorf("the reason was lost:\n%s", a.Raw)
 	}
 }

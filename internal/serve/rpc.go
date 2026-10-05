@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sort"
@@ -36,6 +37,7 @@ const (
 	codeUnsupported       = -32004
 	codeContentType       = -32005
 	codeNoExtendedCard    = -32007
+	codeVersion           = -32009
 	maxParts              = 8
 	maxArguments          = 32
 	maxChain              = 32
@@ -63,14 +65,62 @@ type rpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	Error   *wireError      `json:"error,omitempty"`
+}
+
+// wireError is an error as A2A 1.0 writes it: the code, the message, and an ErrorInfo
+// that names the reason in the domain of the protocol, which is what a client of an
+// SDK reads to tell one error from another.
+type wireError struct {
+	Code    int              `json:"code"`
+	Message string           `json:"message"`
+	Data    []map[string]any `json:"data,omitempty"`
+}
+
+const (
+	errorInfoType  = "type.googleapis.com/google.rpc.ErrorInfo"
+	protocolDomain = "a2a-protocol.org"
+)
+
+// errorReasons are the reasons that A2A 1.0 gives to its codes.
+var errorReasons = map[int]string{
+	codeParse:           "PARSE_ERROR",
+	codeInvalidRequest:  "INVALID_REQUEST",
+	codeMethodNotFound:  "METHOD_NOT_FOUND",
+	codeInvalidParams:   "INVALID_PARAMS",
+	codeServer:          "SERVER_ERROR",
+	codeTaskNotFound:    "TASK_NOT_FOUND",
+	codePushUnsupported: "PUSH_NOTIFICATION_NOT_SUPPORTED",
+	codeUnsupported:     "UNSUPPORTED_OPERATION",
+	codeContentType:     "CONTENT_TYPE_NOT_SUPPORTED",
+	codeNoExtendedCard:  "EXTENDED_AGENT_CARD_NOT_CONFIGURED",
+	codeVersion:         "VERSION_NOT_SUPPORTED",
+}
+
+func (e *rpcError) wire() *wireError {
+	if e == nil {
+		return nil
+	}
+	out := &wireError{Code: e.Code, Message: e.Message}
+	if reason, ok := errorReasons[e.Code]; ok {
+		out.Data = []map[string]any{{"@type": errorInfoType, "reason": reason, "domain": protocolDomain}}
+	}
+	return out
 }
 
 func writeRPC(w http.ResponseWriter, id json.RawMessage, result any, e *rpcError) {
 	if len(id) == 0 {
 		id = json.RawMessage("null")
 	}
-	writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result, Error: e})
+	writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: result, Error: e.wire()})
+}
+
+// supportedVersion says whether the version a client asked for, in the header
+// A2A-Version, is one this server speaks: 1.0, or any 1.x. A request that names none
+// is taken as one for this server, so a client that does not send it still works.
+func supportedVersion(asked string) bool {
+	asked = strings.TrimSpace(asked)
+	return asked == "" || asked == "1" || strings.HasPrefix(asked, "1.")
 }
 
 // serveRPC answers one JSON-RPC request for one agent. The door has already
@@ -108,6 +158,10 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request, agent Agent) {
 	note := noteOf(r.Context())
 	note.setAgent(agent.Name())
 	note.setRPC(req.Method)
+	if !supportedVersion(r.Header.Get("A2A-Version")) {
+		writeRPC(w, req.ID, nil, &rpcError{codeVersion, "this server speaks version 1.0 of A2A, and not the one the request asked for"})
+		return
+	}
 
 	switch req.Method {
 	case "SendMessage":
@@ -362,7 +416,38 @@ func (s *Server) pickSkill(agent Agent, msg *wireMessage) (string, map[string]va
 	if e != nil {
 		return "", nil, e
 	}
+	if e := checkValues(agent, chosen, values); e != nil {
+		return "", nil, e
+	}
 	return chosen.ID, values, nil
+}
+
+// checkValues refuses a message that lacks a value its skill takes, or carries one it does
+// not, before the agent hears of it: the request is what is wrong, and the caller is told
+// so with the code of a request that is not valid, not with a task that failed.
+func checkValues(agent Agent, skill Skill, values map[string]value.Value) *rpcError {
+	takes := map[string]bool{}
+	for _, param := range skill.Params {
+		takes[param] = true
+		if _, given := values[param]; !given {
+			return invalid(fmt.Sprintf("the message `%s` of agent %s needs a value for `%s`", skill.ID, agent.Name(), param))
+		}
+	}
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !takes[name] {
+			what := "nothing"
+			if len(skill.Params) > 0 {
+				what = strings.Join(skill.Params, ", ")
+			}
+			return invalid(fmt.Sprintf("the message `%s` of agent %s does not take `%s`; it takes: %s", skill.ID, agent.Name(), name, what))
+		}
+	}
+	return nil
 }
 
 // readParts separates the text of a message from its data. There may be many

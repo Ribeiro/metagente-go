@@ -227,6 +227,19 @@ type cardDocument struct {
 	DefaultInputModes []string        `json:"defaultInputModes"`
 }
 
+// cardStatusFix says what to do about a card that was not given. A 401 or a 403 is about the
+// token, and the name of the variable is told, never what it holds.
+func (a *agent) cardStatusFix(status int) string {
+	switch {
+	case (status == http.StatusUnauthorized || status == http.StatusForbidden) && a.spec.Credential == "":
+		return fmt.Sprintf("that agent asks for a token: name the variable that holds it in the [credentials] section of metagente.toml, like %s = \"%s_TOKEN\"",
+			a.spec.Name, strings.ToUpper(a.spec.Name))
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return fmt.Sprintf("the token in %s is not one that agent takes: give it the token the other side was started with", a.spec.Credential)
+	}
+	return "the address should be where the agent is served, for example http://127.0.0.1:8080/agents/" + a.spec.Name
+}
+
 // fetchCard asks for the card at the approved address and reads it.
 func (a *agent) fetchCard(ctx context.Context, base *url.URL) (*cardDocument, error) {
 	raw, status, err := a.get(ctx, base.String()+"/.well-known/agent-card.json")
@@ -235,7 +248,7 @@ func (a *agent) fetchCard(ctx context.Context, base *url.URL) (*cardDocument, er
 	}
 	if status != http.StatusOK {
 		return nil, diag.Newf("%s answered %d when I asked for the agent card of %s", base.Host, status, a.spec.Name).
-			Fix("the address should be where the agent is served, for example http://127.0.0.1:8080")
+			Fix(a.cardStatusFix(status))
 	}
 	var doc cardDocument
 	if json.Unmarshal(raw, &doc) != nil {
