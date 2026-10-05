@@ -366,9 +366,10 @@ go test -race ./internal/serve/ ./internal/cli/      # the packages that run thi
 go test -tags acceptance ./internal/acceptance/...   # the binary, through the scripts of testdata/script
 ```
 
-`make check` runs all of these and the formatting check below. The same checks run on Linux, macOS
-and Windows in `.github/workflows/ci.yml` (written, not yet run). The Windows job may fail until what is
-known not to work there is fixed, and is allowed to, so that the others are not hidden by it.
+`make check` runs all of these and the formatting check below. The same checks run in `.github/workflows/ci.yml`: on Linux and Windows at every push,
+and on macOS once a week and on request (in a private repository a minute of macOS costs ten). The
+Windows job lists the tests that skip themselves there; the test of the groups of processes (E4) is
+not built for Windows at all, because that part does not exist there yet.
 
 ### The record of the language
 

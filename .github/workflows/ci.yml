@@ -64,9 +64,6 @@ jobs:
           # processes and of the links between folders were written for Linux and macOS first.
           - os: windows-latest
             race: false
-    # The Windows job is allowed to fail while what is known not to work there is being fixed.
-    # Its result is still shown. Remove this line when the job is green.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     defaults:
       run:
         shell: bash
@@ -85,6 +82,12 @@ jobs:
         run: go test -count=1 ${{ matrix.race && '-race' || '' }} ./...
       - name: Acceptance tests (the binary, through the scripts of testdata/script)
         run: go test -count=1 -tags acceptance ./internal/acceptance/...
+      # A green job does not say what it did not run. Where the tests skip themselves (the links between
+      # folders, for example), the list is here. What has a build constraint for other systems, such as
+      # the test of the groups of processes, is not compiled and does not appear at all.
+      - name: What was skipped here
+        if: ${{ !matrix.race }}
+        run: go test -count=1 -v ./... | grep -E -- '--- SKIP' || true
       # What runs things at the same time is repeated: a race shows up once in a few runs.
       - name: Concurrency, repeated
         if: ${{ matrix.race }}
