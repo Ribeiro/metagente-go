@@ -114,9 +114,6 @@ func TestTheFolderOfTheDefaultLogFollowsTheEnvironment(t *testing.T) {
 
 // req: P2
 func TestALinkInPlaceOfTheLogCannotSendTheWritesElsewhere(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating symbolic links needs privileges on Windows")
-	}
 	l, dir := freshLog(t)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -125,9 +122,7 @@ func TestALinkInPlaceOfTheLogCannotSendTheWritesElsewhere(t *testing.T) {
 	if err := os.WriteFile(victim, []byte("do not touch"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(victim, filepath.Join(dir, "metagente.log")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, victim, filepath.Join(dir, "metagente.log"))
 	if _, err := l.Write("ERROR", "x", "attack", ""); err == nil {
 		t.Fatal("a log that is a link to another place was written")
 	}
@@ -226,5 +221,17 @@ func TestManyWritersDoNotMixTheirLines(t *testing.T) {
 		if !strings.HasSuffix(line, strings.Repeat("x", 200)) || strings.Count(line, "ERROR") != 1 {
 			t.Errorf("a damaged line: %q", line)
 		}
+	}
+}
+
+// symlink makes a symbolic link. Where the one who runs the tests may not make one (on Windows that
+// takes the privilege to create symbolic links), the test is skipped; anywhere else, it fails.
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("this computer does not let the test make symbolic links: %v", err)
+		}
+		t.Fatal(err)
 	}
 }

@@ -140,20 +140,13 @@ func TestTheDefaultScopeIsTheProjectFolder(t *testing.T) {
 
 // req: F1
 func TestASymbolicLinkCannotLeadOutOfTheFolder(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating symbolic links needs privileges on Windows")
-	}
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "secret.txt"), "top secret")
 	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(dir, "secret.txt"), filepath.Join(dir, "data", "link.txt")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(dir, filepath.Join(dir, "data", "up")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, filepath.Join(dir, "secret.txt"), filepath.Join(dir, "data", "link.txt"))
+	symlink(t, dir, filepath.Join(dir, "data", "up"))
 	f := newFile(dir, "data/", false, 0)
 	ctx := context.Background()
 
@@ -172,7 +165,7 @@ func TestASymbolicLinkCannotLeadOutOfTheFolder(t *testing.T) {
 // req: F4
 func TestWritingToAHardLinkIsRefused(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("hard links are only detected on Unix systems")
+		t.Skip("hard links are not detected on Windows yet: the number of names of a file is read only on Unix systems (links_other.go)")
 	}
 	dir := t.TempDir()
 	outside := filepath.Join(dir, "outside.txt")
@@ -338,14 +331,9 @@ func TestAWriteInANewFolderLeavesNoTemporaryFileEither(t *testing.T) {
 }
 
 func TestAWriteThroughALinkInsideTheFolderChangesTheFileItPointsTo(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating symbolic links needs privileges on Windows")
-	}
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "data", "real.txt"), "old")
-	if err := os.Symlink("real.txt", filepath.Join(dir, "data", "alias.txt")); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, "real.txt", filepath.Join(dir, "data", "alias.txt"))
 	f := newFile(dir, "data/", false, 0)
 	if _, err := f.Call(context.Background(), "write", args("path", "alias.txt", "text", "new")); err != nil {
 		t.Fatal(rendered(t, err))
@@ -365,4 +353,16 @@ func TestWritingOverAFolderIsRefused(t *testing.T) {
 	}
 	_, err := newFile(dir, "", false, 0).Call(context.Background(), "write", args("path", "sub", "text", "x"))
 	mustContain(t, rendered(t, err), "is not a regular file")
+}
+
+// symlink makes a symbolic link. Where the one who runs the tests may not make one (on Windows that
+// takes the privilege to create symbolic links), the test is skipped; anywhere else, it fails.
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("this computer does not let the test make symbolic links: %v", err)
+		}
+		t.Fatal(err)
+	}
 }

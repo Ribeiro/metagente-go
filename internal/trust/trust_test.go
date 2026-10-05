@@ -305,14 +305,9 @@ func TestDefaultDirFollowsTheEnvironmentVariable(t *testing.T) {
 // The folder of the approvals may not exist yet, and may be reached through a
 // link. Neither must hide that it is inside the project.
 func TestAPrefixThatIsALinkDoesNotHideAFolderInsideTheProject(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("creating symbolic links needs privileges on Windows")
-	}
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(root, alias); err != nil {
-		t.Fatal(err)
-	}
+	symlink(t, root, alias)
 	registry := NewRegistry(filepath.Join(alias, "config")) // does not exist yet
 	err := registry.Approve(root, []Item{CommandItem("one", nil)})
 	if text := problemText(t, err); !strings.Contains(text, "inside the project") {
@@ -396,5 +391,17 @@ func TestAModelThatGetsNoKeyIsDescribedSoAndIsTheSameApproval(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(string(raw)), "keyless") {
 		t.Errorf("the wording is written in the approvals: %s", raw)
+	}
+}
+
+// symlink makes a symbolic link. Where the one who runs the tests may not make one (on Windows that
+// takes the privilege to create symbolic links), the test is skipped; anywhere else, it fails.
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("this computer does not let the test make symbolic links: %v", err)
+		}
+		t.Fatal(err)
 	}
 }
