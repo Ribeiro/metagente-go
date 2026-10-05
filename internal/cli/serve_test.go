@@ -27,6 +27,9 @@ type liveServer struct {
 	cancel  context.CancelFunc
 	done    chan int
 	stderr  *bytes.Buffer
+
+	stopped  bool // stop may be called again, by hand and then by a cleanup
+	exitCode int
 }
 
 func startServe(t *testing.T, args []string, env map[string]string, terminal bool) *liveServer {
@@ -56,9 +59,13 @@ func startServe(t *testing.T, args []string, env map[string]string, terminal boo
 // stop ends the server the way Ctrl-C does and returns what it said.
 func (l *liveServer) stop(t *testing.T) (code int, stderr string) {
 	t.Helper()
+	if l.stopped {
+		return l.exitCode, l.stderr.String()
+	}
 	l.cancel()
 	select {
 	case code = <-l.done:
+		l.stopped, l.exitCode = true, code
 		return code, l.stderr.String()
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not stop")

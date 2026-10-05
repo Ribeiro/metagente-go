@@ -29,6 +29,7 @@ All code, comments and tests are written in English. How to write agents is in
 | 14 | MCP over HTTP behind the same door (S10): `metagente serve --mcp` | Compiled; tests pass, also with `-race`; tried with the client of the official SDK in TypeScript and with the command line of the MCP Inspector |
 | 15 | The smaller decisions: a TOML library, `--token-file`, a smaller default for `state`, a review of the security of `serve`; the reference of the language and releases from a tag | Compiled; the tests pass, also with `-race` |
 | 16 | `readonly` for tool servers, a limit of connections for each place with `--public`, the chain of agents over MCP | Compiled; the tests pass, also with `-race`; the chain was tried across three processes |
+| 17 | The tests of the original project that were left, ported, with the City Briefing sample; the A2A server closer to the text of 1.0 (ErrorInfo, the version, values checked before an agent runs) | Compiled; the tests pass, also with `-race`; the official A2A client in Python was tried against it |
 
 Every slice compiles and its tests pass. The CI runs them on Linux and Windows at every push, and on macOS once a
 week and when asked for; what was checked against programs of other people, and what was not, is in
@@ -172,6 +173,8 @@ lower one of the two.
 - `metagente serve FILE.ag ...`: the agents over A2A, on this computer, behind a token; open to
   the network with TLS of its own, or behind a proxy (see [Serving agents](#serving-agents)).
 - `metagente serve FILE.ag --stdio`: the same agents as MCP tools on standard input and output.
+- [`samples/city-briefing`](samples/city-briefing/): two agents that work together, over A2A and MCP, with
+  `think`; the tests run it offline.
 - `metagente serve FILE.ag --mcp`: the same agents as MCP tools over HTTP too, at `/mcp`, behind the
   token (see [Serving to a program that speaks MCP over HTTP](#serving-to-a-program-that-speaks-mcp-over-http)).
 - `metagente token`: makes a token to keep and give to the server.
@@ -420,6 +423,7 @@ internal/scaffold      `metagente new`
 internal/value         the values agents work with
 internal/acceptance    black-box suite (build tag `acceptance`)
 docs                   the reference of the language, the review of the security of `serve`
+samples                projects that show Metagente doing real work, run offline by the tests
 scripts                what the release uses: the notes of a version, from CHANGELOG.md
 testdata/examples      example agents, copied from the Rust project
 testdata/script        acceptance cases (testscript)
@@ -491,10 +495,14 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 | `mcp_client` | C | `internal/mcp/pool_test.go` (a real server built with the SDK, started from the test binary itself) and `mcp_end_to_end.txt` |
 | `llm_provider`, `think` | C | `internal/llm/llm_test.go` (servers that pretend to be the providers), `internal/runtime/think_test.go` (a scripted model) and the end to end tests of `cli_test.go` |
 | `mcp_server` | C | `internal/serve/mcp_test.go` (a client of the SDK, in memory), `internal/serve/mcphttp_test.go` (a client of the SDK over HTTP, and the door), `internal/cli/serve_stdio_test.go` (the whole command, through pipes) and `internal/cli/serve_mcp_test.go` (the whole command, over HTTP) |
-| `sample_city_briefing` | C | pending |
-| `contract/*`, `a2a_*`, `serve_*` | B | covered by the tests of `internal/serve` and `internal/cli`; a port of the original ones is pending |
+| `sample_city_briefing` | C | `internal/cli/sample_test.go`, on the sample ported to `samples/city-briefing` (the Researcher at `/agents/Researcher`, behind a token, the fetch server pinned). Offline: a scripted model, a fetch server built with the SDK, the Researcher served and the Concierge run through the commands a person types. The troubleshooting table of its README is checked against what the program prints |
+| `contract/agent_card`, `contract/a2a_wire` | B | `internal/serve/contract_test.go`, written from the text of A2A 1.0 against the real interpreter on a real port. Changed for this server: the card is at `/agents/NAME` and needs the token, an agent answers with a Message, and no task is kept, so `GetTask`, `returnImmediately` and the time a task is kept are not ported |
+| `a2a_client` | B, C | `internal/remote/remote_test.go` (an action that is not offered, a remote that is not there, a card refused for the token), `contract_test.go` (a record that comes back as a record) |
+| `a2a_unsupported` | B | `contract_test.go`: a skill that is not handled is an invalid parameter (-32602) that lists the ones that are, where the original said -32004; an agent that is not served is a 404 behind the door |
+| `a2a_interop` (the official SDK in Python) | C | check 9 of `validation/README.md`, with `validation/a2a-python/client.py`. As in the original, the CI has no Python with the SDK, so it is run by hand |
+| `serve_bind`, `serve_concurrency` | B | `internal/cli/serve_bind_test.go` (only this computer can connect by default, a port in use is explained), `contract_test.go` (50 requests that each wait a second end together). The warning of `--public` about "no login" has no port: `--public` needs TLS and the token here |
 | `internal_error::an_internal_failure...` | E | `internal/cli` (`TestAnInternalFailureShowsOneSentence...`), `internal/runtime/internal_test.go` |
-| `perf` | B, C | partly: `internal/serve/load_test.go` (50 requests at once with `-race`, the 65th task, 100 slow connections); a port of the original is pending |
+| `perf` | B, C | `internal/acceptance/perf_test.go` (a trivial agent answers from a cold start in under 100 ms; about 10 ms here), `internal/lang/perf_test.go` (500 lines parse in under 50 ms), and `internal/serve/load_test.go` (the 65th task, 100 slow connections) |
 
 ## What comes next
 
@@ -503,8 +511,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    and behind a proxy. **E4 on Windows** is left out on purpose (see its row above); to take it up, the
    program has to be started with the pipes of this project, put in a job object right after `Start`, and
    ended the way the SDK ends it.
-2. **The port of the tests of the original project** (`contract/*`, `a2a_*`, `sample_city_briefing`,
-   `perf`). It needs the sources of the original project at hand.
+2. **The port of the tests of the original project is done** (see the table above), with the City Briefing
+   sample. What is left of it is a run of the sample with the live Claude API and the real fetch server.
 3. **Checks in real conditions** that cannot be automated (next section), most of which were done.
 4. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
    of `shorten` are one function (`internal/clip`). Run Sonar again to see what is left; the
@@ -528,7 +536,7 @@ Checked against the real thing (the steps and the results are in `validation/REA
 - a tool server started by `npx`, with the minimal environment of E1: what the shell had did not reach it;
 - `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
 - `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
-- the A2A server, with the command line of the official A2A SDK in JavaScript;
+- the A2A server, with the command line of the official A2A SDK in JavaScript, and with its client in Python;
 - the A2A client (`remote`), with two sample agents of the same SDK. The first showed that an agent whose card
   takes only text has to be sent text. The second, that the other side has to be asked to answer at once: a
   task that is still working is followed with `GetTask`, and cancelled if the caller gives up.

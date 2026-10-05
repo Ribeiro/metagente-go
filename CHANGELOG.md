@@ -7,6 +7,28 @@ minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- [The City Briefing sample](samples/city-briefing/): two agents that work together over A2A and MCP, with
+  `think`. The tests run it offline at every change.
+- The tests of the original project that were left are ported: the contract of A2A 1.0, the client of A2A,
+  `serve` on this computer and with many requests at once, the times of start and of parsing, and the
+  sample. The official A2A client in Python was tried against the server (check 9 of `validation/README.md`).
+
+### Changed
+
+- A message that lacks a value its skill takes, or carries one it does not, is refused with -32602 (a
+  request that is not valid), before the agent hears of it. It used to be a task that failed.
+- The errors of the A2A server carry the `ErrorInfo` of A2A 1.0 (the reason and the domain of the
+  protocol), which the clients of the SDKs read to tell one error from another.
+- A request that asks for a version of A2A that is not 1.x, in `A2A-Version`, is refused with -32009. A
+  request that names none is served as before.
+- Every skill of a card has tags, as A2A 1.0 asks: its name.
+- With the token, a path that is not one of the server is a 404 whatever the method; a `GET` used to get a
+  405.
+- When the card of a remote agent is refused with 401 or 403, the message says what to do about the token
+  (the variable named in `[credentials]`), not about the address.
+
 ## [0.2.0] - 2026-10-05
 
 ### Added

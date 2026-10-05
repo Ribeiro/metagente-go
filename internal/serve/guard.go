@@ -116,6 +116,16 @@ func (g *Guard) ProtectMCP(next http.Handler) http.Handler {
 	})
 }
 
+// Unknown answers a path that is not one of the server: who asks is checked first, so a
+// stranger gets 401 as everywhere else, and one with the token gets 404 whatever the
+// method, so nobody learns which paths exist from how they are refused.
+func (g *Guard) Unknown(w http.ResponseWriter, r *http.Request) {
+	safeHeaders(w)
+	if g.admit(w, r) {
+		refuse(w, http.StatusNotFound, "not found")
+	}
+}
+
 // PublicGet is the door of a page anyone may read: no token, but still only for
 // this host, only to GET, and never to a page of a browser.
 func (g *Guard) PublicGet(next http.Handler) http.Handler {

@@ -17,6 +17,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 6 | `remote` (A2A client) | the sample agent of the official A2A SDK in JavaScript | 30 min |
 | 7 | `remote`, a task that takes time and a caller that gives up | the cancellable agent of the same SDK | 30 min |
 | 8 | `serve --mcp` (MCP over HTTP) | the client of the official SDK of MCP in TypeScript, and the command line of the MCP Inspector | 20 min |
+| 9 | `serve` (A2A server) | the client of the official A2A SDK in Python | 15 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -453,6 +454,43 @@ the server asks for a bearer token and offers no OAuth.
 Keep what B printed and the lines of the access log in A (`rpc=mcp message=...`). To end: `Ctrl-C` in A,
 `rm ~/metagente-demo/.token`, and `rm -rf ~/mcp-http-check`.
 
+## 9. A client of A2A in Python
+
+What the tests cannot show: that the official client in Python, a third language after Go and JavaScript,
+reads the card and the answers, and tells our errors apart. The original project ran the same SDK.
+
+In **A**, the server, with an agent that answers and one message that fails:
+
+```text
+mkdir -p ~/metagente-demo/python && cd ~/metagente-demo/python
+cat > weather.ag <<'EOF'
+agent Weather
+  goal "Answer questions about the weather"
+  accepts ask city  # weather for a city
+  accepts broken
+  on ask
+    reply "sunny in {city}"
+  on broken
+    fail "the barometer exploded"
+EOF
+umask 077; ~/bin/metagente token > .token
+export METAGENTE_TOKEN=$(cat .token)
+~/bin/metagente serve weather.ag
+```
+
+In **B**, the client (Python 3.10 or newer), in an environment of its own:
+
+```text
+python3 -m venv ~/a2a-python && ~/a2a-python/bin/pip install a2a-sdk httpx
+export METAGENTE_TOKEN=$(cat ~/metagente-demo/python/.token)
+~/a2a-python/bin/python PROJECT/validation/a2a-python/client.py http://127.0.0.1:8080/agents/Weather/
+```
+
+**Expected:** the name `Weather`, the skills `ask` and `broken`, the interface `JSONRPC` `1.0`; `sunny in
+Lisbon` as a message; `TASK_STATE_FAILED` with `the barometer exploded`; `GetTask` raising
+`TaskNotFoundError`; a skill that is not there raising `InvalidParamsError` with the skills that are; and,
+without the token, `401`. To end: `Ctrl-C` in A, `rm -rf ~/a2a-python ~/metagente-demo/python`.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -465,6 +503,7 @@ Keep what B printed and the lines of the access log in A (`rpc=mcp message=...`)
 | 6 | 2026-10-05 | macOS, arm64; `agents/sample-agent` of `a2aproject/a2a-js` (`npm run agents:sample-agent`), port 41241 | 0.0.0-dev | passed, after F8 | The card is read (the address of the binding `JSONRPC`, the skill `sample_agent`, `streaming: true`, input only `text`) and its address is approved. The first call answered `Hello! Please provide a message for me to respond to.`: our client sent a block of data, and the agent reads only text (a call by hand with text answered `Hello World! Nice to meet you!`, and one with data gave the fallback). After the fix the client sends text to an agent whose card takes only text, and the answer was `Hello World! Nice to meet you!`. The agent answers a call that is not of streaming with a task that is already completed, so following a task that is still working (`GetTask`) and cancelling it were not tried with it, and neither was a call with several values. |
 | 7 | 2026-10-05 | macOS, arm64; `agents/cancellable-agent` of `a2aproject/a2a-js`, port 41241 | 0.0.0-dev | passed, after F9 | `ask` waited 5.1 s, as the agent runs five steps of one second. It printed nothing, and that is right: the task ended `COMPLETED` with no artifact and no message in its status, so there was nothing to print. `hurry` (`within 2 seconds`) failed after 2 s, as it should, but the agent went on and ran the five steps to the end: its log shows no `Cancellation requested`, and `GetTask` says `TASK_STATE_COMPLETED`, not `CANCELED`. After the fix (F9): `hurry` made the agent write `Cancellation requested for task ...` and `Aborting task ... at step 3`, and `GetTask` of that task says `TASK_STATE_CANCELED`; `ask` took 5.2 s, now by following the task with `GetTask` until it ended, and printed nothing, as before. |
 | 8 | 2026-10-05 | Linux, amd64; Node v22.22.0; `@modelcontextprotocol/sdk` 1.32.1; `@modelcontextprotocol/inspector` 2.9.0 | 0.0.0-dev | passed | The client of the SDK in TypeScript got a session id from the server, listed `Hello__greet`, `Notes__recall` and `Notes__remember`, got `Hello, Maria!`, and `Notes` remembered `Ana` in its session and nothing in another one; a missing value came back as an error of the tool with `Problem` and `Fix`; `terminateSession` (a `DELETE`) worked; without the token it was refused (`unauthorized`). The fetch of Node.js went through the door (F6 holds). The Inspector listed the tools and called `Hello__greet` (`Hello, Maria!`); with `--strict` it warns that the schema of each value says nothing of its type (F3). By hand: an `Origin` gets `403`, a `GET` gets `405` with `Allow: POST, DELETE`. The access log has `agent=Hello rpc=mcp message=greet task=... result=ok`, and no token. Not tried: behind a proxy, and with a desktop assistant. |
+| 9 | 2026-10-05 | Linux, amd64; Python 3.11.15; `a2a-sdk` 1.2.2 | 0.0.0-dev (the `master` of 0.2.0 with the changes of the port of the tests) | passed | The card was read with the token (name, the skills `ask` and `broken`, `JSONRPC` `1.0`). `ask` with the text `Lisbon` and the skill in the metadata came back as a message, `sunny in Lisbon`; `broken` as a task in `TASK_STATE_FAILED` with `the barometer exploded`. The SDK turned our errors into its own types: `GetTask` raised `TaskNotFoundError` and a skill that is not there `InvalidParamsError: this agent does not handle `dance`; it handles: ask, broken`. Without the token the card was refused with `401`. The access log had one line for each request, with `result=ok`, `failed` and `error`. |
 
 ## What the checks found
 

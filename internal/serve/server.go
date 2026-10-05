@@ -221,9 +221,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case routeMCP:
 		s.guard.ProtectMCP(s.mcp).ServeHTTP(w, r)
 	default:
-		s.guard.Protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			refuse(w, http.StatusNotFound, "not found")
-		})).ServeHTTP(w, r)
+		s.guard.Unknown(w, r)
 	}
 }
 
