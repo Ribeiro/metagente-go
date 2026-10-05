@@ -535,7 +535,7 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    program has to be started with the pipes of this project, put in a job object right after `Start`, and
    ended the way the SDK ends it.
 2. **The port of the tests of the original project is done** (see the table above), with the City Briefing
-   sample. What is left of it is a run of the sample with the live Claude API and the real fetch server.
+   sample, which was also run with the live Claude API and the real fetch server (check 11).
 3. **Checks in real conditions** that cannot be automated (next section), most of which were done.
 4. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
    of `shorten` are one function (`internal/clip`). Run Sonar again to see what is left; the
@@ -560,6 +560,8 @@ Checked against the real thing (the steps and the results are in `validation/REA
 - a tool server in Python started by `uvx` (`mcp-server-fetch`, the one of the City Briefing sample), with
   the minimal environment of E1: it fetched a page, nothing of it was left running, and `readonly` refused
   its tool, which it does not mark as read only;
+- the City Briefing sample with Claude: `think` chose the fetch tool and read a page, and the Concierge got
+  the facts from the Researcher over A2A, with the token;
 - `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
 - `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
 - the A2A server, with the command line of the official A2A SDK in JavaScript, and with its client in Python;

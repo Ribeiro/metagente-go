@@ -19,6 +19,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 8 | `serve --mcp` (MCP over HTTP) | the client of the official SDK of MCP in TypeScript, and the command line of the MCP Inspector | 20 min |
 | 9 | `serve` (A2A server) | the client of the official A2A SDK in Python | 15 min |
 | 10 | tool servers (MCP client), E1, E2, L7 | a server in Python that `uvx` starts | 10 min |
+| 11 | the City Briefing sample: `think` with tools, `serve` and `remote` together | the Claude API and the fetch server that `uvx` starts | 20 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -534,6 +535,60 @@ which did not change.) `unpinned.ag` gets a warning that the version is not pinn
 
 Keep what each command printed. To end: `rm -rf ~/metagente-demo/uvx`.
 
+## 11. The City Briefing sample, with Claude
+
+What the tests cannot show: the sample run as its README says, with the Claude API in place of the scripted
+model and `mcp-server-fetch` in place of the fake one. The model chooses to call the fetch tool, reads a page
+of Wikipedia, and the Concierge gets the facts over A2A with the token. It needs an Anthropic API key, and the
+use is billed (a few short questions); check 10 first, so that `uvx` is known to work.
+
+The files come from the project, into a folder of their own, so that the approvals and the token are not in
+the project:
+
+```text
+mkdir -p ~/metagente-demo/city-briefing && cd ~/metagente-demo/city-briefing
+for f in researcher.ag concierge.ag metagente.toml; do
+  gh api -H "Accept: application/vnd.github.raw" repos/Ribeiro/metagente-go/contents/samples/city-briefing/$f > $f
+done
+~/bin/metagente check researcher.ag && ~/bin/metagente check concierge.ag
+~/bin/metagente trust researcher.ag                # NEW: starts the program uvx mcp-server-fetch==2026.8.18
+~/bin/metagente trust concierge.ag                 # NEW: connects to http://127.0.0.1:8080/agents/Researcher (...)
+umask 077; ~/bin/metagente token > .researcher-token
+```
+
+In both terminals, set the key without showing it, and check it before the agents use it:
+
+```text
+export ANTHROPIC_API_KEY=$(cat FILE-WITH-THE-KEY)   # only the key, one line
+curl -s -o /dev/null -w '%{http_code}\n' https://api.anthropic.com/v1/models \
+  -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01"     # 200
+```
+
+Terminal 1:
+
+```text
+~/bin/metagente run researcher.ag city=Lisbon
+export METAGENTE_TOKEN=$(cat .researcher-token)
+~/bin/metagente serve researcher.ag
+```
+
+Terminal 2:
+
+```text
+export RESEARCHER_TOKEN=$(cat .researcher-token)
+~/bin/metagente run concierge.ag city=Lisbon
+~/bin/metagente run concierge.ag city=Xyzzyplugh
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/agents/Researcher/.well-known/agent-card.json
+```
+
+**Expected:** the Researcher alone prints three sentences of facts and `(checked ...)`. The Concierge prints a
+briefing of three lines about Lisbon, and for `Xyzzyplugh` says that no facts were found. The `curl` without
+the token gets `401`. The log of Terminal 1 has, for each run of the Concierge, a `GET` of the card and a
+`SendMessage` with `result=ok`. The key is in no output and no log.
+
+Keep what each command printed, without the key. To end: Ctrl-C in Terminal 1, and
+`rm -rf ~/metagente-demo/city-briefing`.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -548,6 +603,7 @@ Keep what each command printed. To end: `rm -rf ~/metagente-demo/uvx`.
 | 8 | 2026-10-05 | Linux, amd64; Node v22.22.0; `@modelcontextprotocol/sdk` 1.32.1; `@modelcontextprotocol/inspector` 2.9.0 | 0.0.0-dev | passed | The client of the SDK in TypeScript got a session id from the server, listed `Hello__greet`, `Notes__recall` and `Notes__remember`, got `Hello, Maria!`, and `Notes` remembered `Ana` in its session and nothing in another one; a missing value came back as an error of the tool with `Problem` and `Fix`; `terminateSession` (a `DELETE`) worked; without the token it was refused (`unauthorized`). The fetch of Node.js went through the door (F6 holds). The Inspector listed the tools and called `Hello__greet` (`Hello, Maria!`); with `--strict` it warns that the schema of each value says nothing of its type (F3). By hand: an `Origin` gets `403`, a `GET` gets `405` with `Allow: POST, DELETE`. The access log has `agent=Hello rpc=mcp message=greet task=... result=ok`, and no token. Not tried: behind a proxy, and with a desktop assistant. |
 | 9 | 2026-10-05 | Linux, amd64; Python 3.11.15; `a2a-sdk` 1.2.2 | 0.0.0-dev (the `master` of 0.2.0 with the changes of the port of the tests) | passed | The card was read with the token (name, the skills `ask` and `broken`, `JSONRPC` `1.0`). `ask` with the text `Lisbon` and the skill in the metadata came back as a message, `sunny in Lisbon`; `broken` as a task in `TASK_STATE_FAILED` with `the barometer exploded`. The SDK turned our errors into its own types: `GetTask` raised `TaskNotFoundError` and a skill that is not there `InvalidParamsError: this agent does not handle `dance`; it handles: ask, broken`. Without the token the card was refused with `401`. The access log had one line for each request, with `result=ok`, `failed` and `error`. |
 | 10 | 2026-10-05 | macOS, arm64 (uv, version not recorded), and Linux, amd64 (uv 0.8.17); `mcp-server-fetch` 2026.8.18 | 0.3.0 on macOS; 0.0.0-dev (the `master` of 0.3.0) on Linux | passed | On macOS `check --strict` found no problems with the version pinned, `trust` listed `starts the program: uvx mcp-server-fetch==2026.8.18` as NEW, and `run` printed `Contents of https://example.com/:` with the text of the page; no process of the server was left. With `readonly` the call was refused, because the server marks none of its tools as read only. Without a version `check` gave the warning and passed, and `--strict` refused it. On Linux the same was seen except the page, which the proxy of that environment does not let through (403); there `@2026.8.18` was pinned as well as `==2026.8.18`, and a failure of the server came back as a problem that can be read. A first try on macOS used an older program built from the sources (it said `0.0.0-dev`), and there the server stopped while answering; with the 0.3.0 of the release it did not happen, so it was not looked into: the checks are to be run with the program of a release, or one built from the `master` of the day. |
+| 11 | 2026-10-05 | macOS, arm64; Claude Sonnet 5.5 (`claude-sonnet-5-5`); `mcp-server-fetch` 2026.8.18 | 0.3.0 | passed, after F10 | `check` found no problems in either file; `trust` listed `starts the program: uvx mcp-server-fetch==2026.8.18` for the Researcher and `connects to: http://127.0.0.1:8080/agents/Researcher (and sends it the token held in RESEARCHER_TOKEN)` for the Concierge. With `Lisbon` the Concierge printed three lines ("Welcome to Lisbon, Portugal's capital since 1256, set on the Tagus river!", its Roman name Olissipo and the siege of 1147, Belém Tower, Rua Augusta Arch and the cathedral). With `Xyzzyplugh` it said that no verified facts were found, because the page of Wikipedia answered 404. The log of the Researcher had a `GET` of the card (200) and a `SendMessage` with `result=ok` for each (7.3 s and 4.5 s), and a `curl` without the token got `401`. On the way: with the key not set to a real one, `api.anthropic.com answered 401: invalid x-api-key` came back to the Concierge over A2A as a problem that can be read, and the task was `result=failed` in the log. A variable that held a command along with a line break got "I could not reach api.anthropic.com: the connection failed", which sent the search to the network (F10). |
 
 ## What the checks found
 
@@ -564,3 +620,4 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 | F7 | CI | On Windows the tool of files does not detect hard links: `linkCount` (links_other.go) always says 1, so a write through a hard link that leads outside the folder is not refused there (F4). Making a hard link takes someone else; the agent has no tool for it. The test of this is skipped on Windows, with that reason in the message. | open; GetFileInformationByHandle in the standard `syscall` gives the number, but it needs the handle of the file |
 | F8 | 6 | `remote` always sent the call as a block of data. The sample agent of the SDK in JavaScript takes only text (`defaultInputModes: ["text"]`), found no text in the message and answered `Please provide a message for me to respond to`. | fixed in the code: an agent whose card takes only text is sent text, the one value or a line `name: value` for each of several; one that takes JSON, or says nothing, is sent the data as before. checked with the sample agent |
 | F9 | 7 | When the time of a call ends while the other side works, `remote` gave up without telling the agent, and the task went on to the end for nothing. The call asked the other side to answer only when the task ended (`returnImmediately: false`), so the number of the task was only known at the end, and there was nothing to cancel. | fixed in the code: it asks to be answered at once, follows the task with `GetTask` and cancels it when the caller gives up. checked with the cancellable agent |
+| F10 | 11 | A key with a line break, a space or another character that a header cannot hold (more than the key copied into the variable) was refused by the HTTP library before any connection, and the person was told `I could not reach api.anthropic.com: the connection failed`, after three tries. | fixed in the code: such a key is refused before any request, with "the variable ANTHROPIC_API_KEY holds a line break, which cannot be part of a key" and how to fix it, and nothing of the key is said. The README of the sample has it in its troubleshooting |

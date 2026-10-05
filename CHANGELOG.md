@@ -7,6 +7,12 @@ minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- A key of a model with a line break, a space or another character that cannot be part of a key (more than
+  the key copied into the variable) is refused before any request, with a message that says so. It used to
+  be three tries and "I could not reach api.anthropic.com: the connection failed".
+
 ## [0.3.0] - 2026-10-05
 
 ### Added

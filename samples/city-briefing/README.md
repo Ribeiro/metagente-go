@@ -26,8 +26,8 @@ fetch server is pinned to a version.
 
 > **How this is tested:** `internal/cli/sample_test.go` runs this folder offline at every change: a fake
 > model in place of Claude, a fake fetch server in place of `uvx mcp-server-fetch`, the Researcher really
-> served and the Concierge really run. A run with the live Claude API and the real fetch server is still
-> to be recorded in `validation/README.md`. Your output will differ from the one in "A sample question".
+> served and the Concierge really run. It was also run with the live Claude API and the real fetch server
+> (check 11 of `validation/README.md`). Your output will differ from the one in "A sample question".
 
 ## Prerequisites
 
@@ -78,8 +78,8 @@ Two more things are written inside the agent files, because that is where Metage
 reaches an address before you say yes:
 
 ```bash
-metagente trust researcher.ag      # starts uvx, and sends your key to the model
-metagente trust concierge.ag       # reaches the Researcher with its token, and sends your key to the model
+metagente trust researcher.ag      # starts uvx
+metagente trust concierge.ag       # reaches the Researcher, and sends it the token in RESEARCHER_TOKEN
 ```
 
 **Once**, make the token that opens the Researcher, and keep it:
@@ -193,6 +193,8 @@ with `401`, and because the Researcher listens on this computer only, another co
 | You see | What it means | What to do |
 |---------|---------------|------------|
 | `the language model could not answer: the variable ANTHROPIC_API_KEY is not set` | The terminal you ran in has no key | `export ANTHROPIC_API_KEY=...` in **that** terminal (both need it) |
+| `the variable ANTHROPIC_API_KEY holds a line break, which cannot be part of a key` (or a space) | More than the key was copied into the variable, for example a command along with it | Put only the key in it; to check it without showing it: `echo ${#ANTHROPIC_API_KEY}` |
+| `api.anthropic.com answered 401: invalid x-api-key` | The variable holds something that is not a key of your account | Copy the key again from the Anthropic Console, or make a new one |
 | `have not approved for this project` | An agent starts a program or reaches an address you did not approve | Run `metagente trust` for that file, as in "Running the demo" |
 | `I could not reach 127.0.0.1:8080 (remote agent Researcher)` | The Researcher is not running | Start Terminal 1: `metagente serve researcher.ag` |
 | `answered 401 when I asked for the agent card of Researcher` | `RESEARCHER_TOKEN` is not the token the Researcher was started with | Use the same token in both terminals |

@@ -304,6 +304,12 @@ func TestTheTroubleshootingOfTheReadmeSaysWhatTheProgramPrints(t *testing.T) {
 	_, _, stderr = run(t, "run", "researcher.ag", "city=Lisbon")
 	assertContains(t, stderr, "the language model could not answer: the variable "+sampleKeyVar+" is not set")
 	assertContains(t, readme, "`the language model could not answer: the variable ANTHROPIC_API_KEY is not set`")
+
+	// More than the key copied into the variable.
+	t.Setenv(sampleKeyVar, "sk-ant-abc\nwc -c < ~/.key")
+	_, _, stderr = run(t, "run", "researcher.ag", "city=Lisbon")
+	assertContains(t, stderr, "the variable "+sampleKeyVar+" holds a line break, which cannot be part of a key")
+	assertContains(t, readme, "`the variable ANTHROPIC_API_KEY holds a line break, which cannot be part of a key`")
 }
 
 // stageResearcher stages the sample and approves the Researcher, to run it alone.
