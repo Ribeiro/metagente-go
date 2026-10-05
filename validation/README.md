@@ -109,11 +109,13 @@ cd validation/ollama
 metagente check thinker.ag
 metagente trust thinker.ag             # the address of the model comes as NEW (T1 and T3)
 metagente run thinker.ag ask "question=What is 2+2? Answer with the number only."
-metagente run thinker.ag ask "question=What time is it now? Use the clock."
+date -u '+%H:%M:%S'; metagente run thinker.ag ask "question=What time is it now? Use the clock tool."; date -u '+%H:%M:%S'
 ```
 
-**Expected:** the first answers with `4`. The second shows whether the model asked for the clock and
-whether the answer came out; a small model may not ask for it, and that is a fact about the model.
+**Expected:** the first answers with `4`. In the second, the clock gives the time in UTC, so the answer
+has to be a time that falls between the two lines of `date -u` (and the date of UTC, which can be the day
+after yours): that is what tells a call to the clock from an hour that the model made up. A small model
+may not ask for the clock, and that is a fact about the model.
 What matters to us is whether there was **no error of format**: a request refused by the server, an
 answer that we could not read, a tool call that did not run. Keep the whole output of both.
 
@@ -127,5 +129,15 @@ Written after 1 to 3, because it depends on what they show about the options of 
 |---|---|---|---|---|---|
 | 1 | 2026-10-04 | macOS, arm64 | 0.0.0-dev | passed with the MCP Inspector 1.0.2 | `initialize`, `tools/list` and `tools/call` work; the answer was `Hello, Maria!`. Not tried with a desktop assistant. |
 | 2 | 2026-10-04 | macOS, arm64; Node 18.18.2, npm 9.8.1 | 0.0.0-dev | passed | `npx` started `@modelcontextprotocol/server-everything` (not pinned; its version was not recorded) with the minimal environment. `say` answered `Echo: hello`. In `get-env`, `SECRET_TEST` and `ANTHROPIC_API_KEY` did not appear, nor did any other variable of the shell. The tool is `get-env` in the version fetched, not `printEnv`. The server does receive the whole `PATH` and the `HOME`: the environment is minimal, not an isolation. |
-| 3 | | | | not run | |
+| 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
 | 4 | | | | not run | |
+
+## What the checks found
+
+Not defects of the tests, but things that a real use showed. "Open" means that nothing was changed yet.
+
+| # | Found in | What | State |
+|---|---|---|---|
+| F1 | 3 | The approval of `think` says "sends your key and what the agent asks the language model to" even when the address is of this computer and there is no key. It says more than what happens. | open |
+| F2 | 3 | A small model can write a call to a tool as text and invent its result. The answer goes out as the answer of the agent. | open, a limit of the model |
+| F3 | 1 | The schema of a tool does not say the type of the values, so a generic client (the Inspector) shows a JSON editor and a text has to be written between quotes. | open, a choice: the language has no types in the interface |
