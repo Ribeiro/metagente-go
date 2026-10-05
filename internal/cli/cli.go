@@ -10,8 +10,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 	"syscall"
+	"strings"
 
 	"metagente/internal/applog"
 	"metagente/internal/config"
@@ -22,8 +22,9 @@ import (
 	"metagente/internal/trust"
 )
 
-// Version is the version of this build.
-const Version = "0.0.0-dev"
+// Version is the version of this build. `make build` and `make dist` set it from the git tag, with
+// -ldflags "-X metagente/internal/cli.Version=..."; a plain `go build` leaves it as it is here.
+var Version = "0.0.0-dev"
 
 // Main runs the command line with the real arguments and streams, and returns
 // the exit code.

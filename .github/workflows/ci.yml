@@ -92,6 +92,10 @@ jobs:
       - name: Concurrency, repeated
         if: ${{ matrix.race }}
         run: go test -race -count=3 ./internal/serve ./internal/cli ./internal/runtime ./internal/mcp
+      # The binaries of every system are built here, because each job builds only the one of its own.
+      - name: Binaries for every system
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: make dist VERSION=0.0.0-ci
 
   # macOS, once a week and on request. It is the system of the computer where the program is written,
   # so it is the one that is already tested at every change.

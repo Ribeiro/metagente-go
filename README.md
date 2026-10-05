@@ -26,8 +26,9 @@ All code, comments and tests are written in English.
 | 12 | The agents as MCP tools: `metagente serve --stdio` | Compiled; tests pass, also with `-race` |
 | 13 | The differences from the specification closed: E3, E4, S4, S6, S8, P5 | Compiled; the tests pass, also with `-race` |
 
-Every slice compiles and its tests pass. The only system they were run on is macOS; nothing
-was tried on Linux or Windows yet (see [Not verified yet](#not-verified-yet)).
+Every slice compiles and its tests pass. The CI runs them on Linux and Windows at every push, and on macOS once a
+week and when asked for; what was checked against programs of other people, and what was not, is in
+[Not verified yet](#not-verified-yet) and in `validation/README.md`.
 
 The project needs **Go 1.26 or newer** (`go.mod` says `go 1.26.0`, because the A2A SDK asks
 for it). The tests keep the log in a folder of their own, never in yours. How to run them:
@@ -390,6 +391,19 @@ does. `make fmt` rewrites the files, and `make fmtcheck` fails, naming the files
 needs it. A file that comes from outside (for example the zip of a new slice) may not be formatted,
 so run `make fmt` after copying it over the project.
 
+## Building and releasing
+
+```text
+make build        # bin/metagente, with the version of the git tag in it
+make version      # the version that a build would have
+make dist         # dist/: an archive for each system, with the license, and SHA256SUMS
+```
+
+The version comes from the git tag (`git tag v0.1.0` gives `0.1.0`); between two tags it is like
+`0.1.0-3-g56d1202`, and a plain `go build` says `0.0.0-dev`. `make dist` builds for macOS (arm64 and amd64),
+Linux (amd64 and arm64) and Windows (amd64), and the CI builds all of them at every push. What changed in each
+version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## How the Rust tests were ported
 
 | Rust test | Class | Go test |
@@ -424,8 +438,9 @@ so run `make fmt` after copying it over the project.
 4. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
    of `shorten` are one function (`internal/clip`). Run Sonar again to see what is left; the
    record of the language (above) is what makes the next change in `internal/lang` safe.
-5. **Distribution:** binaries for the three systems, a version number (it is `0.0.0-dev`), a
-   reference of the language for people who write agents, `CONTRIBUTING` and `CHANGELOG`.
+5. **Distribution:** `make dist` builds the binaries for the three systems, with the version of the git tag, and
+   `CHANGELOG.md` and `CONTRIBUTING.md` exist. What is left is a reference of the language for people who write
+   agents, and publishing a release on GitHub from a tag: the archives are made by hand today.
 6. **Smaller decisions:** a smaller default for the memory a conversation may use (see Memory
    above), `--token-file`, a real TOML library in place of the small reader, and a review of the
    security of `serve` by someone who did not write it, before it is exposed to the internet.
