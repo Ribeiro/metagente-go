@@ -14,6 +14,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 3 | `think` with `openai-compatible` | a model that runs on this computer (Ollama) | 20 min |
 | 4 | `--behind-proxy` | a reverse proxy with a certificate (Caddy) | 30 min |
 | 5 | `serve` (A2A server) | the command line of the official A2A SDK in JavaScript | 20 min |
+| 6 | `remote` (A2A client) | the sample agent of the official A2A SDK in JavaScript | 30 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -258,6 +259,78 @@ npx tsx ./cli.ts http://127.0.0.1:8080/agents/Hello/ --transport JSONRPC
 Keep all that the client prints, and the lines that the server wrote in **A**. To end: `/exit` in B, `Ctrl-C`
 in A, `rm ~/metagente-demo/.token`, and `rm -rf ~/a2a-js` if you do not want to keep the SDK.
 
+## 6. A server of A2A that is not ours
+
+What the tests cannot show: that our client, the `remote` declaration, talks to an agent written by the
+people who wrote the protocol. Until now it was only tried with servers made with the Go SDK, and with our own.
+
+The agent is `agents/sample-agent` of the SDK in JavaScript: a minimal agent of streaming that goes through the
+life of a task (`submitted`, `working`, an artifact, `completed`). The command to start it is in the README of the
+SDK; its **port** and the **id of its skill** are not in anything that could be read before, so this check reads
+them from the agent and from its card.
+
+In **A**, the agent (the install of check 5 is enough; `npm install` here is only to be sure):
+
+```text
+nvm use 22
+cd ~/a2a-js/src/samples
+npm install
+npm run agents:sample-agent
+```
+
+Leave it running and write down the address that it prints. (Other examples of the protocol use the port 41241; it
+is not confirmed for this one. Use what the agent printed.)
+
+In **B**, the card and the baseline. First what the agent says to a text, with the client that is already known to work, so
+that an answer that looks strange can be told from one that is the agent's own:
+
+```text
+export PORT=41241
+curl -s http://localhost:$PORT/.well-known/agent-card.json | python3 -m json.tool | head -60
+cd ~/a2a-js/src/samples
+npx tsx ./cli.ts http://localhost:$PORT/ --transport JSONRPC
+```
+
+(`PORT` is the one that A printed. In the client, type `hello`, and keep the answer; then `/exit`.) In the card, note
+`supportedInterfaces` (the address of the binding `JSONRPC`), `capabilities.streaming`, and the **`id` of each skill**.
+
+In **C**, our client. The skill that is called is one of the ids of the card (if its id has characters that a name
+cannot have, such as a dot or a space, write that down: the `.ag` cannot name it):
+
+```text
+export SKILL=THE-ID-OF-THE-SKILL
+mkdir -p ~/metagente-demo/remote && cd ~/metagente-demo/remote
+~/bin/metagente new caller
+cat > caller.ag <<EOF
+agent Caller
+  goal "Ask the sample agent of the A2A SDK in JavaScript"
+  remote Sample at "http://localhost:$PORT"
+  accepts ask text
+  on ask
+    reply Sample.$SKILL text: text
+EOF
+~/bin/metagente check caller.ag
+~/bin/metagente trust caller.ag
+~/bin/metagente run caller.ag ask text=hello
+```
+
+`trust` lists the address of the agent as NEW; answer `y`.
+
+**Expected:** the call ends, it does not hang, with the text that the agent put in the artifact of the task. That would show
+that `SendMessage` is understood, that our client follows a task until `completed` (it asks again with `GetTask`), and
+that it reads the artifact. Our client always sends the call as a block of **data** (`{"skill": ..., "arguments": ...}`) and
+never as text, which is what our own server expects; an agent that reads only the parts of text of a message may answer
+something that has nothing to do with `hello`, or fail the task. If the answer is odd, the call by hand tells whether it
+is the agent or the client (the address is the one of `supportedInterfaces`):
+
+```text
+curl -s -X POST ADDRESS-OF-THE-BINDING -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
+```
+
+Keep: the card (the part with the skills and the address), what the official client got for `hello`, everything
+`run` printed, the call by hand if you made it, and what A wrote. To end: `Ctrl-C` in A.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -267,6 +340,7 @@ in A, `rm ~/metagente-demo/.token`, and `rm -rf ~/a2a-js` if you do not want to 
 | 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
 | 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |
 | 5 | 2026-10-04 | macOS, arm64; Node v22.17.0; `a2aproject/a2a-js` (the command line of the official SDK, protocol 1.0) | 0.0.0-dev | passed, after F6 | The card is found and read (name, description, version, the transport `JSONRPC` from `supportedInterfaces`); the client uses `sendMessageStream`, the card says that there is no streaming, and it falls back to one answer; a text typed as `Maria` became `Hello, Maria!` (a new session, `Ana`, gave `Hello, Ana!`), and the server gave the client a `contextId`. Without `--auth` the card is refused with `401`. The first attempt was refused with `403`: the fetch of Node.js sends `Sec-Fetch-Mode: cors`, and the rule of S4 took it for a browser (F6). A second message in the same session (`Beto`) was answered with `Hello, Beto!`, and the client did not print `Context ID updated`, which it does only when the server gives it another identifier: the conversation went on. On the side of the server this is tested in `TestARealAgentRemembersInItsConversationAndForgetsWhenItEnds`. |
+| 6 | | | | not run | |
 
 ## What the checks found
 
