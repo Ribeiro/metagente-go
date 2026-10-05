@@ -1,6 +1,7 @@
 package trust
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -370,5 +371,30 @@ func TestOnlyAnAddressGetsATokenNeverAProgram(t *testing.T) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("needs:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// req: T3
+func TestAModelThatGetsNoKeyIsDescribedSoAndIsTheSameApproval(t *testing.T) {
+	address := "http://localhost:11434/v1"
+	plain, keyless := ModelItem(address), ModelItem(address).WithoutKey()
+
+	if !strings.Contains(plain.Describe(), "sends your key") {
+		t.Errorf("a model that gets a key: %q", plain.Describe())
+	}
+	if d := keyless.Describe(); !strings.Contains(d, "with no key") || strings.Contains(d, "sends your key") || !strings.HasSuffix(d, address) {
+		t.Errorf("a model that gets no key: %q", d)
+	}
+	// What was approved before this wording existed stays approved: it is the same approval.
+	if plain.Key() != keyless.Key() {
+		t.Error("the wording changed what is approved")
+	}
+	// ...and the file of approvals does not change either.
+	raw, err := json.Marshal(keyless)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(raw)), "keyless") {
+		t.Errorf("the wording is written in the approvals: %s", raw)
 	}
 }

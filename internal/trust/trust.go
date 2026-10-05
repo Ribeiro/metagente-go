@@ -51,6 +51,10 @@ type Item struct {
 	// as a bearer token. The same address with another credential is another
 	// approval, because the token goes there.
 	Credential string `json:"credential,omitempty"`
+	// Keyless is true for the address of a model to which no key is sent: none is set, and the address is
+	// of this same computer. It only changes what Describe says. It is not part of the key of the item and
+	// it is not saved, so what was approved before stays approved.
+	Keyless bool `json:"-"`
 }
 
 // CommandItem is a program started with a command line. The variables passed
@@ -67,6 +71,12 @@ func CommandItem(command string, env []string) Item {
 // is sent there, so it needs approval like a program does (requirement T3).
 func ModelItem(address string) Item {
 	return Item{Kind: KindModel, Target: strings.TrimSpace(address)}
+}
+
+// WithoutKey returns the item of a model that is told to be sent no key.
+func (i Item) WithoutKey() Item {
+	i.Keyless = true
+	return i
 }
 
 // RemoteItem is an address an agent connects to.
@@ -114,6 +124,9 @@ func (i Item) Describe() string {
 		}
 		return text
 	case KindModel:
+		if i.Keyless {
+			return "sends what the agent asks the language model to, with no key (none is set): " + i.Target
+		}
 		return "sends your key and what the agent asks the language model to: " + i.Target
 	default:
 		text := "connects to: " + i.Target

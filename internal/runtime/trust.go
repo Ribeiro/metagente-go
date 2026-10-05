@@ -19,7 +19,7 @@ func (rt *Runtime) Needs(agents []*lang.AgentDef) []trust.Item {
 	// is not the one the provider uses by itself, the person approves it too.
 	if w.thinks {
 		if address, ok := llm.NonDefaultBase(rt.Config.LLM); ok {
-			w.lists = append(w.lists, []trust.Item{trust.ModelItem(address)})
+			w.lists = append(w.lists, []trust.Item{rt.modelItem(address)})
 		}
 	}
 	return trust.Merge(w.lists...)
@@ -65,7 +65,7 @@ func (rt *Runtime) model() (llm.Llm, error) {
 		return rt.Model, nil
 	}
 	if address, ok := llm.NonDefaultBase(rt.Config.LLM); ok {
-		item := trust.ModelItem(address)
+		item := rt.modelItem(address)
 		missing, err := rt.Trust.Missing(rt.Config.Root, []trust.Item{item})
 		if err != nil {
 			return nil, err
@@ -82,6 +82,16 @@ func (rt *Runtime) model() (llm.Llm, error) {
 	}
 	rt.Model = built
 	return built, nil
+}
+
+// modelItem is the approval of the address of the model, worded for what will be sent there: with
+// the key, or with none when no key is set and the address is of this computer.
+func (rt *Runtime) modelItem(address string) trust.Item {
+	item := trust.ModelItem(address)
+	if llm.SendsNoKey(rt.Config.LLM, rt.Getenv) {
+		item = item.WithoutKey()
+	}
+	return item
 }
 
 // Authorize makes sure everything the agents start or connect to has been

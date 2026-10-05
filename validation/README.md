@@ -12,7 +12,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 1 | `serve --stdio` (MCP server) | a desktop client that speaks MCP | 15 min |
 | 2 | tool servers (MCP client), E1 | a server started by `npx` | 15 min |
 | 3 | `think` with `openai-compatible` | a model that runs on this computer (Ollama) | 20 min |
-| 4 | `--public` and `--behind-proxy` | a reverse proxy with a certificate | written after 1 to 3 |
+| 4 | `--behind-proxy` | a reverse proxy with a certificate (Caddy) | 30 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -119,9 +119,70 @@ may not ask for the clock, and that is a fact about the model.
 What matters to us is whether there was **no error of format**: a request refused by the server, an
 answer that we could not read, a tool call that did not run. Keep the whole output of both.
 
-## 4. A reverse proxy with a real certificate
+## 4. A reverse proxy, with a certificate that is checked
 
-Written after 1 to 3, because it depends on what they show about the options of `serve`.
+What the tests cannot show: that a real proxy, with a real chain of certificates, reaches the server
+the way the plan says: the server answers only to the names it was told, the Agent Card says the
+address of the proxy and not the one in the request, and going around the proxy does not work.
+
+The proxy is Caddy. It makes the certificate with a local authority of its own, so nothing has to be
+bought or installed. The `Caddyfile` of the folder `validation/proxy` tells it not to touch the
+keychain of the system, and the client trusts that authority call by call.
+
+```text
+brew install caddy                                     # once
+```
+
+Three terminals. In **A**, the server (the demo of check 1; the token goes to a file only for this
+test, and is removed at the end):
+
+```text
+cd ~/metagente-demo
+umask 077; ~/bin/metagente token > .token
+export METAGENTE_TOKEN=$(cat .token)
+~/bin/metagente serve hello.ag --behind-proxy --host hello.localhost:8443 --public-url https://hello.localhost:8443
+```
+
+In **B**, the proxy. Leave it running:
+
+```text
+cd validation/proxy                                    # from the root of the project
+caddy run --config Caddyfile
+```
+
+In **C**, the client. `c` is `curl` told to trust the authority of Caddy, and to find `hello.localhost`
+on this computer (on Linux the root is `~/.local/share/caddy/pki/authorities/local/root.crt`):
+
+```text
+export METAGENTE_TOKEN=$(cat ~/metagente-demo/.token)
+c() { curl -sS --cacert "$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt" --resolve hello.localhost:8443:127.0.0.1 "$@"; }
+CARD=https://hello.localhost:8443/agents/Hello/.well-known/agent-card.json
+
+c -H "Authorization: Bearer $METAGENTE_TOKEN" $CARD                              # 1
+c -o /dev/null -w '%{http_code}\n' $CARD                                         # 2
+c -o /dev/null -w '%{http_code}\n' -H "Origin: https://evil.example" -H "Authorization: Bearer $METAGENTE_TOKEN" $CARD   # 3
+c -H "Authorization: Bearer $METAGENTE_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"data":{"skill":"greet","arguments":{"name":"Maria"}}}]}}}' \
+  https://hello.localhost:8443/agents/Hello                                      # 4
+curl -s -i -H "Authorization: Bearer $METAGENTE_TOKEN" http://127.0.0.1:8080/agents/Hello/.well-known/agent-card.json | head -12   # 5
+```
+
+**Expected:**
+
+1. The card, with no error of certificate (there is no `-k`), and in it the address
+   `https://hello.localhost:8443/agents/Hello`: it comes from `--public-url`, never from the request.
+2. `401`.
+3. `403`: a request that looks like it was made by a page in a browser is refused.
+4. An answer of the JSON-RPC with `Hello, Maria!`: the body of a POST goes through the proxy.
+5. `421` and `unexpected host`: the server was told that it answers to `hello.localhost:8443`, so
+   going around the proxy, with the name `127.0.0.1:8080`, does not work.
+
+Then look at the terminal **A**: there is one line for each request, with the agent, the method and the
+result. Keep those lines. If **every** request through the proxy gets `421`, the proxy changed the
+header `Host`: keep the output of `c -v ... $CARD`.
+
+To end: `Ctrl-C` in A and in B, and `rm ~/metagente-demo/.token`. Caddy keeps its local authority in
+its data folder; nothing was installed in the system.
 
 ## Results
 
@@ -138,6 +199,6 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 
 | # | Found in | What | State |
 |---|---|---|---|
-| F1 | 3 | The approval of `think` says "sends your key and what the agent asks the language model to" even when the address is of this computer and there is no key. It says more than what happens. | open |
+| F1 | 3 | The approval of `think` says "sends your key and what the agent asks the language model to" even when the address is of this computer and there is no key. It says more than what happens. | fixed: when no key is set and the address is of this computer, the approval says "with no key (none is set)" |
 | F2 | 3 | A small model can write a call to a tool as text and invent its result. The answer goes out as the answer of the agent. | open, a limit of the model |
 | F3 | 1 | The schema of a tool does not say the type of the values, so a generic client (the Inspector) shows a JSON editor and a text has to be written between quotes. | open, a choice: the language has no types in the interface |

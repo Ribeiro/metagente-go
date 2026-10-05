@@ -591,6 +591,32 @@ func TestThinkEndToEndTheKeyGoesOnlyToAnApprovedAddress(t *testing.T) {
 	}
 }
 
+// req: T1, T3
+func TestTheApprovalOfAModelOnThisComputerWithNoKeyDoesNotSayThatAKeyIsSent(t *testing.T) {
+	dir := project(t)
+	nobodyThere(t)
+	t.Setenv("OPENAI_API_KEY", "")
+	model := newModelServer(t, 200, `{}`)
+	writeFile(t, dir, "metagente.toml", "[llm]\nprovider = \"openai-compatible\"\nmodel = \"m\"\nbase_url = \""+model.URL+"\"\n")
+	writeFile(t, dir, "agent.ag", weatherThinker)
+	const sentence = "sends what the agent asks the language model to, with no key (none is set): "
+
+	code, _, stderr := run(t, "run", "agent.ag", "ask", "city=Lisbon")
+	if code != 1 {
+		t.Errorf("exit code = %d", code)
+	}
+	assertContains(t, stderr, "have not approved for this project", sentence+model.URL)
+
+	code, stdout, stderr := run(t, "trust", "--yes", "agent.ag")
+	if code != 0 {
+		t.Fatalf("trust failed:\n%s", stderr)
+	}
+	assertContains(t, stdout, "[NEW] "+sentence+model.URL, "Approved 1 item")
+	if strings.Contains(stdout+stderr, "sends your key") {
+		t.Error("it said that a key is sent, and there is none")
+	}
+}
+
 // req: L8
 func TestAKeyTheProviderRefusesIsNeverShown(t *testing.T) {
 	dir := project(t)

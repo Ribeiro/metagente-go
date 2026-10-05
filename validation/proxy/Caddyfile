@@ -1,0 +1,16 @@
+# A reverse proxy for the check in validation/README.md, number 4. It ends the TLS with a certificate
+# of its own local authority and passes the requests on to the server, which listens only on this
+# computer.
+{
+	# Do not touch the keychain of the system: the client is told which root to trust, call by call
+	# (curl --cacert), so nothing in this computer is changed.
+	skip_install_trust
+	# Do not open the port 80 only to send people to the port of the HTTPS.
+	auto_https disable_redirects
+}
+
+hello.localhost:8443 {
+	bind 127.0.0.1
+	tls internal
+	reverse_proxy 127.0.0.1:8080
+}

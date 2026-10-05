@@ -851,3 +851,30 @@ func TestTheAnswersPeopleMeetWhenTheySetUpComeWithWhatToDo(t *testing.T) {
 		}
 	}
 }
+
+// req: T3
+func TestAModelGetsNoKeyOnlyWhenNoneIsSetAndTheAddressIsOfThisComputer(t *testing.T) {
+	none := func(string) string { return "" }
+	set := func(string) string { return "a-key" }
+	compatible := func(address string) config.LLM {
+		return config.LLM{Provider: "openai-compatible", Model: "m", BaseURL: address}
+	}
+	for _, tt := range []struct {
+		name   string
+		cfg    config.LLM
+		getenv func(string) string
+		want   bool
+	}{
+		{"a server on localhost", compatible("http://localhost:11434/v1"), none, true},
+		{"a server on 127.0.0.1", compatible("http://127.0.0.1:8080"), none, true},
+		{"a server on ::1", compatible("http://[::1]:8080"), none, true},
+		{"with a key set", compatible("http://localhost:11434/v1"), set, false},
+		{"a server that is not on this computer", compatible("https://models.example/v1"), none, false},
+		{"Anthropic is never used with no key", config.LLM{Provider: "anthropic", BaseURL: "http://localhost:9"}, none, false},
+		{"settings that are not valid", config.LLM{Provider: "nobody"}, none, false},
+	} {
+		if got := SendsNoKey(tt.cfg, tt.getenv); got != tt.want {
+			t.Errorf("%s: SendsNoKey = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

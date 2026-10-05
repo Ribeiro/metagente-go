@@ -135,6 +135,20 @@ func NonDefaultBase(cfg config.LLM) (string, bool) {
 	return r.BaseURL, true
 }
 
+// SendsNoKey is true when the requests to the model go without a key: none is set, and the address is of
+// this same computer. It is the one case in which FromConfig lets a model be used with no key.
+func SendsNoKey(cfg config.LLM, getenv func(string) string) bool {
+	r, err := Resolve(cfg)
+	if err != nil || r.Provider == "anthropic" {
+		return false
+	}
+	if strings.TrimSpace(getenv(r.KeyEnv)) != "" {
+		return false
+	}
+	u, _ := parseBase(r.BaseURL)
+	return u != nil && isLoopback(u.Hostname())
+}
+
 // FromConfig builds the model. The key is read now, from the variable whose
 // name is in the configuration; it is never written anywhere.
 func FromConfig(cfg config.LLM, getenv func(string) string) (Llm, error) {
@@ -143,13 +157,10 @@ func FromConfig(cfg config.LLM, getenv func(string) string) (Llm, error) {
 		return nil, err
 	}
 	key := strings.TrimSpace(getenv(r.KeyEnv))
-	if key == "" {
-		// A server on this same computer often needs no key.
-		u, _ := parseBase(r.BaseURL)
-		if r.Provider == "anthropic" || u == nil || !isLoopback(u.Hostname()) {
-			return nil, diag.Newf("the language model could not answer: the variable %s is not set", r.KeyEnv).
-				Fixf("set it in the terminal that runs Metagente, for example: export %s=...", r.KeyEnv)
-		}
+	// A server on this same computer often needs no key.
+	if key == "" && !SendsNoKey(cfg, getenv) {
+		return nil, diag.Newf("the language model could not answer: the variable %s is not set", r.KeyEnv).
+			Fixf("set it in the terminal that runs Metagente, for example: export %s=...", r.KeyEnv)
 	}
 	settings := Settings{BaseURL: r.BaseURL, Model: r.Model, APIKey: key, MaxTokensField: cfg.MaxTokensField, WorkspaceID: r.WorkspaceID}
 	if r.Provider == "anthropic" {
