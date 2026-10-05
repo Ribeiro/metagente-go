@@ -1,0 +1,9 @@
+agent Probe
+  goal "Check a real tool server"
+  tool everything from mcp "npx -y @modelcontextprotocol/server-everything"
+  accepts say text
+  accepts show_env
+  on say
+    reply everything.echo message: text within 120 seconds
+  on show_env
+    reply everything.printEnv within 120 seconds

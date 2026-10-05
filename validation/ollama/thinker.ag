@@ -1,0 +1,7 @@
+agent Thinker
+  goal "Answer short questions, and use the clock when the time is asked"
+  tool clock
+  accepts ask question
+  on ask
+    answer = think "{question}" using clock
+    reply answer

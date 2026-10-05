@@ -1,0 +1,9 @@
+# A model that runs on this computer, through the API that Ollama offers in the format of OpenAI.
+# It needs no key because the address is of this same computer.
+[llm]
+provider = "openai-compatible"
+base_url = "http://localhost:11434/v1"
+model = "llama3.1"
+
+[runtime]
+think_timeout_seconds = 300

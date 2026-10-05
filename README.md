@@ -431,6 +431,9 @@ so run `make fmt` after copying it over the project.
 
 ### Not verified yet
 
+The steps to check the first four of these against the real thing are in
+`validation/README.md`, with a table for the results.
+
 These work in the tests, which use doubles, or were run only on macOS:
 
 - the MCP server with a client of a third party (a desktop assistant, an editor); the example of
@@ -441,10 +444,10 @@ These work in the tests, which use doubles, or were run only on macOS:
 - `--public` and `--behind-proxy` with a real proxy and a real certificate;
 - the A2A server with clients of third parties (the official command line), and the A2A client with
   servers of third parties: both were tried only with the SDK;
-- the end of the group of processes of a tool server (E4): written and tested, but not run yet
-  on any system;
-- Linux and Windows: the tests of symbolic links are skipped on Windows, and `os.Root`, file
-  permissions and the end of child processes were not looked at there.
+- the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
+  on Windows it does not exist yet;
+- Windows: the CI builds and tests it (without the race detector). The tests of symbolic links skip
+  themselves there, and `os.Root`, file permissions and the end of child processes were not looked at.
 
 Not done on purpose: isolating a program at the level of the operating system (a
 sandbox). The SDK gives a minimal environment, not a sandbox; the approval is the

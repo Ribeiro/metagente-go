@@ -1,0 +1,3 @@
+# A tool server that is fetched by npx the first time can take a while to start.
+[runtime]
+timeout_seconds = 120
