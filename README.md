@@ -24,7 +24,7 @@ All code, comments and tests are written in English.
 | 10 | The A2A server: JSON-RPC, the cards, the agents of the interpreter behind it | Compiled; tests pass, including the client of the SDK against it |
 | 11 | The `serve` command: listener and its limits, TLS, the flags, the banner, the access log, a clean stop | Compiled; tests pass, also with `-race`; run by hand with two processes |
 | 12 | The agents as MCP tools: `metagente serve --stdio` | Compiled; tests pass, also with `-race` |
-| 13 | The differences from the specification closed: E3, E4, S4, S6, S8, P5 | **Written without a Go toolchain; never compiled or run** |
+| 13 | The differences from the specification closed: E3, E4, S4, S6, S8, P5 | Compiled; the tests pass, also with `-race` |
 
 Every slice compiles and its tests pass. The only system they were run on is macOS; nothing
 was tried on Linux or Windows yet (see [Not verified yet](#not-verified-yet)).
@@ -160,7 +160,7 @@ Today: 40 done, 5 done, changed (agreed), 2 partial.
 | E1 | done | a program receives `PATH`, `HOME` and a few more, plus only the variables the agent file names; a secret is refused even when it is named | `internal/mcp/pool.go` |
 | E2 | done | a warning for `npx`, `uvx`, `pipx run` and `bunx` without a pinned version; an error with `--strict` | `internal/lang/command.go`, `check.go` |
 | E3 | done | calls on a tool server run at the same time, up to `max_mcp_calls` **for each server**, so a server that is slow does not hold back the others (the spike showed a shared session needs no serialising) | `internal/mcp/pool.go` |
-| E4 | partial | closing the runtime ends every program it started and, on Linux and macOS, the whole group of processes it led: the SDK closes its input, signals it and kills it after 5 s, and what is left of the group is asked to end and killed after 2 s. A server that died is started again on the next call. **On Windows the children of the program are not reached yet**: it needs a job object, to be tried first. `run` and `serve` end the group on SIGINT and SIGTERM | `internal/mcp/pool.go`, `group_unix.go`, `group_other.go` |
+| E4 | partial | closing the runtime ends every program it started and, on Linux and macOS, the whole group of processes it led: the SDK closes its input, signals it and kills it after 5 s, and what is left of the group is asked to end and killed after 2 s. A server that died is started again on the next call. **On Windows the children of the program are not reached, and that was decided, not forgotten**: a job object holds only the processes that are born after the parent joined it, and the SDK starts the program inside `Connect`, so the children of `npx` would already exist; doing it right means replacing the command transport of the SDK on Windows, and it was not judged worth it. Under WSL2 the group of processes works as on Linux. `run` and `serve` end the group on SIGINT and SIGTERM | `internal/mcp/pool.go`, `group_unix.go`, `group_other.go` |
 | E5 | done, changed (agreed) | a bearer token for `remote` agents and for tool servers that are addresses, named in `[credentials]`; never in a file, never in an error, never readable by an agent. Named in `[credentials]` of `metagente.toml`, not in a `token env` clause of the `.ag` file | `internal/remote`, `internal/mcp`, `internal/config`, `internal/trust` |
 | E6 | done | `env` never reads the key of the model, `METAGENTE_TOKEN` or the usual key names | `internal/tools/env.go`, `config` |
 | F1 | done | file access through `os.Root`: `..` and symbolic links that leave the folder are refused | `internal/tools/file.go` |
@@ -413,19 +413,19 @@ so run `make fmt` after copying it over the project.
 
 ## What comes next
 
-1. **CI** on Linux, macOS and Windows with `make check`, which is also the first test of the systems
-   that were never tried.
-2. **The missing part of S10** (MCP over HTTP, behind the same door) and **E4 on Windows** (a job
-   object), both of which need to be tried before they are promised.
-3. **The port of the tests of the original project** (`contract/*`, `a2a_*`, `sample_city_briefing`,
+1. **The missing part of S10** (MCP over HTTP, behind the same door), which needs to be tried before it is
+   promised. The CI on Linux, macOS (once a week) and Windows is done. **E4 on Windows** is left out on
+   purpose (see its row above); to take it up, the program has to be started with the pipes of this
+   project, put in a job object right after `Start`, and ended the way the SDK ends it.
+2. **The port of the tests of the original project** (`contract/*`, `a2a_*`, `sample_city_briefing`,
    `perf`).
-4. **Checks in real conditions** that cannot be automated (next section).
-5. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
+3. **Checks in real conditions** that cannot be automated (next section), most of which were done.
+4. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
    of `shorten` are one function (`internal/clip`). Run Sonar again to see what is left; the
    record of the language (above) is what makes the next change in `internal/lang` safe.
-6. **Distribution:** binaries for the three systems, a version number (it is `0.0.0-dev`), a
+5. **Distribution:** binaries for the three systems, a version number (it is `0.0.0-dev`), a
    reference of the language for people who write agents, `CONTRIBUTING` and `CHANGELOG`.
-7. **Smaller decisions:** a smaller default for the memory a conversation may use (see Memory
+6. **Smaller decisions:** a smaller default for the memory a conversation may use (see Memory
    above), `--token-file`, a real TOML library in place of the small reader, and a review of the
    security of `serve` by someone who did not write it, before it is exposed to the internet.
 
