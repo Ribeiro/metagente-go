@@ -65,7 +65,7 @@ cd ~/metagente/city-briefing
 tar -xzf metagente-0.4.2-$ARCH.tar.gz
 sudo install metagente-0.4.2-$ARCH/metagente /usr/local/bin/metagente
 metagente --version
-curl -LsSf https://astral.sh/uv/install.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh
 uvx --version
 uvx mcp-server-fetch==2026.8.18 --help
 ```

@@ -573,35 +573,24 @@ func TestAnAgentThatTakesTooLongAnswersThatItDid(t *testing.T) {
 
 // req: S6
 func TestWhenTheServerIsBusyItAnswers503InsteadOfPilingUp(t *testing.T) {
-	s := newTestServer(t, func(c *Config) { c.MaxInFlight = 1 })
-	ctx, cancel := context.WithCancel(context.Background())
-	started := make(chan struct{})
+	bob := newFake("Bob", defaultSkills...)
+	bob.hold = make(chan struct{})
+	s := newTestServer(t, func(c *Config) { c.MaxInFlight = 1 }, bob)
+	release := sync.OnceFunc(func() { close(bob.hold) })
+	t.Cleanup(release)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		req := httptest.NewRequest(http.MethodPost, bobPath, strings.NewReader(rpcBody("SendMessage", message(dataPart("slow", `{}`), ""))))
-		req = req.WithContext(ctx)
-		req.Host = "127.0.0.1:8080"
-		req.Header.Set("Authorization", "Bearer "+goodToken)
-		req.Header.Set("Content-Type", "application/json")
-		close(started)
-		s.ServeHTTP(httptest.NewRecorder(), req)
+		do(s, http.MethodPost, bobPath, rpcBody("SendMessage", message(dataPart("hold", `{}`), "")), nil)
 	}()
-	<-started
-	deadline := time.Now().Add(2 * time.Second)
-	var busy *httptest.ResponseRecorder
-	for time.Now().Before(deadline) {
-		rec := do(s, http.MethodPost, bobPath, rpcBody("SendMessage", message(dataPart("echo", `{"text":"x"}`), "")), nil)
-		if rec.Code == http.StatusServiceUnavailable {
-			busy = rec
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	cancel()
+	// The second request must come once the first holds the only place, not after a guess of
+	// how long that takes: on a busy machine with -race it took more than two seconds.
+	eventually(t, "the first request takes the only place", func() bool { return bob.entered.Load() == 1 })
+	busy := do(s, http.MethodPost, bobPath, rpcBody("SendMessage", message(dataPart("echo", `{"text":"x"}`), "")), nil)
+	release()
 	<-done
-	if busy == nil {
-		t.Fatal("the server never answered 503 although its only place was taken")
+	if busy.Code != http.StatusServiceUnavailable {
+		t.Fatalf("the server answered %d although its only place was taken", busy.Code)
 	}
 	if busy.Header().Get("Retry-After") != "1" || !strings.Contains(busy.Body.String(), "busy") {
 		t.Errorf("headers %v, body %q", busy.Header(), busy.Body.String())

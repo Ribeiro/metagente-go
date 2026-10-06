@@ -176,7 +176,7 @@ remote_setup() {
 	metagente --version
 
 	say "uv, and the fetch server once (the first time it is downloaded)"
-	command -v uvx >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
+	command -v uvx >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/install.sh | sh
 	uvx --version
 	$FETCH --help >/dev/null
 
