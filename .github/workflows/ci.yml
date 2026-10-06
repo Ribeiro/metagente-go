@@ -26,7 +26,10 @@ jobs:
   # What does not depend on the system: the format, the modules and go vet.
   lint:
     name: Format, modules and vet
-    runs-on: ubuntu-latest
+    # Linux is pinned to a version, here and in release.yml: ubuntu-latest moves to a new version of
+    # Ubuntu on a date of GitHub, and a change of system should come in a change of this file, where
+    # it can be seen and tested, not on its own. Move all of them together.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             race: true
           # The race detector of Windows needs a C compiler, and the tests of the groups of
           # processes and of the links between folders were written for Linux and macOS first.
@@ -94,7 +97,7 @@ jobs:
         run: go test -race -count=3 ./internal/serve ./internal/cli ./internal/runtime ./internal/mcp
       # The binaries of every system are built here, because each job builds only the one of its own.
       - name: Binaries for every system
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-24.04' }}
         run: make dist VERSION=0.0.0-ci
 
   # macOS, once a week and on request. It is the system of the computer where the program is written,
