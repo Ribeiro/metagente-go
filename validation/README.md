@@ -73,6 +73,36 @@ claude mcp add hello -- ~/bin/metagente serve --stdio \
 claude                                               # then ask it to greet Maria with Hello__greet
 ```
 
+### Over HTTP (`--mcp`), with Claude Desktop
+
+The custom connectors of Claude Desktop are reached from the servers of Anthropic, which do not reach
+`127.0.0.1`, and they take OAuth, which `serve` does not offer. On this computer Claude Desktop reaches a
+server over HTTP through a bridge that it starts itself, `mcp-remote`, which is of another team:
+
+```text
+cd ~/metagente-demo
+umask 077; ~/bin/metagente token > .token
+export METAGENTE_TOKEN=$(cat .token)
+~/bin/metagente serve hello.ag --mcp 2>&1 | tee serve.log
+```
+
+and in the configuration of Claude Desktop, with the full path of a Node of version 20 or newer and the
+token written in it (only for this test; take it out at the end):
+
+```json
+"hello-http": {
+  "command": "/full/path/of/node/bin/npx",
+  "args": ["-y", "mcp-remote@0.14.3", "http://127.0.0.1:8080/mcp",
+           "--header", "Authorization:${AUTH_HEADER}"],
+  "env": { "AUTH_HEADER": "Bearer THE-TOKEN", "PATH": "/full/path/of/node/bin:/usr/bin:/bin" }
+}
+```
+
+Turn the `hello` of `--stdio` off in the conversation, so that the answer can only come over HTTP, and ask
+again. **Expected:** `Hello, Maria!`, and in `serve.log` the six `GET` of `mcp-remote` looking for OAuth
+(`401`, not counted: F11), `GET /mcp` with `405` (the server offers no stream of events), and `POST /mcp`
+with `200` and `202`.
+
 ### With the MCP Inspector instead
 
 The Inspector is the debugging tool of the MCP project itself, written with the SDK in TypeScript,
@@ -607,6 +637,7 @@ Keep what each command printed, without the key. To end: Ctrl-C in Terminal 1, a
 |---|---|---|---|---|---|
 | 1 | 2026-10-04 | macOS, arm64 | 0.0.0-dev | passed with the MCP Inspector 1.0.2 | `initialize`, `tools/list` and `tools/call` work; the answer was `Hello, Maria!`. Not tried with a desktop assistant. |
 | 1 | 2026-10-06 | macOS, arm64; Claude Desktop and Claude Code (versions not recorded) | 0.3.1 | passed | Claude Desktop, with the configuration above in a file that did not exist before, listed the tool and answered `Hello, Maria!`; Claude Code, with `claude mcp add`, did the same. Both start the program themselves, with `--stdio` and full paths. |
+| 1 | 2026-10-06 | macOS, arm64; Claude Desktop with `mcp-remote` 0.14.3 (Node of `nvm`), over HTTP | 0.3.1 | passed, after F11 | The first try ended in `Server disconnected`: the bridge got `429` with the right token, because its requests looking for OAuth had counted as wrong tokens (F11). Started again after the minute, the server got, from two copies of the bridge, twelve `GET` of OAuth (`401`), eight `GET /mcp` (`405`) and `POST /mcp` with `200` and `202`; with the `hello` of `--stdio` turned off in the conversation, Claude Desktop answered `Hello, Maria!` over HTTP. The fix of F11 is in the code after 0.3.1. |
 | 2 | 2026-10-04 | macOS, arm64; Node 18.18.2, npm 9.8.1 | 0.0.0-dev | passed | `npx` started `@modelcontextprotocol/server-everything` (not pinned; its version was not recorded) with the minimal environment. `say` answered `Echo: hello`. In `get-env`, `SECRET_TEST` and `ANTHROPIC_API_KEY` did not appear, nor did any other variable of the shell. The tool is `get-env` in the version fetched, not `printEnv`. The server does receive the whole `PATH` and the `HOME`: the environment is minimal, not an isolation. |
 | 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
 | 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |
@@ -634,3 +665,4 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 | F8 | 6 | `remote` always sent the call as a block of data. The sample agent of the SDK in JavaScript takes only text (`defaultInputModes: ["text"]`), found no text in the message and answered `Please provide a message for me to respond to`. | fixed in the code: an agent whose card takes only text is sent text, the one value or a line `name: value` for each of several; one that takes JSON, or says nothing, is sent the data as before. checked with the sample agent |
 | F9 | 7 | When the time of a call ends while the other side works, `remote` gave up without telling the agent, and the task went on to the end for nothing. The call asked the other side to answer only when the task ended (`returnImmediately: false`), so the number of the task was only known at the end, and there was nothing to cancel. | fixed in the code: it asks to be answered at once, follows the task with `GetTask` and cancels it when the caller gives up. checked with the cancellable agent |
 | F10 | 11 | A key with a line break, a space or another character that a header cannot hold (more than the key copied into the variable) was refused by the HTTP library before any connection, and the person was told `I could not reach api.anthropic.com: the connection failed`, after three tries. | fixed in the code: such a key is refused before any request, with "the variable ANTHROPIC_API_KEY holds a line break, which cannot be part of a key" and how to fix it, and nothing of the key is said. The README of the sample has it in its troubleshooting |
+| F11 | 1 (over HTTP) | Claude Desktop reaches a server of MCP over HTTP through the bridge `mcp-remote`, which looks for OAuth before it connects: six `GET` without a token (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration` and their `/mcp` forms) each time it starts, and Claude Desktop starts more than one. Each `401` counted as a wrong token, so within a minute the server answered `429` to the bridge itself, with the right token, and Claude Desktop said `Server disconnected`. | fixed in the code: a request with no `Authorization` at all is refused and not counted; a wrong token, another scheme or an empty `Bearer` still counts (`TestARequestWithoutATokenIsRefusedButNotCounted`) |

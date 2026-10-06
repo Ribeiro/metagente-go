@@ -160,6 +160,38 @@ func TestManyWrongTokensFromOnePlaceAreSlowedDown(t *testing.T) {
 	}
 }
 
+// A request without any token guesses nothing, so it is refused without being counted. A client of
+// MCP that looks for OAuth first sends six such requests each time it starts (check 1 of
+// validation/README.md, with mcp-remote), and on this computer every client is the same place:
+// counted, they stopped the client itself, which came next with the right token.
+func TestARequestWithoutATokenIsRefusedButNotCounted(t *testing.T) {
+	g := newGuard()
+	paths := []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-authorization-server",
+		"/.well-known/openid-configuration", "/mcp"}
+	for i := 0; i < defaultMaxFailures*3; i++ {
+		probe := post(func(r *http.Request) { r.Header.Del("Authorization") })
+		probe.Method, probe.URL.Path = http.MethodGet, paths[i%len(paths)]
+		rec, next := serveOne(g, probe)
+		if rec.Code != http.StatusUnauthorized || next.count != 0 || rec.Header().Get("WWW-Authenticate") != "Bearer" {
+			t.Fatalf("probe %d: code %d, reached %d", i, rec.Code, next.count)
+		}
+	}
+	if rec, next := serveOne(g, post(nil)); rec.Code != http.StatusOK || next.count != 1 {
+		t.Fatalf("the right token after the probes: code %d", rec.Code)
+	}
+
+	// A header that is there counts, whatever is in it: it is a try.
+	for name, header := range map[string]string{"wrong": "Bearer wrong", "other scheme": "Basic d3Jvbmc=", "empty bearer": "Bearer "} {
+		h := newGuard()
+		for i := 0; i < defaultMaxFailures; i++ {
+			serveOne(h, post(func(r *http.Request) { r.Header.Set("Authorization", header) }))
+		}
+		if rec, _ := serveOne(h, post(nil)); rec.Code != http.StatusTooManyRequests {
+			t.Errorf("%s: ten of them were not counted: code %d", name, rec.Code)
+		}
+	}
+}
+
 func TestTheListOfPlacesThatFailedDoesNotGrowWithoutEnd(t *testing.T) {
 	g := newGuard()
 	for i := 0; i < maxTrackedClients*3; i++ {

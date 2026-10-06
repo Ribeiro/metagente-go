@@ -36,7 +36,8 @@ that says why and how to make a good one. It is in the changelog.
 - **The token** is compared in constant time, after a hash of both sides, so neither the content nor the
   length shows. It is never in a log, an error or the access log; the tests look for it in each.
 - **The door** checks, in this order, the Host (421), a browser (403), the token (401, and 429 after ten
-  wrong ones in a minute), and only then the method, the query, the type and the size of the body. A
+  wrong ones in a minute; since check 1 of `validation/README.md`, a request with no token at all is
+  refused but not counted, as it guesses nothing), and only then the method, the query, the type and the size of the body. A
   stranger learns nothing about the rest: every path answers 401 without the token.
 - **No browser** gets through: `Origin`, `Sec-Fetch-Site`, `Sec-Fetch-Dest` and `Sec-Fetch-User` are
   refused, there is no CORS and a preflight gets 405.

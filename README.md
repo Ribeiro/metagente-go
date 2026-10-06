@@ -365,7 +365,8 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
   (a page that makes your browser call a server on your computer carries another),
   a request made by a browser (an `Origin`, or the `Sec-Fetch-Site`, `Sec-Fetch-Dest` or `Sec-Fetch-User` of a browser) is refused, the token is
   compared without the time telling how much was right, a refusal never says what was
-  wrong, ten wrong tries from one place stop that place for a minute, only a POST of
+  wrong, ten wrong tries from one place stop that place for a minute (a request with no token at
+  all is refused but not counted: it guesses nothing), only a POST of
   `application/json` is taken, the body has a limit, and nothing ever says that another
   site may call the server (there is no CORS, and a preflight gets 405).
 - **Only a server with `--public` limits the connections of each place.** On this computer every client
@@ -529,8 +530,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 ## What comes next
 
 1. **S10 is done** (MCP over HTTP with `--mcp`), and the CI on Linux, macOS (once a week) and Windows is
-   done. What is left of it is to try it with a desktop assistant that reaches a server by its address,
-   and behind a proxy. **E4 on Windows** is left out on purpose (see its row above); to take it up, the
+   done, and Claude Desktop reached it over HTTP through `mcp-remote` (check 1). What is left of it is to
+   try it behind a proxy. **E4 on Windows** is left out on purpose (see its row above); to take it up, the
    program has to be started with the pipes of this project, put in a job object right after `Start`, and
    ended the way the SDK ends it.
 2. **The port of the tests of the original project is done** (see the table above), with the City Briefing
@@ -554,8 +555,8 @@ Checked against the real thing (the steps and the results are in `validation/REA
 
 - the MCP server over standard input and output (`--stdio`), with the MCP Inspector, with Claude Desktop
   and with Claude Code;
-- the MCP server over HTTP (`--mcp`), with the client of the official SDK in TypeScript and with the command
-  line of the MCP Inspector: the token, the session and its memory, the end of a session, the refusals;
+- the MCP server over HTTP (`--mcp`), with Claude Desktop through `mcp-remote`, with the client of the
+  official SDK in TypeScript and with the command line of the MCP Inspector: the token, the session and its memory, the end of a session, the refusals;
 - a tool server started by `npx`, with the minimal environment of E1: what the shell had did not reach it;
 - a tool server in Python started by `uvx` (`mcp-server-fetch`, the one of the City Briefing sample), with
   the minimal environment of E1: it fetched a page, nothing of it was left running, and `readonly` refused
@@ -573,7 +574,7 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
 - `--public`, with a certificate of its own;
-- MCP over HTTP behind a proxy, and with a desktop assistant;
+- MCP over HTTP behind a proxy;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
