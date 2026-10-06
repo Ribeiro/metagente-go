@@ -20,6 +20,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 9 | `serve` (A2A server) | the client of the official A2A SDK in Python | 15 min |
 | 10 | tool servers (MCP client), E1, E2, L7 | a server in Python that `uvx` starts | 10 min |
 | 11 | the City Briefing sample: `think` with tools, `serve` and `remote` together | the Claude API and the fetch server that `uvx` starts | 20 min |
+| 12 | `--public` (S5): TLS of its own, on the network | a certificate of a local authority made with `openssl`, and the network address of the computer | 15 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -659,6 +660,53 @@ the token gets `401`. The log of Terminal 1 has, for each run of the Concierge, 
 Keep what each command printed, without the key. To end: Ctrl-C in Terminal 1, and
 `rm -rf ~/metagente-demo/city-briefing`.
 
+## 12. `--public`, with a certificate of its own
+
+What the tests cannot show: the server listening beyond this computer, with a certificate that is not made
+by the tests, reached by its network address, and what it does to what is not meant for it. The
+certificate comes from a local authority made here with `openssl`, for the name `hello.test`; nothing is
+installed in the system, and the client trusts that authority call by call.
+
+In **A**:
+
+```text
+mkdir -p ~/metagente-demo/public && cd ~/metagente-demo/public
+cp ../hello.ag ../metagente.toml .
+openssl req -x509 -newkey rsa:2048 -nodes -days 7 -subj "/CN=Metagente test CA" -keyout ca.key -out ca.crt
+openssl req -newkey rsa:2048 -nodes -subj "/CN=hello.test" -keyout server.key -out server.csr
+printf "subjectAltName=DNS:hello.test\nextendedKeyUsage=serverAuth\n" > ext.cnf
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 7 -extfile ext.cnf -out server.crt
+umask 077; ~/bin/metagente token > .token
+export METAGENTE_TOKEN=$(cat .token)
+~/bin/metagente serve hello.ag --mcp --public --tls-cert server.crt --tls-key server.key --host hello.test:8443 --port 8443
+```
+
+The name goes **with its port** (F12): a client that connects to 8443 sends `Host: hello.test:8443`. The
+banner says `Listening on 0.0.0.0:8443, in HTTPS`; allow the incoming connections if the system asks.
+
+In **B**, through the network address of the computer, not `127.0.0.1` (on Linux, `hostname -I`):
+
+```text
+cd ~/metagente-demo/public
+IP=$(ipconfig getifaddr en0); T=$(cat .token)
+c() { curl -sS --cacert ca.crt --resolve hello.test:8443:$IP "$@"; }
+U=https://hello.test:8443
+echo "== 1"; c -H "Authorization: Bearer $T" $U/agents/Hello/.well-known/agent-card.json | grep -o '"url":"[^"]*"' | head -1
+echo "== 2"; c -o /dev/null -w '%{http_code}\n' $U/agents/Hello/.well-known/agent-card.json
+echo "== 3"; c -o /dev/null -w '%{http_code}\n' -H "Origin: https://evil.example" -H "Authorization: Bearer $T" $U/agents/Hello/.well-known/agent-card.json
+echo "== 4"; c -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' $U/mcp | head -c 150; echo
+echo "== 5"; curl -sS -k -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" https://$IP:8443/agents/Hello/.well-known/agent-card.json
+echo "== 6"; c --tls-max 1.1 -o /dev/null $U/ 2>&1 | head -1
+echo "== 7"; curl -sS -m 3 -w ' %{http_code}\n' http://$IP:8443/ 2>&1 | head -2
+```
+
+**Expected:** 1, `"url":"https://hello.test:8443/agents/Hello"`, with no error of certificate; 2, `401`;
+3, `403`; 4, the answer of `metagente` to `initialize`; 5, `421` (the address is not a name the server
+answers to); 6, TLS 1.1 refused (`protocol version`); 7, `Client sent an HTTP request to an HTTPS server`
+and `400`. A second computer on the same network, with `ca.crt`, is the fuller check.
+
+To end: `Ctrl-C` in A, and `rm -rf ~/metagente-demo/public` (the key and the token are in it).
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -677,6 +725,7 @@ Keep what each command printed, without the key. To end: Ctrl-C in Terminal 1, a
 | 9 | 2026-10-05 | Linux, amd64; Python 3.11.15; `a2a-sdk` 1.2.2 | 0.0.0-dev (the `master` of 0.2.0 with the changes of the port of the tests) | passed | The card was read with the token (name, the skills `ask` and `broken`, `JSONRPC` `1.0`). `ask` with the text `Lisbon` and the skill in the metadata came back as a message, `sunny in Lisbon`; `broken` as a task in `TASK_STATE_FAILED` with `the barometer exploded`. The SDK turned our errors into its own types: `GetTask` raised `TaskNotFoundError` and a skill that is not there `InvalidParamsError: this agent does not handle `dance`; it handles: ask, broken`. Without the token the card was refused with `401`. The access log had one line for each request, with `result=ok`, `failed` and `error`. |
 | 10 | 2026-10-05 | macOS, arm64 (uv, version not recorded), and Linux, amd64 (uv 0.8.17); `mcp-server-fetch` 2026.8.18 | 0.3.0 on macOS; 0.0.0-dev (the `master` of 0.3.0) on Linux | passed | On macOS `check --strict` found no problems with the version pinned, `trust` listed `starts the program: uvx mcp-server-fetch==2026.8.18` as NEW, and `run` printed `Contents of https://example.com/:` with the text of the page; no process of the server was left. With `readonly` the call was refused, because the server marks none of its tools as read only. Without a version `check` gave the warning and passed, and `--strict` refused it. On Linux the same was seen except the page, which the proxy of that environment does not let through (403); there `@2026.8.18` was pinned as well as `==2026.8.18`, and a failure of the server came back as a problem that can be read. A first try on macOS used an older program built from the sources (it said `0.0.0-dev`), and there the server stopped while answering; with the 0.3.0 of the release it did not happen, so it was not looked into: the checks are to be run with the program of a release, or one built from the `master` of the day. |
 | 11 | 2026-10-05 | macOS, arm64; Claude Sonnet 5.5 (`claude-sonnet-5-5`); `mcp-server-fetch` 2026.8.18 | 0.3.0 | passed, after F10 | `check` found no problems in either file; `trust` listed `starts the program: uvx mcp-server-fetch==2026.8.18` for the Researcher and `connects to: http://127.0.0.1:8080/agents/Researcher (and sends it the token held in RESEARCHER_TOKEN)` for the Concierge. With `Lisbon` the Concierge printed three lines ("Welcome to Lisbon, Portugal's capital since 1256, set on the Tagus river!", its Roman name Olissipo and the siege of 1147, Belém Tower, Rua Augusta Arch and the cathedral). With `Xyzzyplugh` it said that no verified facts were found, because the page of Wikipedia answered 404. The log of the Researcher had a `GET` of the card (200) and a `SendMessage` with `result=ok` for each (7.3 s and 4.5 s), and a `curl` without the token got `401`. On the way: with the key not set to a real one, `api.anthropic.com answered 401: invalid x-api-key` came back to the Concierge over A2A as a problem that can be read, and the task was `result=failed` in the log. A variable that held a command along with a line break got "I could not reach api.anthropic.com: the connection failed", which sent the search to the network (F10). |
+| 12 | 2026-10-06 | macOS, arm64; LibreSSL 3.3.6 (curl and openssl of the system) | 0.3.1 | passed, F12 found while preparing it | Through the network address of the computer: the card said `https://hello.test:8443/agents/Hello`, with the certificate of the local authority checked; without the token `401`; with an `Origin` `403`; `initialize` of MCP answered by `metagente`; by the address instead of the name `421`; TLS 1.1 refused (`tlsv1 alert protocol version`); plain HTTP `400` (`Client sent an HTTP request to an HTTPS server`). While the steps were prepared, `--host hello.test` with `--port 8443` started without a word and answered `421` to everything (F12). Not tried from a second computer. |
 
 ## What the checks found
 
@@ -695,3 +744,4 @@ Not defects of the tests, but things that a real use showed. "Open" means that n
 | F9 | 7 | When the time of a call ends while the other side works, `remote` gave up without telling the agent, and the task went on to the end for nothing. The call asked the other side to answer only when the task ended (`returnImmediately: false`), so the number of the task was only known at the end, and there was nothing to cancel. | fixed in the code: it asks to be answered at once, follows the task with `GetTask` and cancels it when the caller gives up. checked with the cancellable agent |
 | F10 | 11 | A key with a line break, a space or another character that a header cannot hold (more than the key copied into the variable) was refused by the HTTP library before any connection, and the person was told `I could not reach api.anthropic.com: the connection failed`, after three tries. | fixed in the code: such a key is refused before any request, with "the variable ANTHROPIC_API_KEY holds a line break, which cannot be part of a key" and how to fix it, and nothing of the key is said. The README of the sample has it in its troubleshooting |
 | F11 | 1 (over HTTP) | Claude Desktop reaches a server of MCP over HTTP through the bridge `mcp-remote`, which looks for OAuth before it connects: six `GET` without a token (`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/.well-known/openid-configuration` and their `/mcp` forms) each time it starts, and Claude Desktop starts more than one. Each `401` counted as a wrong token, so within a minute the server answered `429` to the bridge itself, with the right token, and Claude Desktop said `Server disconnected`. | fixed in the code: a request with no `Authorization` at all is refused and not counted; a wrong token, another scheme or an empty `Bearer` still counts (`TestARequestWithoutATokenIsRefusedButNotCounted`) |
+| F12 | 12 | With `--public`, `--host hello.test` and `--port 8443`, the server started without a word, its card and banner said `https://hello.test` (no port), and every request got `421`: a client that connects to 8443 sends `Host: hello.test:8443`. | fixed: the banner says which names have no port when the server does not listen on 443, and what to write; the server still starts, because a router or a proxy may bring the port 443 of the outside to this one (`TestANameWithoutItsPortIsPointedOutWhenTheServerIsNotOn443`) |

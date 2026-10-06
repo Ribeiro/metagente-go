@@ -66,7 +66,7 @@ curl -H "Authorization: Bearer $METAGENTE_TOKEN" http://127.0.0.1:8080/agents/He
 | Where | How | What it needs |
 |---|---|---|
 | This computer (the default) | `metagente serve FILE.ag` | a token: `METAGENTE_TOKEN`, or one is made and shown once if a person is at the terminal |
-| The network | `--public --tls-cert F --tls-key F --host NAME` | the token in `METAGENTE_TOKEN` or `--token-file` (never made), TLS 1.2 or newer, the names it answers to |
+| The network | `--public --tls-cert F --tls-key F --host NAME` (`NAME:PORT` when the port is not 443) | the token in `METAGENTE_TOKEN` or `--token-file` (never made), TLS 1.2 or newer, the names it answers to |
 | Behind a proxy on this computer | `--behind-proxy --host NAME --public-url https://NAME` | the token in `METAGENTE_TOKEN` or `--token-file`; the proxy does the TLS and has to limit the rate |
 
 `--token-file FILE` reads the token from a file instead of `METAGENTE_TOKEN` (not both), for where a
@@ -552,6 +552,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 
 Checked against the real thing (the steps and the results are in `validation/README.md`):
 
+- `--public`, with a certificate of a local authority, reached by the network address of the computer: TLS
+  1.1 and plain HTTP refused, a name that is not the one given refused (`421`);
 - the MCP server over standard input and output (`--stdio`), with the MCP Inspector, with Claude Desktop
   and with Claude Code;
 - the MCP server over HTTP (`--mcp`), with Claude Desktop through `mcp-remote`, with the client of the
@@ -573,7 +575,6 @@ Checked against the real thing (the steps and the results are in `validation/REA
 These work in the tests, which use doubles, or were run only on macOS, and are not checked yet:
 
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
-- `--public`, with a certificate of its own;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there

@@ -7,6 +7,12 @@ minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- With `--public` on a port that is not 443, the banner says which names of `--host` have no port, and
+  what to write: a client that connects to that port sends it in `Host`, and was answered 421 without a
+  word.
+
 ### Fixed
 
 - A request with no token at all is refused with 401 but no longer counts as a wrong try. A client of MCP
