@@ -21,6 +21,7 @@ table at the end, and if it fails, keep the text of the error: it is what the fi
 | 10 | tool servers (MCP client), E1, E2, L7 | a server in Python that `uvx` starts | 10 min |
 | 11 | the City Briefing sample: `think` with tools, `serve` and `remote` together | the Claude API and the fetch server that `uvx` starts | 20 min |
 | 12 | `--public` (S5): TLS of its own, on the network | a certificate of a local authority made with `openssl`, and the network address of the computer | 15 min |
+| 13 | a token for each client in `--token-file`, the name in the log, and the file read again while the server runs (O4) | the City Briefing on two computers: a Linux server as a service of systemd, and a Mac | 15 min |
 
 ## 1. A client of MCP that is not ours
 
@@ -707,6 +708,36 @@ and `400`. A second computer on the same network, with `ca.crt`, is the fuller c
 
 To end: `Ctrl-C` in A, and `rm -rf ~/metagente-demo/public` (the key and the token are in it).
 
+## 13. A token for each client, changed while the server runs
+
+What the tests cannot show: a server that keeps running as a service, its file of tokens changed by hand
+on the real computer, and two clients on another one that see the change without the server being
+restarted. It starts where `samples/city-briefing/TWO-COMPUTERS.md` ends, with the Researcher as a service
+on the Linux machine, and follows its section "More than one client": `tokens` with the token the Mac
+already had as `mac` and a new one as `notebook`, `METAGENTE_TOKEN` out of `.env`, and `--token-file tokens`
+in the service.
+
+On the Mac, with the address of the Linux machine in `LAB_IP`, the token of the Mac in `RESEARCHER_TOKEN`
+and the one of the notebook in `NB`:
+
+```bash
+URL=https://$LAB_IP:8443/agents/Researcher/.well-known/agent-card.json
+curl -s -o /dev/null -w 'notebook: %{http_code}\n' -H "Authorization: Bearer $NB" $URL
+curl -s -o /dev/null -w 'mac: %{http_code}\n' -H "Authorization: Bearer $RESEARCHER_TOKEN" $URL
+```
+
+Then on the Linux machine, with `journalctl --user -u researcher -f` open:
+
+1. The notebook taken away: `umask 077; grep -v '^notebook ' tokens > tokens.new && mv tokens.new tokens`,
+   and the two `curl` again.
+2. A file that is not good enough: `cp tokens tokens.bak; echo 'phone short' >> tokens`, and the `curl` of
+   the Mac again; then `mv tokens.bak tokens`.
+
+What to see: the banner says `Tokens from tokens: 2 tokens, of mac, notebook`; every line of the log of a
+request let in ends with `client=mac` or `client=notebook`; after 1, `changed: 1 token, of mac`, the
+notebook gets `401` and the Mac `200`; after 2, a `Problem:` that names the line and not the token, and the
+Mac still `200`. The service is never restarted after the first time.
+
 ## Results
 
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
@@ -727,6 +758,7 @@ To end: `Ctrl-C` in A, and `rm -rf ~/metagente-demo/public` (the key and the tok
 | 11 | 2026-10-05 | macOS, arm64; Claude Sonnet 5.5 (`claude-sonnet-5-5`); `mcp-server-fetch` 2026.8.18 | 0.3.0 | passed, after F10 | `check` found no problems in either file; `trust` listed `starts the program: uvx mcp-server-fetch==2026.8.18` for the Researcher and `connects to: http://127.0.0.1:8080/agents/Researcher (and sends it the token held in RESEARCHER_TOKEN)` for the Concierge. With `Lisbon` the Concierge printed three lines ("Welcome to Lisbon, Portugal's capital since 1256, set on the Tagus river!", its Roman name Olissipo and the siege of 1147, Belém Tower, Rua Augusta Arch and the cathedral). With `Xyzzyplugh` it said that no verified facts were found, because the page of Wikipedia answered 404. The log of the Researcher had a `GET` of the card (200) and a `SendMessage` with `result=ok` for each (7.3 s and 4.5 s), and a `curl` without the token got `401`. On the way: with the key not set to a real one, `api.anthropic.com answered 401: invalid x-api-key` came back to the Concierge over A2A as a problem that can be read, and the task was `result=failed` in the log. A variable that held a command along with a line break got "I could not reach api.anthropic.com: the connection failed", which sent the search to the network (F10). |
 | 12 | 2026-10-06 | macOS, arm64; LibreSSL 3.3.6 (curl and openssl of the system) | 0.3.1 | passed, F12 found while preparing it | Through the network address of the computer: the card said `https://hello.test:8443/agents/Hello`, with the certificate of the local authority checked; without the token `401`; with an `Origin` `403`; `initialize` of MCP answered by `metagente`; by the address instead of the name `421`; TLS 1.1 refused (`tlsv1 alert protocol version`); plain HTTP `400` (`Client sent an HTTP request to an HTTPS server`). While the steps were prepared, `--host hello.test` with `--port 8443` started without a word and answered `421` to everything (F12). Not tried from a second computer. |
 | 12 | 2026-10-06 | the Researcher of City Briefing on Linux (x86_64, a home server) and the Concierge on macOS, on one local network; Claude Sonnet 5.5 | 0.3.2 | passed | The Researcher served with `--public`, a certificate for the address of the server signed by an authority limited to the network (name constraint) and trusted in the keychain of the Mac. From the Mac, `curl` without `--cacert`: `401` without the token, `200` with it. The Concierge got the facts over A2A and wrote the briefing of Lisbon. The first question took more than 90 seconds and the Concierge gave up: `uvx` was downloading the fetch server on the server during the call; run alone afterwards the Researcher took 18.7 s, and the Concierge then answered. The steps are in `samples/city-briefing/TWO-COMPUTERS.md`, which runs `uvx ... --help` once before serving. |
+| 13 | 2026-10-06 | the Researcher on Linux (x86_64, a home server), a service of systemd; the Concierge on macOS, on one local network; Claude Sonnet 5.5 | 0.4.0 | passed | After the change to `--token-file`, the banner said `Tokens from tokens: 2 tokens, of mac, notebook`. The Concierge asked about Curitiba and the two requests of the Mac were logged with `client=mac` (25.5 s in the Researcher, 28 s in all). The card read with each token: `200` and `200`, logged with `client=notebook` and `client=mac`. With the notebook taken out of the file, the log said `The token file tokens changed: 1 token, of mac.` and the next requests got `401` (logged without a client) and `200`; the service was not restarted. A line `phone curto` added: `Problem: the token file tokens: line 2 (phone): the token has to be at least 32 characters long. ...; the tokens it had still open the server.`, and the Mac still `200`; the file put back was read again (`changed: 1 token, of mac`). No token was in the log. |
 
 ## What the checks found
 

@@ -573,6 +573,8 @@ Checked against the real thing (the steps and the results are in `validation/REA
 
 - `--public`, with a certificate of a local authority, reached by the network address of the computer: TLS
   1.1 and plain HTTP refused, a name that is not the one given refused (`421`);
+- a token for each client in `--token-file`, on a server that runs as a service on another computer: the
+  name of the client in the log, and a token taken out of the file refused at once, without a restart;
 - the MCP server over standard input and output (`--stdio`), with the MCP Inspector, with Claude Desktop
   and with Claude Code;
 - the MCP server over HTTP (`--mcp`), with Claude Desktop through `mcp-remote`, with the client of the
