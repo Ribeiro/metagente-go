@@ -2,8 +2,7 @@
 
 A port of [Metagente / MetaAgent](https://github.com/cleuton/MetaAgent), an interpreted
 language for AI agents, from Rust to Go, with the hardening described in the
-specification ("Metagente em Go: inventário de testes e especificação de
-endurecimento").
+specification.
 
 All code, comments and tests are written in English. How to write agents is in
 [the reference of the language](docs/LANGUAGE.md).
