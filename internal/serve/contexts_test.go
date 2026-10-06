@@ -220,7 +220,7 @@ func TestTheJanitorRemovesWhatExpiredUntilItIsStopped(t *testing.T) {
 func TestWhatASweptConversationHeldIsLetGo(t *testing.T) {
 	c, clock := newContexts(10, time.Minute)
 	var let []string
-	c.OnRemove = func(id string, value string) { let = append(let, id+"="+value) }
+	c.OnRemove = func(id, value string) { let = append(let, id+"="+value) }
 	keep, _ := c.Open("kept")
 	gone, _ := c.Open("gone")
 	clock.Advance(30 * time.Second)

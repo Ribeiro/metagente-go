@@ -13,7 +13,7 @@ import (
 
 // ---------- env ----------
 
-func newEnv(names []string, hidden []string) *Env {
+func newEnv(names, hidden []string) *Env {
 	return NewEnv(&lang.ToolDecl{Name: "env", Kind: lang.ToolEnv, EnvNames: names}, hidden)
 }
 

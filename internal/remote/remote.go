@@ -38,6 +38,9 @@ import (
 // protocolVersion is the version of A2A this client speaks.
 const protocolVersion = "1.0"
 
+// mediaJSON is the type of what goes to the remote agent and of a part that holds data.
+const mediaJSON = "application/json"
+
 // notAnA2AAgent is what to check when an address does not answer like an agent.
 const notAnA2AAgent = "check that the address belongs to an A2A agent"
 
@@ -439,7 +442,7 @@ func (a *agent) rpc(ctx context.Context, endpoint, method string, params any) (j
 	if err != nil {
 		return nil, diag.New("the address of the remote agent is not valid")
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", mediaJSON)
 	req.Header.Set("A2A-Version", protocolVersion)
 	if err := a.authorize(req); err != nil {
 		return nil, err
@@ -584,7 +587,7 @@ func (t *tool) messagePart(s *skill, action string, args tools.Args) (map[string
 		}
 		return map[string]any{
 			"data":      map[string]any{"skill": action, "arguments": arguments},
-			"mediaType": "application/json",
+			"mediaType": mediaJSON,
 		}, nil
 	}
 	if len(args) == 0 {
@@ -624,7 +627,7 @@ func takesOnlyText(modes []string) bool {
 		if m == "text" || strings.HasPrefix(m, "text/") {
 			text = true
 		}
-		if m == "json" || m == "application/json" || strings.HasSuffix(m, "+json") {
+		if m == "json" || m == mediaJSON || strings.HasSuffix(m, "+json") {
 			data = true
 		}
 	}

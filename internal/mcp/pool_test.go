@@ -267,7 +267,7 @@ func TestTheProgramSeesOnlyTheMinimalEnvironment(t *testing.T) {
 			t.Errorf("%s = %q, want %q", tt.name, got, tt.want)
 		}
 	}
-	if got := mustWork(t, srv, "env", "name", "PATH"); got == "" {
+	if mustWork(t, srv, "env", "name", "PATH") == "" {
 		t.Error("the program did not receive PATH, so it could not find other programs")
 	}
 }
