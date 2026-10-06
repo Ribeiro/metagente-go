@@ -150,18 +150,19 @@ func TestATokenFileHoldsTheTokenAndNothingThatIsRefusedIsRepeated(t *testing.T) 
 		return path
 	}
 	good := "tok-0123456789-abcdefghij-ABCDEFGHIJ"
-	token, note, err := ReadTokenFile(write("good", "  "+good+"\n", 0o600))
-	if err != nil || token != good || note != "" {
-		t.Errorf("token %q, note %q, err %v", token, note, err)
+	creds, note, err := ReadTokenFile(write("good", "  "+good+"\n", 0o600))
+	if err != nil || len(creds) != 1 || creds[0] != (Credential{Token: good}) || note != "" {
+		t.Errorf("tokens %q, note %q, err %v", creds, note, err)
 	}
 	secret := "tok-live-short-secret"
 	for name, path := range map[string]string{
-		"empty":      write("empty", "\n\n", 0o600),
-		"short":      write("short", secret+"\n", 0o600),
-		"two words":  write("two", secret+" "+good+"\n", 0o600),
-		"too large":  write("large", strings.Repeat("k", maxTokenFile+1), 0o600),
-		"missing":    filepath.Join(dir, "nothing-here"),
-		"not a file": dir,
+		"empty":       write("empty", "\n\n", 0o600),
+		"short":       write("short", secret+"\n", 0o600),
+		"two words":   write("two", "Mac "+secret+"\n", 0o600),
+		"named short": write("named", "mac "+secret+"\nnotebook "+good+"\n", 0o600),
+		"too large":   write("large", strings.Repeat("k", maxTokenFile+1), 0o600),
+		"missing":     filepath.Join(dir, "nothing-here"),
+		"not a file":  dir,
 	} {
 		_, _, err := ReadTokenFile(path)
 		if err == nil {
@@ -195,8 +196,88 @@ func TestATokenFileThatOthersMayChangeIsRefused(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	token, note, err := ReadTokenFile(path)
-	if err != nil || token != good || !strings.Contains(note, "others on this computer may read") {
-		t.Errorf("0644: token %q, note %q, err %v", token, note, err)
+	creds, note, err := ReadTokenFile(path)
+	if err != nil || len(creds) != 1 || creds[0].Token != good || !strings.Contains(note, "others on this computer may read") {
+		t.Errorf("0644: tokens %q, note %q, err %v", creds, note, err)
+	}
+}
+
+// req: S1
+func TestATokenFileMayHoldATokenForEachClientWithItsName(t *testing.T) {
+	mac, notebook := "tok-mac-0123456789-abcdefghij-ABCDEFGHIJ", "tok-nb-0123456789-abcdefghij-ABCDEFGHIJ"
+	creds, err := ParseTokens("# who may call\n\nmac  " + mac + "\n  notebook\t" + notebook + "  \n")
+	want := []Credential{{"mac", mac}, {"notebook", notebook}}
+	if err != nil || len(creds) != 2 || creds[0] != want[0] || creds[1] != want[1] {
+		t.Fatalf("tokens %q, err %v", creds, err)
+	}
+	if got := strings.Join(TokenNames(creds), ","); got != "mac,notebook" {
+		t.Errorf("names %q", got)
+	}
+	// One token alone, with comments around it, still has no name.
+	creds, err = ParseTokens("# the token\n" + mac + "\n")
+	if err != nil || len(creds) != 1 || creds[0] != (Credential{Token: mac}) {
+		t.Errorf("one token: %q, %v", creds, err)
+	}
+}
+
+// req: S1
+func TestATokenFileWithADoubtAboutWhoIsWhoIsRefusedWithoutRepeatingAToken(t *testing.T) {
+	mac, notebook := "tok-mac-0123456789-abcdefghij-ABCDEFGHIJ", "tok-nb-0123456789-abcdefghij-ABCDEFGHIJ"
+	for name, tt := range map[string]struct{ text, says string }{
+		"nothing":       {"# only a comment\n", "no token"},
+		"one unnamed":   {"mac " + mac + "\n" + notebook + "\n", "line 2"},
+		"unnamed first": {mac + "\nnotebook " + notebook + "\n", "line 1"},
+		"three fields":  {"mac " + mac + " " + notebook + "\n", "line 1"},
+		"same name":     {"mac " + mac + "\nmac " + notebook + "\n", "lines 1 and 2 have the same name, mac"},
+		"same token":    {"mac " + mac + "\nnotebook " + mac + "\n", "lines 1 and 2 have the same token"},
+		"weak token":    {"mac " + mac + "\nnotebook aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", "line 2 (notebook)"},
+		"upper name":    {"Mac " + mac + "\nnotebook " + notebook + "\n", "lowercase"},
+		"token as name": {mac + " mac\nnotebook " + notebook + "\n", "1 to 24 characters"},
+		"name too long": {strings.Repeat("m", 25) + " " + mac + "\nnotebook " + notebook + "\n", "1 to 24"},
+	} {
+		_, err := ParseTokens(tt.text)
+		if err == nil || !strings.Contains(err.Error(), tt.says) {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if strings.Contains(err.Error(), mac) || strings.Contains(err.Error(), notebook) || strings.Contains(err.Error(), "aaaaaaaa") {
+			t.Errorf("%s: the reason repeats a token: %v", name, err)
+		}
+	}
+}
+
+func TestATokenNameIsShorterThanAnyToken(t *testing.T) {
+	if maxTokenName >= minTokenLength {
+		t.Fatalf("a token of %d characters could be taken for a name", minTokenLength)
+	}
+	for _, good := range []string{"mac", "notebook", "ci-runner_2", "a.b"} {
+		if err := CheckTokenName(good); err != nil {
+			t.Errorf("%s: %v", good, err)
+		}
+	}
+	for _, bad := range []string{"", "Mac", "my mac", "mac=1", "ç"} {
+		if CheckTokenName(bad) == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestTheServerRefusesTokensThatAreNotGoodEnoughAndKeepsTheOnesItHad(t *testing.T) {
+	mac, notebook := GenerateToken(), GenerateToken()
+	for name, creds := range map[string][]Credential{
+		"none":       nil,
+		"weak":       {{"mac", mac}, {"notebook", "short"}},
+		"same name":  {{"mac", mac}, {"mac", notebook}},
+		"same token": {{"mac", mac}, {"notebook", mac}},
+		"bad name":   {{"Mac Book", mac}},
+	} {
+		if err := checkCredentials(creds); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if strings.Contains(err.Error(), mac) {
+			t.Errorf("%s: the reason repeats a token: %v", name, err)
+		}
+	}
+	if err := checkCredentials([]Credential{{"mac", mac}, {"notebook", notebook}}); err != nil {
+		t.Errorf("good tokens refused: %v", err)
 	}
 }

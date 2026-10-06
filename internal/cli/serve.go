@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,8 @@ type serveEnv struct {
 	stdin io.Reader
 	// ready, when set, is told where the server listens and which token opens it.
 	ready func(address, token string)
+	// tokenPoll is how often the token file is looked at; 2 seconds when zero.
+	tokenPoll time.Duration
 }
 
 func runServe(args []string, stdout, stderr io.Writer) int {
@@ -70,7 +73,12 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		printError(stderr, err)
 		return 2
 	}
-	token, generated, err := serveToken(flags.tokenFile, plan, stderr, env)
+	// What the token file is before it is read: a change after this is read again once the server runs.
+	var tokenSince os.FileInfo
+	if flags.tokenFile != "" {
+		tokenSince, _ = os.Stat(flags.tokenFile)
+	}
+	tokens, generated, err := serveToken(flags.tokenFile, plan, stderr, env)
 	if err != nil {
 		printError(stderr, err)
 		return 2
@@ -82,24 +90,28 @@ func serveCommand(ctx context.Context, args []string, stdout, stderr io.Writer, 
 		printError(stderr, err)
 		return 1
 	}
-	return runServer(ctx, serving{rt: rt, plan: plan, agents: agents, token: token, generated: generated, quiet: flags.quiet, mcp: flags.mcp}, stderr, env)
+	return runServer(ctx, serving{rt: rt, plan: plan, agents: agents, tokens: tokens, tokenFile: flags.tokenFile, tokenSince: tokenSince, generated: generated, quiet: flags.quiet, mcp: flags.mcp}, stderr, env)
 }
 
-// serveToken is the token of the server: from --token-file, or as ResolveToken says.
+// serveToken is the tokens of the server: from --token-file, or the one ResolveToken says.
 // Both a file and the variable would leave a doubt about which one opens the server,
 // so that is refused.
-func serveToken(file string, plan *serve.Plan, stderr io.Writer, env serveEnv) (token string, generated bool, err error) {
+func serveToken(file string, plan *serve.Plan, stderr io.Writer, env serveEnv) (tokens []serve.Credential, generated bool, err error) {
 	if file == "" {
-		return serve.ResolveToken(env.getenv, env.terminal, plan.Loopback)
+		token, generated, err := serve.ResolveToken(env.getenv, env.terminal, plan.Loopback)
+		if err != nil {
+			return nil, false, err
+		}
+		return []serve.Credential{{Token: token}}, generated, nil
 	}
 	if strings.TrimSpace(env.getenv("METAGENTE_TOKEN")) != "" {
-		return "", false, errors.New("both --token-file and METAGENTE_TOKEN are set, and only one may say what the token is; leave out one of the two")
+		return nil, false, errors.New("both --token-file and METAGENTE_TOKEN are set, and only one may say what the token is; leave out one of the two")
 	}
-	token, note, err := serve.ReadTokenFile(file)
+	tokens, note, err := serve.ReadTokenFile(file)
 	if note != "" {
 		fmt.Fprintf(stderr, "Note: %s.\n", note)
 	}
-	return token, false, err
+	return tokens, false, err
 }
 
 func usageProblem(stderr io.Writer, err error) {
@@ -253,17 +265,20 @@ func onlyAgents(all []*lang.AgentDef, wanted []string) ([]*lang.AgentDef, error)
 // ---------- the server ----------
 
 type serving struct {
-	rt        *runtime.Runtime
-	plan      *serve.Plan
-	agents    []serve.Agent
-	token     string
-	generated bool
-	quiet     bool
-	mcp       bool
+	rt         *runtime.Runtime
+	plan       *serve.Plan
+	agents     []serve.Agent
+	tokens     []serve.Credential
+	tokenFile  string // read again when it changes
+	tokenSince os.FileInfo
+	generated  bool
+	quiet      bool
+	mcp        bool
 }
 
 // runServer opens the port and serves until the context ends.
 func runServer(ctx context.Context, s serving, stderr io.Writer, env serveEnv) int {
+	stderr = &lockedWriter{w: stderr}
 	cfg := s.rt.Config
 	ln, err := net.Listen("tcp", s.plan.Address)
 	if err != nil {
@@ -280,7 +295,7 @@ func runServer(ctx context.Context, s serving, stderr io.Writer, env serveEnv) i
 	}
 	hosts := s.plan.HostsFor(port)
 	srv, err := serve.New(serve.Config{
-		Token:                 s.token,
+		Tokens:                s.tokens,
 		Hosts:                 hosts,
 		BaseURL:               s.plan.BaseURL(port),
 		AuthFailuresPerMinute: cfg.Serve.AuthFailuresPerMinute,
@@ -306,13 +321,44 @@ func runServer(ctx context.Context, s serving, stderr io.Writer, env serveEnv) i
 	}
 	announce(stderr, s, srv, s.plan.BaseURL(port), ln.Addr().String(), port)
 	if env.ready != nil {
-		env.ready(ln.Addr().String(), s.token)
+		env.ready(ln.Addr().String(), s.tokens[0].Token)
+	}
+	if s.tokenFile != "" {
+		// It ends with the server, so nothing is written after `serve` has returned.
+		watchCtx, stopWatching := context.WithCancel(ctx)
+		watching := make(chan struct{})
+		go func() { watchTokenFile(watchCtx, s.tokenFile, s.tokenSince, srv, stderr, env.tokenPoll); close(watching) }()
+		defer func() { stopWatching(); <-watching }()
 	}
 	perAddress := 0
 	if s.plan.PerAddress {
 		perAddress = cfg.Serve.MaxConnectionsPerAddress
 	}
 	return serveUntilDone(ctx, ln, handler, tlsConfig, srv, cfg, perAddress, stderr)
+}
+
+// watchTokenFile reads the token file again when it changes. What it says goes where the
+// log of the server goes, even with --quiet: a token that stopped working is no detail.
+func watchTokenFile(ctx context.Context, path string, since os.FileInfo, srv *serve.Server, stderr io.Writer, every time.Duration) {
+	if every <= 0 {
+		every = 2 * time.Second
+	}
+	serve.WatchTokenFile(ctx, path, since, every, srv.SetTokens, func(line string) {
+		fmt.Fprintln(stderr, line)
+	})
+}
+
+// lockedWriter lets the log of the requests and the watcher of the token file write to the
+// same place at the same time, a line at a time.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // serveUntilDone runs the server and its janitor, and waits for both to end.
@@ -363,7 +409,10 @@ func announce(stderr io.Writer, s serving, srv *serve.Server, base, listen strin
 	}
 	fmt.Fprintln(stderr, "Every request needs the header  Authorization: Bearer TOKEN")
 	if s.generated {
-		fmt.Fprintf(stderr, "Token for this run, kept nowhere else: %s\n", s.token)
+		fmt.Fprintf(stderr, "Token for this run, kept nowhere else: %s\n", s.tokens[0].Token)
+	}
+	if s.tokenFile != "" {
+		fmt.Fprintf(stderr, "Tokens from %s: %s. A change to the file is read while the server runs.\n", s.tokenFile, serve.DescribeTokens(s.tokens))
 	}
 	cfg := s.rt.Config
 	fmt.Fprintf(stderr, "Up to %d conversations at once, each may keep up to %d KiB of state.\n",

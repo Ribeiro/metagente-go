@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +29,7 @@ type liveServer struct {
 	token   string
 	cancel  context.CancelFunc
 	done    chan int
-	stderr  *bytes.Buffer
+	stderr  *syncBuffer
 
 	stopped  bool // stop may be called again, by hand and then by a cleanup
 	exitCode int
@@ -39,13 +40,14 @@ func startServe(t *testing.T, args []string, env map[string]string, terminal boo
 	t.Setenv("METAGENTE_STATE_DIR", filepath.Join(t.TempDir(), "state"))
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	live := &liveServer{cancel: cancel, done: make(chan int, 1), stderr: &bytes.Buffer{}}
+	live := &liveServer{cancel: cancel, done: make(chan int, 1), stderr: &syncBuffer{}}
 	ready := make(chan struct{})
 	go func() {
 		live.done <- serveCommand(ctx, args, io.Discard, live.stderr, serveEnv{
-			getenv:   func(name string) string { return env[name] },
-			terminal: terminal,
-			ready:    func(address, token string) { live.address, live.token = address, token; close(ready) },
+			getenv:    func(name string) string { return env[name] },
+			terminal:  terminal,
+			tokenPoll: 10 * time.Millisecond,
+			ready:     func(address, token string) { live.address, live.token = address, token; close(ready) },
 		})
 	}()
 	select {
@@ -56,6 +58,24 @@ func startServe(t *testing.T, args []string, env map[string]string, terminal boo
 		t.Fatal("serve was not ready in time")
 	}
 	return live
+}
+
+// syncBuffer is what a running server writes, which a test may read while it runs.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // stop ends the server the way Ctrl-C does and returns what it said.

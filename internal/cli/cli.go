@@ -92,7 +92,8 @@ Usage:
   metagente trust FILE.ag [--yes]      approve the programs and addresses an agent uses
   metagente trust --list               show what is approved
   metagente trust --revoke             remove the approvals of this project
-  metagente token                      make a token to keep and give to the server (METAGENTE_TOKEN)
+  metagente token [--name NAME]        make a token to keep and give to the server (METAGENTE_TOKEN);
+                                       with --name, a line "NAME TOKEN" for a --token-file of one token per client
   metagente serve FILE.ag ... [--port N] [--agent NAME] [--public-card] [--mcp] [--quiet] [--config FILE]
                                        serve agents over A2A on this computer; every request needs a token.
                                        --mcp serves them as MCP tools too, at /mcp, behind the same token

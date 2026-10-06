@@ -70,9 +70,24 @@ curl -H "Authorization: Bearer $METAGENTE_TOKEN" http://127.0.0.1:8080/agents/He
 | Behind a proxy on this computer | `--behind-proxy --host NAME --public-url https://NAME` | the token in `METAGENTE_TOKEN` or `--token-file`; the proxy does the TLS and has to limit the rate |
 
 `--token-file FILE` reads the token from a file instead of `METAGENTE_TOKEN` (not both), for where a
-secret is given as a file, as the secrets of containers are. The file holds the token and nothing else; on
-Linux and macOS a file that others may change is refused, and one that others may read is used with a note.
-It is read once, when the server starts.
+secret is given as a file, as the secrets of containers are. On Linux and macOS a file that others may change
+is refused, and one that others may read is used with a note. The file holds one token alone, or **a token
+for each client**, with its name, so that each one is taken away without touching the others, and the access
+log says who called (`client=mac`):
+
+```bash
+umask 077
+metagente token --name mac      >  tokens     # a line: mac TOKEN
+metagente token --name notebook >> tokens
+metagente serve FILE.ag --token-file tokens
+```
+
+Blank lines and lines that start with `#` are left out; a name has up to 24 lowercase letters, digits,
+`-`, `_` or `.`; no name or token may be on two lines. The server **reads the file again when it changes**
+(it looks every 2 seconds): a token taken out of it stops opening the server for the next request, and a
+request already running goes on. A file that cannot be read or is not good enough changes nothing: the
+tokens it had still open the server, and the log says why. Write the new file beside it and rename it over
+the old one, so the server never reads it half written.
 
 Other options: `--port N`, `--agent NAME` (repeatable: serve only those; by default all the
 agents of the files), `--public-card` (a card with the names only, for anyone), `--mcp` (the
@@ -193,7 +208,8 @@ lower one of the two.
   token (see [Serving to a program that speaks MCP over HTTP](#serving-to-a-program-that-speaks-mcp-over-http)).
 - [`samples/city-briefing`](samples/city-briefing/): two agents that work together, over A2A and MCP, with
   `think`; the tests run it offline.
-- `metagente token`: makes a token to keep and give to the server.
+- `metagente token`: makes a token to keep and give to the server; `--name NAME` writes it as a line of a
+  token file with one token for each client.
 - `[credentials]` in `metagente.toml`: the bearer token for a `remote` agent or for a tool server
   that is an address, named by the variable that holds it.
 - A log of failures inside Metagente, in the folder of the user, that holds the cause and the stack
@@ -242,7 +258,7 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 | P3 | done | every key, token and credential variable is taken out of the log and of every error; the access log never holds a header, a query or a body | `internal/applog`, `internal/secret`, `internal/serve/accesslog.go` |
 | P4 | done | a panic ends only that task or call and shows one plain sentence; the cause goes to the log | `internal/cli`, `internal/runtime`, `internal/serve` |
 | P5 | done | the access log is structured (`log/slog`, `key=value`): time, remote address, method, path, status, bytes and duration; and, for a request that ran an agent, the agent, the method of the protocol, the message, the task and how it ended (`ok`, `failed`, `error`, `busy`, `left`). Never a header, a query or a body. It is the log of `serve` over HTTP; the MCP over standard input and output has none | `internal/serve/accesslog.go`, `rpc.go` |
-| S1 | done, changed (agreed) | every route that runs an agent needs `Authorization: Bearer`; constant time comparison; the same short 401 for every failure; the token is never in a log. Changed: the Agent Card is also for those who have the token (`--public-card` gives a minimal one to anyone), and the token comes from `METAGENTE_TOKEN` or `--token-file`, or is made only for a person at a terminal on this computer. A token has 32 characters or more, of at least 12 different ones; the door closes a connection that it turned away | `internal/serve/guard.go`, `token.go` |
+| S1 | done, changed (agreed) | every route that runs an agent needs `Authorization: Bearer`; constant time comparison; the same short 401 for every failure; the token is never in a log. Changed: the Agent Card is also for those who have the token (`--public-card` gives a minimal one to anyone), and the token comes from `METAGENTE_TOKEN` or `--token-file` (one for each client, named in the access log, read again when the file changes), or is made only for a person at a terminal on this computer. A token has 32 characters or more, of at least 12 different ones; the door closes a connection that it turned away | `internal/serve/guard.go`, `token.go` |
 | S2 | done | a POST needs `application/json` (415 otherwise, before the body is read); no `OPTIONS`, no CORS header | `internal/serve/guard.go` |
 | S3 | done | the `Host` has to be a name the server answers to (421 otherwise, token or not): the ones of this computer by default, or `--host` | `internal/serve/guard.go`, `options.go` |
 | S4 | done, changed (agreed) | a request made by a browser is refused (403). Stricter than the specification, on purpose: **any** `Origin`, and the `Sec-Fetch-Site`, `Sec-Fetch-Dest` and `Sec-Fetch-User` that a browser adds to every request, are refused, and `allowed_origins` is ignored (the server says so). `Sec-Fetch-Mode` alone is not: the fetch of Node.js sends it in every request, and the official SDK in JavaScript is made on it, so refusing it kept that client out. Kept because it is safer; the specification is to be changed to say so | `internal/serve/guard.go` |

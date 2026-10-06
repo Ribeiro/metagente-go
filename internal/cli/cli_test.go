@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"metagente/internal/serve"
+
 	"bytes"
 	"io"
 	"net/http"
@@ -744,7 +746,27 @@ func TestTheTokenCommandPrintsOnlyAGoodToken(t *testing.T) {
 	if other == stdout {
 		t.Error("two calls gave the same token")
 	}
-	if code, _, stderr := run(t, "token", "extra"); code != 2 || !strings.Contains(stderr, "takes no arguments") {
+	if code, _, stderr := run(t, "token", "extra"); code != 2 || !strings.Contains(stderr, "--name mac") {
 		t.Errorf("code %d, stderr %q", code, stderr)
+	}
+}
+
+// req: S1
+func TestTheTokenCommandWritesALineOfATokenFile(t *testing.T) {
+	for _, args := range [][]string{{"token", "--name", "mac"}, {"token", "--name=mac"}} {
+		code, stdout, stderr := run(t, args...)
+		name, token, found := strings.Cut(strings.TrimSuffix(stdout, "\n"), " ")
+		if code != 0 || stderr != "" || !found || name != "mac" || serve.CheckToken(token) != nil {
+			t.Errorf("%q: code %d, stdout %q, stderr %q", args, code, stdout, stderr)
+		}
+		creds, err := serve.ParseTokens(stdout)
+		if err != nil || len(creds) != 1 || creds[0].Name != "mac" {
+			t.Errorf("%q: the line is not one of a token file: %v", args, err)
+		}
+	}
+	for _, args := range [][]string{{"token", "--name", "My Mac"}, {"token", "--name="}, {"token", "--name"}, {"token", "--name", "mac", "x"}} {
+		if code, stdout, _ := run(t, args...); code != 2 || stdout != "" {
+			t.Errorf("%q: code %d, stdout %q", args, code, stdout)
+		}
 	}
 }

@@ -61,13 +61,13 @@ that says why and how to make a good one. It is in the changelog.
 |---|---|---|---|
 | O1 | Connections that send their headers slowly could hold the places of the listener | with `--public`, one place holds at most `max_connections_per_address` (32) connections; one more is closed as soon as it is accepted, without taking a place. A place is an IPv4 address or an IPv6 network of 64 bits, for this limit and for the wrong tokens. On this computer or behind a proxy there is no such limit, since every client has the same address there | `TestOnePlaceCannotHoldMoreThanItsConnections`, `TestAnIPv6NetworkIsOnePlace`, `TestTheAddressesOfAnIPv6NetworkShareTheirTries`, `TestOnlyAPublicServerLimitsTheConnectionsOfEachPlace` |
 | O2 | The call depth of D2 did not cross MCP | the chain goes in the `_meta` of a call (`metagente/chain`), only to a tool server that says it is Metagente; the MCP server refuses a call too deep or in a circle | `TestTheChainOfAgentsGoesOnlyToAServerOfMetagente`, `TestAnMCPCallCarriesTheChainOfAgentsAndIsStoppedInACircleOrTooDeep`, `mcp_chain_across_processes.txt` (three processes) |
+| O4 | `--token-file` read the token once, when the server started, so changing it needed a restart | the server reads the file again when it changes (its size, time, permissions, or a new file renamed over it, looked at every 2 seconds). The decision about the requests that are running: a token is checked when a request comes in, so a request already let in goes on, and the next one with a token taken away gets 401. A file that cannot be read or is not good enough changes nothing, and the log says why without a token. The file may also hold a token for each client, with a name the access log writes (`client=mac`), so one client is taken away without the others | `TestEachClientHasItsOwnTokenAndTheFileIsReadAgainWhenItChanges`, `TestTheTokenFileIsReadAgainOnlyWhenItChangesAndAProblemIsToldOnce`, `TestATokenTakenAwayNoLongerOpensTheDoorAndTheOthersStillDo`, `TestEachTokenOpensTheDoorAndTheLogSaysWhoseItIs` |
 
 ## Open, with what is recommended
 
 | # | What | Why it is not fixed here | What to do |
 |---|---|---|---|
 | O3 | Whoever holds the token can use up to `max_retained_tasks` × `max_state_bytes` of memory (about 250 MiB with the defaults), and keep `max_running_tasks` calls running | the token is meant to give that much | on a small machine lower the two settings (see Memory in the README) |
-| O4 | `--token-file` reads the token once, when the server starts | changing the token while it runs would need a decision about the requests that are running | restart the server to change the token |
 
 ## Not reviewed
 
