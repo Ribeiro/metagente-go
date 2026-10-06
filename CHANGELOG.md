@@ -15,6 +15,8 @@ minor versions.
 
 ### Fixed
 
+- On Windows, the file tool refuses to write to a file that has more than one name on disk (a hard link),
+  as it already did on Linux and macOS: such a name could change a file outside the folder of the agent.
 - A request with no token at all is refused with 401 but no longer counts as a wrong try. A client of MCP
   that looks for OAuth before it connects (the `mcp-remote` bridge of Claude Desktop sends six such requests
   each time it starts) stopped itself for a minute with 429, because on this computer every client is the

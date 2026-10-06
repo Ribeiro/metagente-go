@@ -207,7 +207,7 @@ func (f *File) write(args Args) (value.Value, error) {
 	case statErr == nil && !existing.Mode().IsRegular():
 		return value.Nothing, diag.Newf("`%s` is not a regular file", printable(given)).
 			Fix("write to a file name instead")
-	case statErr == nil && linkCount(existing) > 1:
+	case statErr == nil && linkCount(root, name, existing) > 1:
 		return value.Nothing, diag.Newf("`%s` has more than one name on disk (a hard link), so writing to it could change a file outside this folder", printable(given)).
 			Fix("write to a new file name instead, or remove the extra link")
 	case statErr != nil && !errors.Is(statErr, fs.ErrNotExist):
@@ -281,7 +281,7 @@ func (f *File) writeInPlace(root *os.Root, given, name, text string) (value.Valu
 		return value.Nothing, diag.Newf("`%s` is not a regular file", printable(given)).
 			Fix("write to a file name instead")
 	}
-	if linkCount(info) > 1 {
+	if linkCount(root, name, info) > 1 {
 		return value.Nothing, diag.Newf("`%s` has more than one name on disk (a hard link), so writing to it could change a file outside this folder", printable(given)).
 			Fix("write to a new file name instead, or remove the extra link")
 	}
