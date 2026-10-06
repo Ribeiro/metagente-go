@@ -7,12 +7,16 @@ minor versions.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-10-06
+
 ### Security
 
 - Built with Go 1.26.8 (`toolchain go1.26.8` in `go.mod`), not 1.26.0. The program reached 20 known
   vulnerabilities of the standard library of 1.26.0, fixed in its later patches: among them `crypto/tls`,
   `crypto/x509` (the certificates of `--public`), `net/http` and `net/url` (the server and the `http`
   tool). `govulncheck` now runs in the CI.
+- `samples/city-briefing/two-computers.sh` and its guide download the installer of `uv` over HTTPS only,
+  also after a redirect (`curl --proto '=https' --tlsv1.2`): the script goes straight to `sh`.
 
 ## [0.4.2] - 2026-10-06
 
@@ -195,7 +199,8 @@ showed was fixed (the steps and the results are in `validation/README.md`):
 - Not tried against the real thing yet: a desktop assistant as a client of `serve --stdio`, Azure as a
   provider, tool servers started with `uvx`, and `--public` with a certificate of its own.
 
-[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/Ribeiro/metagente-go/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Ribeiro/metagente-go/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ribeiro/metagente-go/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ribeiro/metagente-go/compare/v0.3.2...v0.4.0

@@ -55,7 +55,7 @@ The archive has the program, the license and its notice, this README and [the re
 What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 
 With Go 1.26 or newer, from 0.4.1 on, instead: `go install github.com/Ribeiro/metagente-go/cmd/metagente@latest`
-(or `@v0.4.2` for one version), which puts `metagente` in `$(go env GOPATH)/bin`. Older releases were made
+(or `@v0.4.3` for one version), which puts `metagente` in `$(go env GOPATH)/bin`. Older releases were made
 before the module had that name, and cannot be installed this way. To build it from a copy of the sources:
 `make build` (see [Building and releasing](#building-and-releasing)).
 
