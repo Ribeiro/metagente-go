@@ -3,7 +3,7 @@
 The [README](README.md) runs both agents on one computer. Here the **Researcher** runs on a Linux machine
 on your network (a home server, say) and stays up, and the **Concierge** runs on your Mac and asks it over
 A2A. This was done on 2026-10-06 with Metagente 0.3.2: the Researcher on Linux (x86_64), the Concierge on
-macOS, on the same local network. The steps download 0.4.0, which a token for each client (at the end) needs.
+macOS, on the same local network. The steps download 0.4.1; a token for each client (at the end) needs 0.4.0 or newer.
 
 What changes from the one computer demo, and why:
 
@@ -46,12 +46,12 @@ The release for Linux (`uname -m` on the Linux machine: `x86_64` is `linux-amd64
 LAB_IP=192.168.1.20; LAB_USER=me; ARCH=linux-amd64
 ssh $LAB_USER@$LAB_IP 'mkdir -p ~/metagente/city-briefing'
 mkdir -p ~/metagente-lab && cd ~/metagente-lab
-gh release download v0.4.0 -R Ribeiro/metagente-go -p "metagente-*-$ARCH.tar.gz" -p SHA256SUMS --clobber
+gh release download v0.4.1 -R Ribeiro/metagente-go -p "metagente-*-$ARCH.tar.gz" -p SHA256SUMS --clobber
 grep $ARCH SHA256SUMS | shasum -a 256 -c -
 for f in researcher.ag metagente.toml; do
   gh api -H "Accept: application/vnd.github.raw" repos/Ribeiro/metagente-go/contents/samples/city-briefing/$f > $f
 done
-scp metagente-0.4.0-$ARCH.tar.gz researcher.ag metagente.toml $LAB_USER@$LAB_IP:metagente/city-briefing/
+scp metagente-0.4.1-$ARCH.tar.gz researcher.ag metagente.toml $LAB_USER@$LAB_IP:metagente/city-briefing/
 ```
 
 ## 2. On the Linux machine: Metagente, uv, and the fetch server once
@@ -62,8 +62,8 @@ where you are). Both computers may use `zsh`, so it is easy to run a block on th
 ```bash
 ARCH=linux-amd64
 cd ~/metagente/city-briefing
-tar -xzf metagente-0.4.0-$ARCH.tar.gz
-sudo install metagente-0.4.0-$ARCH/metagente /usr/local/bin/metagente
+tar -xzf metagente-0.4.1-$ARCH.tar.gz
+sudo install metagente-0.4.1-$ARCH/metagente /usr/local/bin/metagente
 metagente --version
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uvx --version
