@@ -164,9 +164,6 @@ func TestASymbolicLinkCannotLeadOutOfTheFolder(t *testing.T) {
 
 // req: F4
 func TestWritingToAHardLinkIsRefused(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("hard links are not detected on Windows yet: the number of names of a file is read only on Unix systems (links_other.go)")
-	}
 	dir := t.TempDir()
 	outside := filepath.Join(dir, "outside.txt")
 	write(t, outside, "original")

@@ -225,7 +225,7 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 | F1 | done | file access through `os.Root`: `..` and symbolic links that leave the folder are refused | `internal/tools/file.go` |
 | F2 | done | ceiling on the size of files read and written | `internal/tools/file.go` |
 | F3 | done | names that are not portable (Windows device names, `:`, trailing dot or space) are refused everywhere | `internal/tools/file.go` |
-| F4 | done | writing to a hard link is refused, and a write goes to a temporary file in the same folder that is then renamed over the target, so a failure never leaves a half written file. A link inside the folder is still written through, in place | `internal/tools/file.go` |
+| F4 | done | writing to a hard link is refused, and a write goes to a temporary file in the same folder that is then renamed over the target, so a failure never leaves a half written file. A link inside the folder is still written through, in place. On Windows the number of names is asked of the system (`GetFileInformationByHandle`) | `internal/tools/file.go`, `links_*.go` |
 | H1 | done | `http` refuses internal addresses after name resolution, on every connection and redirect | `internal/tools/http.go` |
 | H2 | done | `tool http allow "domain"` and `allow private` | `internal/tools/http.go` |
 | H3 | done | ceiling on the answer, at most 5 redirects, 10 s to connect, no proxy from the environment | `internal/tools/http.go` |
@@ -582,11 +582,12 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
   and pass: the file tool does not leave its folder through a link, the approvals are not hidden behind one
-  and the log does not follow one. Six tests skip themselves there, each for its own reason: one is about
+  and the log does not follow one; writing to a hard link is refused there too (F7). Five tests skip
+  themselves there, each for its own reason: one is about
   a file system that tells upper and lower case apart, which Windows does not; three ask for the permissions of
   Unix (`rwx` for others: the folder of the log, the approvals, and the file of `--token-file`), and their
   protection is not checked on Windows, which has ACLs; one is the end of the group of processes of a tool
-  server (E4), which does not exist there yet; and one is the detection of hard links (F7). The list is
+  server (E4), which does not exist there yet. The list is
   printed by the job of Windows of the CI, in the step "What was skipped here".
 
 Not done on purpose: isolating a program at the level of the operating system (a
