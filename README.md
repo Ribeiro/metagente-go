@@ -228,7 +228,7 @@ The specification has 47. The state of each one:
 - **differs (open)**: the port does something else than the specification says, and nobody decided it yet (none today);
 - **partial**: part of it is missing.
 
-Today: 41 done, 5 done, changed (agreed), 1 partial.
+Today: 42 done, 5 done, changed (agreed), none partial.
 
 | ID | State | What | Where |
 | --- | --- | --- | --- |
