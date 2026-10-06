@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"metagente/internal/serve"
 )
 
 const testToken = "kkkk-0123456789-abcdefghij-ABCDEFGHIJ"
@@ -352,4 +354,26 @@ func TestServeAdmitsTheFetchOfNodeJSAndRefusesAPage(t *testing.T) {
 		}
 	}
 	live.stop(t)
+}
+
+// With --public and a port that is not 443, a name without its port makes every request get 421
+// (check 4 of validation/README.md, while preparing the one of --public), so the banner says so.
+func TestANameWithoutItsPortIsPointedOutWhenTheServerIsNotOn443(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		plan  serve.Plan
+		port  int
+		wants string
+	}{
+		{"no port", serve.Plan{TLS: true, Hosts: []string{"hello.test"}}, 8443, "Note: hello.test has no port, and the server listens on 8443"},
+		{"two, one without", serve.Plan{TLS: true, Hosts: []string{"a.test:8443", "b.test"}}, 8443, "write --host b.test:8443"},
+		{"with the port", serve.Plan{TLS: true, Hosts: []string{"hello.test:8443"}}, 8443, ""},
+		{"on 443", serve.Plan{TLS: true, Hosts: []string{"hello.test"}}, 443, ""},
+		{"behind a proxy", serve.Plan{TLS: false, Hosts: []string{"hello.test"}}, 8080, ""},
+	} {
+		got := portlessHosts(&tt.plan, tt.port)
+		if tt.wants == "" && got != "" || !strings.Contains(got, tt.wants) {
+			t.Errorf("%s: %q", tt.name, got)
+		}
+	}
 }

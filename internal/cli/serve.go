@@ -358,6 +358,9 @@ func announce(stderr io.Writer, s serving, srv *serve.Server, base, listen strin
 	if line := whereItListens(s.plan, base, listen, port); line != "" {
 		fmt.Fprintln(stderr, line)
 	}
+	if line := portlessHosts(s.plan, port); line != "" {
+		fmt.Fprintln(stderr, line)
+	}
 	fmt.Fprintln(stderr, "Every request needs the header  Authorization: Bearer TOKEN")
 	if s.generated {
 		fmt.Fprintf(stderr, "Token for this run, kept nowhere else: %s\n", s.token)
@@ -379,6 +382,28 @@ func whereItListens(plan *serve.Plan, base, listen string, port int) string {
 		return ""
 	}
 	return fmt.Sprintf("Listening on %s, in %s, for the Host: %s", listen, protocol, strings.Join(plan.HostsFor(port), ", "))
+}
+
+// portlessHosts warns, for a server with TLS of its own (--public), about a name given without a
+// port when the server does not listen on 443. A client that connects to the port sends it in the
+// header Host, so every request gets 421, and the card says an address without the port. The server
+// still starts: a router or a proxy may bring the port 443 of the outside to this one.
+func portlessHosts(plan *serve.Plan, port int) string {
+	if !plan.TLS || port == 443 {
+		return ""
+	}
+	var names []string
+	for _, h := range plan.Hosts {
+		if _, _, err := net.SplitHostPort(h); err != nil {
+			names = append(names, h)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Note: %s has no port, and the server listens on %d. A client that connects to %d is answered 421;"+
+		" write --host %s:%d, unless the port 443 of the outside is brought to this one.",
+		strings.Join(names, ", "), port, port, names[0], port)
 }
 
 // ---------- MCP over standard input and output ----------
