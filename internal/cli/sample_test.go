@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -495,6 +497,19 @@ func TestTheGuideForTwoComputersFollowsTheSample(t *testing.T) {
 	guide := readSample(t, "TWO-COMPUTERS.md")
 	assertContains(t, guide, "s|"+sampleAddress+"|", sampleFetch+" --help", "--host $LAB_IP:8443")
 	assertContains(t, readSample(t, "README.md"), "(TWO-COMPUTERS.md)")
+
+	// The script does the same steps, so it names the same address and fetch server, and it is
+	// valid shell.
+	script := readSample(t, "two-computers.sh")
+	assertContains(t, script, `SAMPLE_ADDRESS="`+sampleAddress+`"`, `FETCH="`+sampleFetch+`"`, "--host $ip:$PORT")
+	// On Windows `bash` may be the one of WSL, which fails without a distribution; the script is for
+	// macOS and Linux.
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if out, err := exec.Command("bash", "-n", filepath.Join(sampleDir, "two-computers.sh")).CombinedOutput(); err != nil {
+		t.Errorf("bash -n two-computers.sh: %v\n%s", err, out)
+	}
 }
 
 func TestTheSampleStaysSmallAndHoldsNoKey(t *testing.T) {

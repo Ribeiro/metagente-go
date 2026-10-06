@@ -19,6 +19,24 @@ In every block below, set the first lines to your values. `LAB_IP` is the addres
 made for it. `LAB_NET` is your network with its last number at 0, and `LAB_USER` your user on the Linux
 machine.
 
+## With a script
+
+[`two-computers.sh`](two-computers.sh) does the steps below from the Mac, reaching the Linux machine with
+`ssh`. Running it again keeps what is already done (the certificate, the token, the approvals):
+
+```bash
+export LAB_IP=192.168.1.20 LAB_USER=me
+export ANTHROPIC_API_KEY=...                       # only for setup; it is written on the Linux machine
+samples/city-briefing/two-computers.sh setup      # sudo asks for a password there, and on the Mac
+samples/city-briefing/two-computers.sh ask Lisbon # timed; the key is read from the Linux machine
+samples/city-briefing/two-computers.sh status     # 401 without the token, 200 with it, the service
+samples/city-briefing/two-computers.sh logs       # the log of the Researcher, as it comes
+samples/city-briefing/two-computers.sh uninstall  # the service, the folders, the authority on the Mac
+```
+
+`setup` sets `timeout_seconds` to 180 on both sides (`TIMEOUT_SECONDS` changes it). The key goes to the
+Linux machine through `ssh` on standard input, never in a command line. The steps, by hand:
+
 ## 1. On the Mac: download and copy
 
 The release for Linux (`uname -m` on the Linux machine: `x86_64` is `linux-amd64`, `aarch64` is
