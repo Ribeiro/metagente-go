@@ -86,7 +86,7 @@ func TestTheTokenFileIsReadAgainOnlyWhenItChangesAndAProblemIsToldOnce(t *testin
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	w.wait(t, "the missing file", func(_ int, said string) bool { return strings.Contains(said, "could not read the token file") })
+	w.wait(t, "the missing file", func(_ int, said string) bool { return strings.Contains(said, "could not open the token file") })
 	time.Sleep(30 * time.Millisecond)
 	if _, said := w.state(); strings.Count(said, "Problem:") != 2 {
 		t.Errorf("a problem was told more than once:\n%s", said)

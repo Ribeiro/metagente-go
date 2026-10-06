@@ -37,7 +37,8 @@ func WatchTokenFile(ctx context.Context, path string, since os.FileInfo, every t
 		info, err := os.Stat(path)
 		if err != nil {
 			last = nil
-			tell(fmt.Sprintf("I could not read the token file %s: %v", path, unwrapPathError(err)))
+			// The same words ReadTokenFile uses when the file goes away between the two looks.
+			tell(fmt.Sprintf("I could not open the token file %s: %v", path, unwrapPathError(err)))
 			continue
 		}
 		if sameState(last, info) {
