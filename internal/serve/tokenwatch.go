@@ -35,6 +35,9 @@ func WatchTokenFile(ctx context.Context, path string, since os.FileInfo, every t
 		case <-ticker.C:
 		}
 		info, err := os.Stat(path)
+		if busyFile(err) {
+			continue // being replaced or removed right now: look again next time
+		}
 		if err != nil {
 			last = nil
 			// The same words ReadTokenFile uses when the file goes away between the two looks.
@@ -47,6 +50,9 @@ func WatchTokenFile(ctx context.Context, path string, since os.FileInfo, every t
 		creds, note, err := ReadTokenFile(path)
 		if err == nil {
 			err = apply(creds)
+		}
+		if busyFile(err) {
+			continue
 		}
 		if err != nil {
 			// Read again at the next look, in case it was caught in the middle of a change.
