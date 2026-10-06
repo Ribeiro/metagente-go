@@ -34,7 +34,12 @@ Do not open a public issue. Use "Report a vulnerability", in the Security tab of
 
 1. Write what changed in `CHANGELOG.md`, under `## [0.2.0] - DATE`, and add its link at the end.
    `scripts/release-notes.sh 0.2.0` prints what the release will say.
-2. Tag it on `master`: `git tag v0.2.0 && git push origin v0.2.0`.
+2. **Only after that change is merged into `master`**, tag `master` as it is then:
+   `git checkout master && git pull && git tag v0.2.0 && git push origin v0.2.0`. A tag made before the
+   merge points to a `master` without the section, and the release stops (it happened with 0.3.2).
 3. The workflow `Release` runs the tests, builds an archive for each system with `make dist` (the version
    inside the binaries is the one of the tag), and publishes the release with the archives, `SHA256SUMS` and
    the notes. A version without its section in `CHANGELOG.md` is not published.
+4. If the tag was made too early and nothing was published, move it to the `master` that has the section:
+   `git tag -d v0.2.0 && git push origin :refs/tags/v0.2.0`, then step 2 again. Never move the tag of a
+   release that was published: make the next version instead.
