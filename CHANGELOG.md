@@ -7,6 +7,13 @@ minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- A request with no token at all is refused with 401 but no longer counts as a wrong try. A client of MCP
+  that looks for OAuth before it connects (the `mcp-remote` bridge of Claude Desktop sends six such requests
+  each time it starts) stopped itself for a minute with 429, because on this computer every client is the
+  same place. A wrong token, or a header of another scheme, still counts.
+
 ## [0.3.1] - 2026-10-06
 
 ### Fixed

@@ -184,7 +184,8 @@ func (g *Guard) admit(w http.ResponseWriter, r *http.Request) bool {
 
 // authenticate checks the token, and slows down a place that gets it wrong too
 // often. The answer to a wrong token is always the same one, and a place that is
-// being slowed down is not even asked for the token.
+// being slowed down is not even asked for the token. A request without a token is
+// refused the same way, but is not counted: it guesses nothing.
 func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	client := addressGroup(r.RemoteAddr)
 	if wait, blocked := g.blocked(client); blocked {
@@ -194,7 +195,12 @@ func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if !g.authentic(r) {
-		g.fail(client)
+		// Only a request that brings a token tries one. Clients of MCP look for OAuth without
+		// one before they connect, and on this computer they are all the same place: counted,
+		// those requests would stop the client that comes next with the right token.
+		if r.Header.Get("Authorization") != "" {
+			g.fail(client)
+		}
 		w.Header().Set("WWW-Authenticate", "Bearer")
 		hangUp(w)
 		refuse(w, http.StatusUnauthorized, "unauthorized")

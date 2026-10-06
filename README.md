@@ -365,7 +365,8 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
   (a page that makes your browser call a server on your computer carries another),
   a request made by a browser (an `Origin`, or the `Sec-Fetch-Site`, `Sec-Fetch-Dest` or `Sec-Fetch-User` of a browser) is refused, the token is
   compared without the time telling how much was right, a refusal never says what was
-  wrong, ten wrong tries from one place stop that place for a minute, only a POST of
+  wrong, ten wrong tries from one place stop that place for a minute (a request with no token at
+  all is refused but not counted: it guesses nothing), only a POST of
   `application/json` is taken, the body has a limit, and nothing ever says that another
   site may call the server (there is no CORS, and a preflight gets 405).
 - **Only a server with `--public` limits the connections of each place.** On this computer every client
