@@ -23,8 +23,6 @@ import (
 // with the token, and nothing here ever says that another site may call the
 // server: there is no CORS.
 type Guard struct {
-	// Token is the bearer token that opens the door.
-	Token string
 	// Hosts are the values of the Host header the server answers to.
 	Hosts []string
 	// MaxBody is the most bytes a request may carry. 1 MiB when zero.
@@ -43,6 +41,15 @@ type Guard struct {
 	hostSet  map[string]bool
 	mu       sync.Mutex
 	failures map[string]*failure
+
+	keysMu sync.RWMutex
+	keys   []key
+}
+
+// key is a token as the door keeps it: only its hash, and the name of the client that has it.
+type key struct {
+	name string
+	hash [sha256.Size]byte
 }
 
 const (
@@ -61,11 +68,29 @@ type failure struct {
 
 // NewGuard makes the door for a token and the hosts the server answers to.
 func NewGuard(token string, hosts []string) *Guard {
-	g := &Guard{Token: token, Hosts: hosts, MaxBody: defaultMaxBody, Now: time.Now, hostSet: map[string]bool{}, failures: map[string]*failure{}}
+	return NewGuardFor([]Credential{{Token: token}}, hosts)
+}
+
+// NewGuardFor makes the door for the tokens of several clients.
+func NewGuardFor(creds []Credential, hosts []string) *Guard {
+	g := &Guard{Hosts: hosts, MaxBody: defaultMaxBody, Now: time.Now, hostSet: map[string]bool{}, failures: map[string]*failure{}}
 	for _, h := range hosts {
 		g.hostSet[strings.ToLower(h)] = true
 	}
+	g.SetTokens(creds)
 	return g
+}
+
+// SetTokens changes the tokens that open the door, at once for every request that comes
+// after: a token that was taken away no longer opens it. A request already let in goes on.
+func (g *Guard) SetTokens(creds []Credential) {
+	keys := make([]key, len(creds))
+	for i, c := range creds {
+		keys[i] = key{name: c.Name, hash: sha256.Sum256([]byte(c.Token))}
+	}
+	g.keysMu.Lock()
+	g.keys = keys
+	g.keysMu.Unlock()
 }
 
 // LoopbackHosts are the Host values of a server on this computer, the ones a
@@ -194,7 +219,8 @@ func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request) bool {
 		refuse(w, http.StatusTooManyRequests, "too many failed attempts; wait and try again")
 		return false
 	}
-	if !g.authentic(r) {
+	name, ok := g.authentic(r)
+	if !ok {
 		// Only a request that brings a token tries one. Clients of MCP look for OAuth without
 		// one before they connect, and on this computer they are all the same place: counted,
 		// those requests would stop the client that comes next with the right token.
@@ -207,6 +233,7 @@ func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	g.succeed(client)
+	noteOf(r.Context()).setClient(name)
 	return true
 }
 
@@ -281,13 +308,24 @@ func madeByABrowser(r *http.Request) bool {
 }
 
 // authentic compares the token without the time depending on how much of it was
-// right. Both sides are hashed first, so even their lengths do not show.
-func (g *Guard) authentic(r *http.Request) bool {
-	given, ok := bearer(r.Header.Get("Authorization"))
+// right, nor on which of the tokens it is: both sides are hashed first, so even their
+// lengths do not show, and every token is compared, also after one was found. It says
+// the name of the client whose token it is.
+func (g *Guard) authentic(r *http.Request) (name string, ok bool) {
+	given, bearerOK := bearer(r.Header.Get("Authorization"))
 	a := sha256.Sum256([]byte(given))
-	b := sha256.Sum256([]byte(g.Token))
-	same := subtle.ConstantTimeCompare(a[:], b[:]) == 1
-	return ok && same
+	g.keysMu.RLock()
+	keys := g.keys
+	g.keysMu.RUnlock()
+	found := -1
+	for i := range keys {
+		same := subtle.ConstantTimeCompare(a[:], keys[i].hash[:])
+		found = subtle.ConstantTimeSelect(same, i, found)
+	}
+	if !bearerOK || found < 0 {
+		return "", false
+	}
+	return keys[found].name, true
 }
 
 // bearer takes the token out of `Bearer <token>`. The scheme is not case

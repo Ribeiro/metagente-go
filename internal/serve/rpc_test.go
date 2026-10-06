@@ -831,3 +831,29 @@ func TestTheCardDoesNotChangeWithTheHostOfTheRequest(t *testing.T) {
 		}
 	}
 }
+
+// req: S1
+func TestTheTokensOfARunningServerChangeOnlyForTokensThatAreGoodEnough(t *testing.T) {
+	mac, notebook := GenerateToken(), GenerateToken()
+	s := newTestServer(t, func(c *Config) { c.Tokens = []Credential{{"mac", mac}, {"notebook", notebook}} })
+	card := func(token string) int {
+		return do(s, http.MethodGet, bobPath+"/.well-known/agent-card.json", "", func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}).Code
+	}
+	if card(mac) != 200 || card(notebook) != 200 || card(goodToken) != 401 {
+		t.Fatalf("Tokens are not the tokens of the server: %d %d %d", card(mac), card(notebook), card(goodToken))
+	}
+	if err := s.SetTokens([]Credential{{"mac", mac}, {"notebook", "short"}}); err == nil {
+		t.Error("a weak token was taken")
+	}
+	if card(mac) != 200 || card(notebook) != 200 {
+		t.Error("a refused change took tokens away")
+	}
+	if err := s.SetTokens([]Credential{{"mac", mac}}); err != nil {
+		t.Fatal(err)
+	}
+	if card(mac) != 200 || card(notebook) != 401 {
+		t.Error("the token taken away still opens the door, or the other does not")
+	}
+}

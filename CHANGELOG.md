@@ -7,6 +7,15 @@ minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- `--token-file` may hold a token for each client, a line `name token` each (`metagente token --name mac`
+  writes one). Each is taken away without touching the others, and the access log says which client called
+  (`client=mac`). A file with one token alone works as before.
+- `serve` reads the token file again when it changes, without a restart: a token taken out of it stops
+  opening the server for the next request. A file that is not good enough changes nothing, and the log says
+  why.
+
 ## [0.3.2] - 2026-10-06
 
 ### Added

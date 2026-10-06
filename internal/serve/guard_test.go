@@ -520,3 +520,54 @@ func TestTenWrongTokensAMinuteIsTheDefaultAndItCanBeChanged(t *testing.T) {
 		t.Errorf("after 10 wrong tokens: code %d", rec.Code)
 	}
 }
+
+// req: S1, P5
+func TestEachTokenOpensTheDoorAndTheLogSaysWhoseItIs(t *testing.T) {
+	mac, notebook, phone := GenerateToken(), GenerateToken(), GenerateToken()
+	g := NewGuardFor([]Credential{{"mac", mac}, {"notebook", notebook}, {"phone", phone}}, hosts)
+	logged := func(token string) (int, map[string]any) {
+		var code int
+		entry := one(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rec := httptest.NewRecorder()
+			g.Protect(&reached{}).ServeHTTP(rec, r)
+			code = rec.Code
+			w.WriteHeader(rec.Code)
+		}), func() *http.Request {
+			return post(func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) })
+		})
+		return code, entry
+	}
+	for name, token := range map[string]string{"mac": mac, "notebook": notebook, "phone": phone} {
+		code, entry := logged(token)
+		if code != 200 || entry["client"] != name {
+			t.Errorf("%s: code %d, client %v", name, code, entry["client"])
+		}
+	}
+	code, entry := logged(goodToken)
+	if _, said := entry["client"]; code != 401 || said {
+		t.Errorf("a token of nobody: code %d, client %v", code, entry["client"])
+	}
+	// A token without a name says no client.
+	g.SetTokens([]Credential{{Token: mac}})
+	code, entry = logged(mac)
+	if _, said := entry["client"]; code != 200 || said {
+		t.Errorf("a token without a name: code %d, client %v", code, entry["client"])
+	}
+}
+
+// req: S1
+func TestATokenTakenAwayNoLongerOpensTheDoorAndTheOthersStillDo(t *testing.T) {
+	mac, notebook := GenerateToken(), GenerateToken()
+	g := NewGuardFor([]Credential{{"mac", mac}, {"notebook", notebook}}, hosts)
+	g.SetTokens([]Credential{{"mac", mac}})
+	for token, want := range map[string]int{mac: 200, notebook: 401, "": 401} {
+		rec, _ := serveOne(g, post(func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+token) }))
+		if rec.Code != want {
+			t.Errorf("token %.8s: code %d, want %d", token, rec.Code, want)
+		}
+	}
+	g.SetTokens(nil)
+	if rec, _ := serveOne(g, post(nil)); rec.Code != 401 {
+		t.Errorf("a door without tokens let someone in: %d", rec.Code)
+	}
+}

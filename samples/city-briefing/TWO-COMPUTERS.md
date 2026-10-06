@@ -185,6 +185,27 @@ systemctl --user status researcher --no-pager
 
 `enable-linger` keeps it running when you are not logged in. Its log: `journalctl --user -u researcher -f`.
 
+## More than one client
+
+`METAGENTE_TOKEN` is one token for every client. To give the Mac and a notebook a token each, so that one is
+taken away without the other and the log of the Researcher says who called (`client=mac`), use a token file
+on the Linux machine instead:
+
+```bash
+cd ~/metagente/city-briefing
+umask 077
+printf 'mac %s\n' "$(cat .token)" > tokens        # the token the Mac already has
+metagente token --name notebook >> tokens         # a new one, for the notebook
+sed -i '/^METAGENTE_TOKEN=/d' .env                # only one of the two may say the token
+sed -i 's|--port 8443$|--port 8443 --token-file tokens|' ~/.config/systemd/user/researcher.service
+systemctl --user daemon-reload && systemctl --user restart researcher
+```
+
+From then on the file is read again when it changes, without a restart. To take the notebook away, remove
+its line: write the file anew and rename it over the old one (`grep -v '^notebook ' tokens > tokens.new &&
+mv tokens.new tokens`), and its next request gets `401`. These steps work the same after the script; its
+`setup`, run again, writes back `METAGENTE_TOKEN` and the service without `--token-file`.
+
 ## Troubleshooting
 
 | You see | What it means | What to do |

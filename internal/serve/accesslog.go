@@ -15,8 +15,8 @@ import (
 
 // AccessLog writes one structured line (log/slog, key=value) for each request that
 // comes in (requirement P5): when, from where, to which host it was addressed, what was
-// asked, how it was answered and how long it took; and, for a request that ran an agent, which agent, which
-// message, which task and how it ended.
+// asked, how it was answered and how long it took; which client it was, when its token has a
+// name; and, for a request that ran an agent, which agent, which message, which task and how it ended.
 //
 // It writes nothing that could be a secret. Not the headers, so not the token; not
 // the query; not the body. The values that come from the request are written the
@@ -79,6 +79,7 @@ type noteKey struct{}
 // writes after it did. A request that never reaches an agent leaves it empty.
 type accessNote struct {
 	mu      sync.Mutex
+	client  string
 	agent   string
 	rpc     string
 	message string
@@ -102,6 +103,10 @@ func (n *accessNote) set(field *string, value string) {
 	*field = value
 }
 
+// setClient is the name of the token that opened the door; a token without a name says nothing.
+func (n *accessNote) setClient(v string) {
+	n.setField(func(a *accessNote) *string { return &a.client }, v)
+}
 func (n *accessNote) setAgent(v string) {
 	n.setField(func(a *accessNote) *string { return &a.agent }, v)
 }
@@ -127,7 +132,7 @@ func (n *accessNote) attrs() []slog.Attr {
 	defer n.mu.Unlock()
 	var attrs []slog.Attr
 	for _, f := range []struct{ key, value string }{
-		{"agent", n.agent}, {"rpc", n.rpc}, {"message", n.message}, {"task", n.task}, {"result", n.result},
+		{"client", n.client}, {"agent", n.agent}, {"rpc", n.rpc}, {"message", n.message}, {"task", n.task}, {"result", n.result},
 	} {
 		if f.value != "" {
 			attrs = append(attrs, slog.String(f.key, f.value))

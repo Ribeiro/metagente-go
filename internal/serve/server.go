@@ -16,6 +16,9 @@ import (
 type Config struct {
 	// Token opens the door. See CheckToken.
 	Token string
+	// Tokens, when given, open the door in place of Token: one for each client, with its
+	// name, which the log writes. See ParseTokens.
+	Tokens []Credential
 	// Hosts are the values of the Host header the server answers to.
 	Hosts []string
 	// BaseURL says how a client reaches the server, as the card must write it. It is
@@ -69,7 +72,11 @@ type Server struct {
 // New makes a server for the agents. It refuses a token that is not good enough:
 // a server with a weak door is worse than no server.
 func New(cfg Config, agents []Agent) (*Server, error) {
-	if err := CheckToken(cfg.Token); err != nil {
+	creds := cfg.Tokens
+	if len(creds) == 0 {
+		creds = []Credential{{Token: cfg.Token}}
+	}
+	if err := checkCredentials(creds); err != nil {
 		return nil, err
 	}
 	if len(cfg.Hosts) == 0 {
@@ -86,7 +93,7 @@ func New(cfg Config, agents []Agent) (*Server, error) {
 	room := newPlaces(cfg.MaxConversations)
 	s := &Server{
 		cfg:      cfg,
-		guard:    NewGuard(cfg.Token, cfg.Hosts),
+		guard:    NewGuardFor(creds, cfg.Hosts),
 		agents:   byName,
 		contexts: newContextsIn[*held](room, cfg.ConversationTTL),
 		inflight: newPlaces(cfg.MaxInFlight),
@@ -176,6 +183,16 @@ func (s *Server) Close() {
 
 // ServesMCP says whether the agents are served as MCP tools too, at MCPPath.
 func (s *Server) ServesMCP() bool { return s.mcp != nil }
+
+// SetTokens changes the tokens that open the server while it runs, as when the token
+// file changes. Tokens that are not good enough are refused, and the ones it had stay.
+func (s *Server) SetTokens(creds []Credential) error {
+	if err := checkCredentials(creds); err != nil {
+		return err
+	}
+	s.guard.SetTokens(creds)
+	return nil
+}
 
 type route int
 
