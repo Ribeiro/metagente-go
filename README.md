@@ -482,7 +482,10 @@ go test -tags acceptance ./internal/acceptance/...   # the binary, through the s
 ```
 
 `make check` runs all of these and the formatting check below. The same checks run in `.github/workflows/ci.yml`: on Linux and Windows at every push,
-and on macOS once a week and on request (in a private repository a minute of macOS costs ten). The
+and on macOS once a week and on request, and at every push too while the repository is public (in a
+private one a minute of macOS costs ten). A change of the documents only skips the tests. The job `CI
+passed` is green when every test passed or did not need to run: it is the one a rule of the branch
+should require. The
 Windows job lists the tests that skip themselves there; the test of the groups of processes (E4) is
 not built for Windows at all, because that part does not exist there yet.
 

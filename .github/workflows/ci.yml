@@ -1,14 +1,14 @@
 name: CI
 
+# It runs for every change, also of the documents only, so that the job "CI passed" always reports and a
+# rule of the branch can require it. What changes only documents skips the tests (see `changes`).
 on:
   push:
     branches: [master, main]
-    paths-ignore: ['**.md', 'LICENSE', 'NOTICE']
   pull_request:
-    paths-ignore: ['**.md', 'LICENSE', 'NOTICE']
   # In a private repository a minute of macOS costs ten minutes of the monthly allowance, and a minute
-  # of Windows two. So macOS runs once a week and when it is asked for (Actions tab, "Run workflow"),
-  # not at every push.
+  # of Windows two. So there macOS runs once a week and when it is asked for (Actions tab, "Run
+  # workflow"); in a public one, where the minutes cost nothing, at every change too.
   schedule:
     - cron: '17 6 * * 1'
   workflow_dispatch:
@@ -23,9 +23,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Whether the change touches more than the documents (.md, LICENSE, NOTICE). The weekly run and the
+  # one asked for always test.
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          code=true
+          if [ "$EVENT" = push ] || [ "$EVENT" = pull_request ]; then
+            if [ -n "$BASE" ] && [ "$BASE" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+              if ! git diff --name-only "$BASE" "$GITHUB_SHA" | grep -qvE '(\.md|^LICENSE|^NOTICE)$'; then
+                code=false
+              fi
+            fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "Code changed: $code"
+
   # What does not depend on the system: the format, the modules and go vet.
   lint:
     name: Format, modules and vet
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     # Linux is pinned to a version, here and in release.yml: ubuntu-latest moves to a new version of
     # Ubuntu on a date of GitHub, and a change of system should come in a change of this file, where
     # it can be seen and tested, not on its own. Move all of them together.
@@ -54,6 +84,8 @@ jobs:
   # follows links between folders and writes files, so what it does is not the same on each system.
   test:
     name: Test on ${{ matrix.os }}
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     # A job that fails does not stop the other: the two systems report separately.
@@ -100,11 +132,14 @@ jobs:
         if: ${{ matrix.os == 'ubuntu-24.04' }}
         run: make dist VERSION=0.0.0-ci
 
-  # macOS, once a week and on request. It is the system of the computer where the program is written,
-  # so it is the one that is already tested at every change.
+  # macOS: once a week and on request; in a public repository, at every change too. It is the system of
+  # the computer where the program is written, so it is the one that is already tested at every change.
   test-macos:
-    name: Test on macOS (weekly and on request)
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    name: Test on macOS
+    needs: changes
+    if: >-
+      ${{ needs.changes.outputs.code == 'true' && (github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' || github.event.repository.private == false) }}
     runs-on: macos-latest
     timeout-minutes: 25
     defaults:
@@ -123,3 +158,23 @@ jobs:
         run: go test -count=1 -tags acceptance ./internal/acceptance/...
       - name: Concurrency, repeated
         run: go test -race -count=3 ./internal/serve ./internal/cli ./internal/runtime ./internal/mcp
+
+  # The one job a rule of the branch requires: green when every test passed or did not need to run.
+  # A test that failed or was cancelled makes it red. macOS counts only when it ran.
+  ci-passed:
+    name: CI passed
+    needs: [changes, lint, test, test-macos]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "A job ended with: $result"; exit 1 ;;
+            esac
+          done
