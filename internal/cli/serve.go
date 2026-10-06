@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
-	"metagente/internal/config"
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/runtime"
-	"metagente/internal/serve"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/runtime"
+	"github.com/Ribeiro/metagente-go/internal/serve"
 )
 
 // serveEnv is what `serve` needs from the process around it, so a test can give it

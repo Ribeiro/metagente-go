@@ -3,7 +3,7 @@ package serve
 import (
 	"context"
 
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // The server does not know how an agent runs. It knows these three things, and

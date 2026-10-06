@@ -13,10 +13,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"metagente/internal/config"
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // File is `tool file`: it reads and writes text files inside one folder and

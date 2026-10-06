@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // didYouMean is the advice for a name that is close to one that exists.

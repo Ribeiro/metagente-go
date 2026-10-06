@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/config"
-	"metagente/internal/lang"
-	"metagente/internal/remote"
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/remote"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // The contract of the server with any client of A2A 1.0, written from the text of the protocol and

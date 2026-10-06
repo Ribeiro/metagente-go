@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"metagente/internal/diag"
-	"metagente/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
 )
 
 // saveFailed is the problem for any step of saving the approvals that did not work.

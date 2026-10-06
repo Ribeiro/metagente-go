@@ -11,7 +11,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/rogpeppe/go-internal/testscript"
 
-	"metagente/internal/cli"
+	"github.com/Ribeiro/metagente-go/internal/cli"
 )
 
 // TestMain makes the test binary answer to the command name `metagente`, so

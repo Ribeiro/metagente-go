@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // BuiltinNames are the names of the built in tools.

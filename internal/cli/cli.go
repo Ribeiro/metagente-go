@@ -9,22 +9,44 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"syscall"
 
-	"metagente/internal/applog"
-	"metagente/internal/config"
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/runtime"
-	"metagente/internal/scaffold"
-	"metagente/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/applog"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/runtime"
+	"github.com/Ribeiro/metagente-go/internal/scaffold"
+	"github.com/Ribeiro/metagente-go/internal/trust"
 )
 
 // Version is the version of this build. `make build` and `make dist` set it from the git tag, with
-// -ldflags "-X metagente/internal/cli.Version=..."; a plain `go build` leaves it as it is here.
-var Version = "0.0.0-dev"
+// -ldflags "-X github.com/Ribeiro/metagente-go/internal/cli.Version=..."; `go install ...@v0.4.1`
+// cannot, and the version comes from what Go wrote in the binary. Otherwise it stays as it is here.
+var Version = devVersion
+
+const devVersion = "0.0.0-dev"
+
+func init() { Version = moduleVersion(Version, debug.ReadBuildInfo) }
+
+// moduleVersion is the version that Go wrote in the binary, when nothing set one and it is the one
+// of a release (v1.2.3). A build of a commit between two releases has a longer one, which says
+// nothing to a person, and keeps 0.0.0-dev.
+func moduleVersion(set string, read func() (*debug.BuildInfo, bool)) string {
+	if set != devVersion {
+		return set
+	}
+	info, ok := read()
+	if !ok || !releaseVersion.MatchString(info.Main.Version) {
+		return set
+	}
+	return strings.TrimPrefix(info.Main.Version, "v")
+}
+
+var releaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // Main runs the command line with the real arguments and streams, and returns
 // the exit code.

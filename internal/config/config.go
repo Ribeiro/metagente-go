@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 
-	"metagente/internal/diag"
-	"metagente/internal/secret"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/secret"
 )
 
 // FileName is the name of the configuration file.

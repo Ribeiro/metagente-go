@@ -14,9 +14,9 @@ import (
 	"strings"
 	"unicode"
 
-	"metagente/internal/clip"
-	"metagente/internal/diag"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/clip"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // The A2A methods this server answers are SendMessage and the ones whose answer

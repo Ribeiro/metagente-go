@@ -4,7 +4,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // secretValues are the secrets that must never reach the log: the keys and the

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/diag"
-	"metagente/internal/llm"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/llm"
 )
 
 // The tests that make something break inside must not write in the log of the

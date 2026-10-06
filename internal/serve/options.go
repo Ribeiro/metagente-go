@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"metagente/internal/clip"
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/clip"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // Options is what a person asked for with the flags of `metagente serve`.

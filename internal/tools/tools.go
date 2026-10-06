@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"metagente/internal/config"
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // Args are the values of a call, by name.

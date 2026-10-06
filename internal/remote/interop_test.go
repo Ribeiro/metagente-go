@@ -13,8 +13,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // echoExecutor answers every message with a text artifact, and reports the

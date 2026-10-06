@@ -12,7 +12,7 @@ import (
 	"context"
 	"strings"
 
-	"metagente/internal/secret"
+	"github.com/Ribeiro/metagente-go/internal/secret"
 )
 
 // Role tells who wrote a message.

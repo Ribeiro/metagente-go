@@ -3,9 +3,9 @@ package llm
 import (
 	"strings"
 
-	"metagente/internal/config"
-	"metagente/internal/diag"
-	"metagente/internal/secret"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/secret"
 )
 
 // The address each provider uses when metagente.toml does not name another one.

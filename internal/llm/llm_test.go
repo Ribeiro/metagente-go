@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/config"
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 const testKey = "sk-test-123456"

@@ -27,12 +27,12 @@ import (
 	"sync"
 	"time"
 
-	"metagente/internal/clip"
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/secret"
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/clip"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/secret"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // protocolVersion is the version of A2A this client speaks.

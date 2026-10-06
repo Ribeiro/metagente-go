@@ -3,10 +3,10 @@ package serve
 import (
 	"context"
 
-	"metagente/internal/lang"
-	"metagente/internal/runtime"
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/runtime"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // RuntimeAgent serves an agent of the interpreter.

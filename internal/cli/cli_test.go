@@ -1,7 +1,8 @@
 package cli
 
 import (
-	"metagente/internal/serve"
+	"github.com/Ribeiro/metagente-go/internal/serve"
+	"runtime/debug"
 
 	"bytes"
 	"io"
@@ -768,5 +769,28 @@ func TestTheTokenCommandWritesALineOfATokenFile(t *testing.T) {
 		if code, stdout, _ := run(t, args...); code != 2 || stdout != "" {
 			t.Errorf("%q: code %d, stdout %q", args, code, stdout)
 		}
+	}
+}
+
+func TestGoInstallOfAReleaseSaysItsVersion(t *testing.T) {
+	built := func(version string) func() (*debug.BuildInfo, bool) {
+		return func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{Main: debug.Module{Path: "github.com/Ribeiro/metagente-go", Version: version}}, true
+		}
+	}
+	for set, want := range map[[2]string]string{
+		{devVersion, "v0.4.1"}:  "0.4.1",
+		{devVersion, "(devel)"}: devVersion,
+		{devVersion, ""}:        devVersion,
+		{devVersion, "v0.4.2-0.20261006181800-7baf502fd491"}: devVersion,
+		{devVersion, "v0.4.1+dirty"}:                         devVersion,
+		{"0.4.1-3-g56d1202", "v0.4.1"}:                       "0.4.1-3-g56d1202",
+	} {
+		if got := moduleVersion(set[0], built(set[1])); got != want {
+			t.Errorf("set %q, built %q: %q, want %q", set[0], set[1], got, want)
+		}
+	}
+	if got := moduleVersion(devVersion, func() (*debug.BuildInfo, bool) { return nil, false }); got != devVersion {
+		t.Errorf("without build info: %q", got)
 	}
 }

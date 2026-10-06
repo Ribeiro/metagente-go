@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"metagente/internal/applog"
+	"github.com/Ribeiro/metagente-go/internal/applog"
 )
 
 // Config is how a server is set up.

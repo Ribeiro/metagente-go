@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/serve"
+	"github.com/Ribeiro/metagente-go/internal/serve"
 )
 
 const testToken = "kkkk-0123456789-abcdefghij-ABCDEFGHIJ"

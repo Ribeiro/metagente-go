@@ -1,12 +1,12 @@
 package runtime
 
 import (
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/llm"
-	"metagente/internal/mcp"
-	"metagente/internal/remote"
-	"metagente/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/llm"
+	"github.com/Ribeiro/metagente-go/internal/mcp"
+	"github.com/Ribeiro/metagente-go/internal/remote"
+	"github.com/Ribeiro/metagente-go/internal/trust"
 )
 
 // Needs lists what the agents, and the agents they link to, start or connect

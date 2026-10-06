@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // Linker finds the agents that `link` refers to. It loads agent files when a

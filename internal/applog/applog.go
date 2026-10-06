@@ -20,7 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"metagente/internal/secret"
+	"github.com/Ribeiro/metagente-go/internal/secret"
 )
 
 const (

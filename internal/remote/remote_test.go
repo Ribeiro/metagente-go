@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/diag"
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // fakeAgent pretends to be an A2A agent: a card, and a JSON-RPC endpoint whose

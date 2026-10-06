@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"metagente/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/config"
 )
 
 // usageError is a command line that makes no sense: what is wrong with it, and how to write it.

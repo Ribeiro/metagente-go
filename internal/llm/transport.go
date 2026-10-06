@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"metagente/internal/clip"
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/clip"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // Settings is everything a provider needs.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 const config = `# Settings for Metagente. Agents never mention these, so they stay simple.

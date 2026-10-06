@@ -17,7 +17,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"metagente/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/lang"
 )
 
 // The City Briefing sample (samples/city-briefing), run offline: a scripted model in place of

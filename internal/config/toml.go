@@ -8,7 +8,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // entry is one setting with the section it belongs to and the line it is on.

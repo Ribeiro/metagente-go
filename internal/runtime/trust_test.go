@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/lang"
-	"metagente/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/trust"
 )
 
 const missingServer = "/nonexistent/weather-server"

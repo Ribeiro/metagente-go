@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 func getenvFrom(values map[string]string) func(string) string {

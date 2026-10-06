@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/tools"
-	"metagente/internal/trust"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // LoadAgents reads and parses a .ag file.
