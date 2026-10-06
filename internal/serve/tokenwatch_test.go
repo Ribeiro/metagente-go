@@ -160,7 +160,10 @@ func TestATokenFileGoneForAMomentIsNotAProblem(t *testing.T) {
 	if err := os.WriteFile(path, text, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	w.wait(t, "the file that came back", func(applied int, _ string) bool { return applied == 1 })
+	// os.WriteFile is not one step: the watcher may look while the file is being written and read
+	// it again once it is whole, so the file that came back may be applied twice. What matters is
+	// that it is applied, and that nothing was told about the moment it was gone.
+	w.wait(t, "the file that came back", func(applied int, _ string) bool { return applied >= 1 })
 	time.Sleep(minSettle + 100*time.Millisecond)
 	if _, said := w.state(); strings.Contains(said, "Problem:") {
 		t.Errorf("a file gone for a moment was told as a problem:\n%s", said)
