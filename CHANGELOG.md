@@ -7,7 +7,9 @@ minor versions.
 
 ## [Unreleased]
 
-### Changed
+## [0.3.1] - 2026-10-06
+
+### Fixed
 
 - A key of a model with a line break, a space or another character that cannot be part of a key (more than
   the key copied into the variable) is refused before any request, with a message that says so. It used to
@@ -140,7 +142,8 @@ showed was fixed (the steps and the results are in `validation/README.md`):
 - Not tried against the real thing yet: a desktop assistant as a client of `serve --stdio`, Azure as a
   provider, tool servers started with `uvx`, and `--public` with a certificate of its own.
 
-[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Ribeiro/metagente-go/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Ribeiro/metagente-go/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Ribeiro/metagente-go/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Ribeiro/metagente-go/releases/tag/v0.1.0
