@@ -327,7 +327,10 @@ func runServer(ctx context.Context, s serving, stderr io.Writer, env serveEnv) i
 		// It ends with the server, so nothing is written after `serve` has returned.
 		watchCtx, stopWatching := context.WithCancel(ctx)
 		watching := make(chan struct{})
-		go func() { watchTokenFile(watchCtx, s.tokenFile, s.tokenSince, srv, stderr, env.tokenPoll); close(watching) }()
+		go func() {
+			watchTokenFile(watchCtx, s.tokenFile, s.tokenSince, srv, stderr, env.tokenPoll)
+			close(watching)
+		}()
 		defer func() { stopWatching(); <-watching }()
 	}
 	perAddress := 0
