@@ -239,6 +239,34 @@ header `Host`: keep the output of `c -v ... $CARD`.
 To end: `Ctrl-C` in A and in B, and `rm ~/metagente-demo/.token`. Caddy keeps its local authority in
 its data folder; nothing was installed in the system.
 
+### MCP over HTTP, behind the same proxy
+
+The same three terminals, with `--mcp` added to the server in **A**:
+
+```text
+~/bin/metagente serve hello.ag --mcp --behind-proxy --host hello.localhost:8443 --public-url https://hello.localhost:8443
+```
+
+The banner has `MCP https://hello.localhost:8443/mcp`. In **C** the client is `curl` speaking MCP by hand
+(Node does not find `hello.localhost` without a change to the system):
+
+```text
+T=$(cat ~/metagente-demo/.token)
+c() { curl -sS --cacert "$HOME/Library/Application Support/Caddy/pki/authorities/local/root.crt" --resolve hello.localhost:8443:127.0.0.1 -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' "$@"; }
+U=https://hello.localhost:8443/mcp
+echo "== 1"; c -D h.txt -H "Authorization: Bearer $T" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}' $U; echo; S=$(grep -i '^mcp-session-id' h.txt | cut -d' ' -f2 | tr -d '\r'); echo "session: ${#S} characters"
+echo "== 2"; c -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" -H "Mcp-Session-Id: $S" -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' $U
+echo "== 3"; c -H "Authorization: Bearer $T" -H "Mcp-Session-Id: $S" -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"Hello__greet","arguments":{"name":"Maria"}}}' $U; echo
+echo "== 4"; c -o /dev/null -w '%{http_code}\n' -d '{}' $U
+echo "== 5"; c -o /dev/null -w '%{http_code}\n' -H "Origin: https://evil.example" -H "Authorization: Bearer $T" -d '{}' $U
+echo "== 6"; c -o /dev/null -w '%{http_code}\n' -X DELETE -H "Authorization: Bearer $T" -H "Mcp-Session-Id: $S" $U
+echo "== 7"; curl -s -w ' %{http_code}\n' -H "Authorization: Bearer $T" -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8080/mcp
+```
+
+**Expected:** 1, the answer to `initialize` from `metagente`, with no error of certificate, and a session
+of 26 characters; 2, `202`; 3, `Hello, Maria!`; 4, `401`; 5, `403`; 6, `204` (the session ended); 7,
+`unexpected host` and `421`. To end, also `rm h.txt`.
+
 ## 5. A client of A2A that is not ours
 
 What the tests cannot show: that a client written by the people who wrote the protocol, in another
@@ -641,6 +669,7 @@ Keep what each command printed, without the key. To end: Ctrl-C in Terminal 1, a
 | 2 | 2026-10-04 | macOS, arm64; Node 18.18.2, npm 9.8.1 | 0.0.0-dev | passed | `npx` started `@modelcontextprotocol/server-everything` (not pinned; its version was not recorded) with the minimal environment. `say` answered `Echo: hello`. In `get-env`, `SECRET_TEST` and `ANTHROPIC_API_KEY` did not appear, nor did any other variable of the shell. The tool is `get-env` in the version fetched, not `printEnv`. The server does receive the whole `PATH` and the `HOME`: the environment is minimal, not an isolation. |
 | 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
 | 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |
+| 4 | 2026-10-06 | macOS, arm64; Caddy (version not recorded) | 0.3.1 | passed | MCP over HTTP behind the proxy, with the certificate of the local authority of Caddy, checked without `-k`: `initialize` answered by `metagente` 0.3.1 with a session of 26 characters, `notifications/initialized` `202`, `Hello__greet` `Hello, Maria!`, without the token `401`, with an `Origin` `403`, the session ended with `DELETE` `204`, and around the proxy `unexpected host` `421`. The access log had one line for each, with `host=hello.localhost:8443` and `rpc=mcp`, and `host=127.0.0.1:8080` for the one that went around. |
 | 5 | 2026-10-04 | macOS, arm64; Node v22.17.0; `a2aproject/a2a-js` (the command line of the official SDK, protocol 1.0) | 0.0.0-dev | passed, after F6 | The card is found and read (name, description, version, the transport `JSONRPC` from `supportedInterfaces`); the client uses `sendMessageStream`, the card says that there is no streaming, and it falls back to one answer; a text typed as `Maria` became `Hello, Maria!` (a new session, `Ana`, gave `Hello, Ana!`), and the server gave the client a `contextId`. Without `--auth` the card is refused with `401`. The first attempt was refused with `403`: the fetch of Node.js sends `Sec-Fetch-Mode: cors`, and the rule of S4 took it for a browser (F6). A second message in the same session (`Beto`) was answered with `Hello, Beto!`, and the client did not print `Context ID updated`, which it does only when the server gives it another identifier: the conversation went on. On the side of the server this is tested in `TestARealAgentRemembersInItsConversationAndForgetsWhenItEnds`. |
 | 6 | 2026-10-05 | macOS, arm64; `agents/sample-agent` of `a2aproject/a2a-js` (`npm run agents:sample-agent`), port 41241 | 0.0.0-dev | passed, after F8 | The card is read (the address of the binding `JSONRPC`, the skill `sample_agent`, `streaming: true`, input only `text`) and its address is approved. The first call answered `Hello! Please provide a message for me to respond to.`: our client sent a block of data, and the agent reads only text (a call by hand with text answered `Hello World! Nice to meet you!`, and one with data gave the fallback). After the fix the client sends text to an agent whose card takes only text, and the answer was `Hello World! Nice to meet you!`. The agent answers a call that is not of streaming with a task that is already completed, so following a task that is still working (`GetTask`) and cancelling it were not tried with it, and neither was a call with several values. |
 | 7 | 2026-10-05 | macOS, arm64; `agents/cancellable-agent` of `a2aproject/a2a-js`, port 41241 | 0.0.0-dev | passed, after F9 | `ask` waited 5.1 s, as the agent runs five steps of one second. It printed nothing, and that is right: the task ended `COMPLETED` with no artifact and no message in its status, so there was nothing to print. `hurry` (`within 2 seconds`) failed after 2 s, as it should, but the agent went on and ran the five steps to the end: its log shows no `Cancellation requested`, and `GetTask` says `TASK_STATE_COMPLETED`, not `CANCELED`. After the fix (F9): `hurry` made the agent write `Cancellation requested for task ...` and `Aborting task ... at step 3`, and `GetTask` of that task says `TASK_STATE_CANCELED`; `ask` took 5.2 s, now by following the task with `GetTask` until it ended, and printed nothing, as before. |
