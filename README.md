@@ -239,7 +239,7 @@ Today: 41 done, 5 done, changed (agreed), 1 partial.
 | E1 | done | a program receives `PATH`, `HOME` and a few more, plus only the variables the agent file names; a secret is refused even when it is named | `internal/mcp/pool.go` |
 | E2 | done | a warning for `npx`, `uvx`, `pipx run` and `bunx` without a pinned version; an error with `--strict` | `internal/lang/command.go`, `check.go` |
 | E3 | done | calls on a tool server run at the same time, up to `max_mcp_calls` **for each server**, so a server that is slow does not hold back the others (the spike showed a shared session needs no serialising) | `internal/mcp/pool.go` |
-| E4 | partial | closing the runtime ends every program it started and, on Linux and macOS, the whole group of processes it led: the SDK closes its input, signals it and kills it after 5 s, and what is left of the group is asked to end and killed after 2 s. A server that died is started again on the next call. **On Windows the children of the program are not reached, and that was decided, not forgotten**: a job object holds only the processes that are born after the parent joined it, and the SDK starts the program inside `Connect`, so the children of `npx` would already exist; doing it right means replacing the command transport of the SDK on Windows, and it was not judged worth it. Under WSL2 the group of processes works as on Linux. `run` and `serve` end the group on SIGINT and SIGTERM | `internal/mcp/pool.go`, `group_unix.go`, `group_other.go` |
+| E4 | done | closing the runtime ends every program it started and, on Linux and macOS, the whole group of processes it led: the SDK closes its input, signals it and kills it after 5 s, and what is left of the group is asked to end and killed after 2 s. A server that died is started again on the next call. `run` and `serve` end the group on SIGINT and SIGTERM. **On Windows** the process puts itself, when it starts, in a job object that ends its processes when it closes: every program it starts, and the programs those start (the server that `npx` or `uvx` starts), are born in the job, and the system ends them all when Metagente ends, however it ends. Until then, a program is ended one by one as on the other systems, but its own children only at the end of Metagente | `internal/mcp/pool.go`, `group_unix.go`, `job_windows.go` |
 | E5 | done, changed (agreed) | a bearer token for `remote` agents and for tool servers that are addresses, named in `[credentials]`; never in a file, never in an error, never readable by an agent. Named in `[credentials]` of `metagente.toml`, not in a `token env` clause of the `.ag` file | `internal/remote`, `internal/mcp`, `internal/config`, `internal/trust` |
 | E6 | done | `env` never reads the key of the model, `METAGENTE_TOKEN` or the usual key names | `internal/tools/env.go`, `config` |
 | F1 | done | file access through `os.Root`: `..` and symbolic links that leave the folder are refused | `internal/tools/file.go` |
@@ -487,7 +487,8 @@ private one a minute of macOS costs ten). A change of the documents only skips t
 passed` is green when every test passed or did not need to run: it is the one a rule of the branch
 should require. The
 Windows job lists the tests that skip themselves there; the test of the groups of processes (E4) is
-not built for Windows at all, because that part does not exist there yet.
+built only for Linux and macOS, and Windows has its own, of the job object, which starts a program that
+starts another and checks that both end with the process.
 
 ### The record of the language
 
@@ -553,9 +554,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 ## What comes next
 
 1. **S10 is done** (MCP over HTTP with `--mcp`), and the CI on Linux, macOS (once a week) and Windows is
-   done, and it was tried with Claude Desktop through `mcp-remote` (check 1) and behind Caddy (check 4). **E4 on Windows** is left out on purpose (see its row above); to take it up, the
-   program has to be started with the pipes of this project, put in a job object right after `Start`, and
-   ended the way the SDK ends it.
+   done, and it was tried with Claude Desktop through `mcp-remote` (check 1) and behind Caddy (check 4). **E4 on Windows** is done with a job object that the process joins when it
+   starts (see its row above).
 2. **The port of the tests of the original project is done** (see the table above), with the City Briefing
    sample, which was also run with the live Claude API and the real fetch server (check 11).
 3. **Checks in real conditions** that cannot be automated (next section), most of which were done.
@@ -603,16 +603,16 @@ Checked against the real thing (the steps and the results are in `validation/REA
 These work in the tests, which use doubles, or were run only on macOS, and are not checked yet:
 
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
-- the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
-  on Windows it does not exist yet;
+- the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux; the
+  job object of Windows is tested in the CI on Windows, with test programs, not yet with `npx` or `uvx`;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
   and pass: the file tool does not leave its folder through a link, the approvals are not hidden behind one
   and the log does not follow one; writing to a hard link is refused there too (F7). Five tests skip
   themselves there, each for its own reason: one is about
   a file system that tells upper and lower case apart, which Windows does not; three ask for the permissions of
   Unix (`rwx` for others: the folder of the log, the approvals, and the file of `--token-file`), and their
-  protection is not checked on Windows, which has ACLs; one is the end of the group of processes of a tool
-  server (E4), which does not exist there yet. The list is
+  protection is not checked on Windows, which has ACLs; one looks for the end of a tool server with a signal,
+  which Windows does not have (the job object has its own test there). The list is
   printed by the job of Windows of the CI, in the step "What was skipped here".
 
 Not done on purpose: isolating a program at the level of the operating system (a

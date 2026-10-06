@@ -7,6 +7,12 @@ minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, the programs that a tool server started by `npx` or `uvx` runs are ended when Metagente
+  ends, however it ends: the process puts itself in a job object when it starts (E4). They were left
+  running before.
+
 ## [0.4.1] - 2026-10-06
 
 ### Added
