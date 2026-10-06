@@ -140,6 +140,24 @@ func TestTheCardHasEveryFieldThatA2AAsksFor(t *testing.T) {
 		t.Errorf("name %v, description %v", card["name"], card["description"])
 	}
 	nonEmptyText(t, card["version"], "version")
+	checkInterfaces(t, card)
+	if _, ok := card["capabilities"].(map[string]any); !ok || at(card, "capabilities", "streaming") != false {
+		t.Errorf("capabilities %v", card["capabilities"])
+	}
+	for _, key := range []string{"defaultInputModes", "defaultOutputModes"} {
+		checkModes(t, card, key)
+	}
+	raw, _ := json.Marshal(card)
+	for _, snake := range []string{"supported_interfaces", "protocol_binding", "default_input_modes"} {
+		if strings.Contains(string(raw), snake) {
+			t.Errorf("%s in %s: the protocol writes its names in camelCase", snake, raw)
+		}
+	}
+}
+
+// checkInterfaces wants at least one interface, each with an address, the JSON-RPC binding and 1.0.
+func checkInterfaces(t *testing.T, card map[string]any) {
+	t.Helper()
 	interfaces, _ := card["supportedInterfaces"].([]any)
 	if len(interfaces) == 0 {
 		t.Fatal("no supportedInterfaces")
@@ -152,24 +170,18 @@ func TestTheCardHasEveryFieldThatA2AAsksFor(t *testing.T) {
 			t.Errorf("interface %v", i)
 		}
 	}
-	if _, ok := card["capabilities"].(map[string]any); !ok || at(card, "capabilities", "streaming") != false {
-		t.Errorf("capabilities %v", card["capabilities"])
+}
+
+// checkModes wants a list of media types that is not empty, and only texts in it.
+func checkModes(t *testing.T, card map[string]any, key string) {
+	t.Helper()
+	modes, _ := card[key].([]any)
+	if len(modes) == 0 {
+		t.Errorf("%s is empty", key)
 	}
-	for _, key := range []string{"defaultInputModes", "defaultOutputModes"} {
-		modes, _ := card[key].([]any)
-		if len(modes) == 0 {
-			t.Errorf("%s is empty", key)
-		}
-		for _, m := range modes {
-			if _, ok := m.(string); !ok {
-				t.Errorf("%s holds %v", key, m)
-			}
-		}
-	}
-	raw, _ := json.Marshal(card)
-	for _, snake := range []string{"supported_interfaces", "protocol_binding", "default_input_modes"} {
-		if strings.Contains(string(raw), snake) {
-			t.Errorf("%s in %s: the protocol writes its names in camelCase", snake, raw)
+	for _, m := range modes {
+		if _, ok := m.(string); !ok {
+			t.Errorf("%s holds %v", key, m)
 		}
 	}
 }

@@ -78,34 +78,10 @@ func New(cfg Config, agents []Agent) (*Server, error) {
 	if len(agents) == 0 {
 		return nil, errors.New("there is no agent to serve")
 	}
-	if cfg.MaxCallDepth <= 0 {
-		cfg.MaxCallDepth = 8
-	}
-	if cfg.RequestTimeout <= 0 {
-		cfg.RequestTimeout = 5 * time.Minute
-	}
-	if cfg.MaxInFlight <= 0 {
-		cfg.MaxInFlight = 16
-	}
-	if cfg.MaxConversations <= 0 {
-		cfg.MaxConversations = 256
-	}
-	if cfg.ConversationTTL <= 0 {
-		cfg.ConversationTTL = 30 * time.Minute
-	}
-	if cfg.Version == "" {
-		cfg.Version = "0.0.0"
-	}
-	byName := make(map[string]Agent, len(agents))
-	for _, agent := range agents {
-		name := agent.Name()
-		if !plainName(name) {
-			return nil, errors.New("an agent has a name that cannot be used in an address")
-		}
-		if _, twice := byName[name]; twice {
-			return nil, errors.New("two agents are called " + name)
-		}
-		byName[name] = agent
+	cfg = cfg.withDefaults()
+	byName, err := agentsByName(agents)
+	if err != nil {
+		return nil, err
 	}
 	room := newPlaces(cfg.MaxConversations)
 	s := &Server{
@@ -128,6 +104,45 @@ func New(cfg Config, agents []Agent) (*Server, error) {
 		}
 	}
 	return s, nil
+}
+
+// withDefaults fills in what was left at zero.
+func (cfg Config) withDefaults() Config {
+	if cfg.MaxCallDepth <= 0 {
+		cfg.MaxCallDepth = 8
+	}
+	if cfg.RequestTimeout <= 0 {
+		cfg.RequestTimeout = 5 * time.Minute
+	}
+	if cfg.MaxInFlight <= 0 {
+		cfg.MaxInFlight = 16
+	}
+	if cfg.MaxConversations <= 0 {
+		cfg.MaxConversations = 256
+	}
+	if cfg.ConversationTTL <= 0 {
+		cfg.ConversationTTL = 30 * time.Minute
+	}
+	if cfg.Version == "" {
+		cfg.Version = "0.0.0"
+	}
+	return cfg
+}
+
+// agentsByName refuses a name that cannot be part of an address, and two agents of the same name.
+func agentsByName(agents []Agent) (map[string]Agent, error) {
+	byName := make(map[string]Agent, len(agents))
+	for _, agent := range agents {
+		name := agent.Name()
+		if !plainName(name) {
+			return nil, errors.New("an agent has a name that cannot be used in an address")
+		}
+		if _, twice := byName[name]; twice {
+			return nil, errors.New("two agents are called " + name)
+		}
+		byName[name] = agent
+	}
+	return byName, nil
 }
 
 // WriteTimeout is how long the listener should allow for writing an answer: the

@@ -452,28 +452,8 @@ func (t *tool) Actions(ctx context.Context) ([]lang.ActionInfo, error) {
 }
 
 func (t *tool) Call(ctx context.Context, action string, args tools.Args) (value.Value, error) {
-	listed, err := t.srv.tools(ctx)
-	if err != nil {
+	if err := t.offers(ctx, action); err != nil {
 		return value.Nothing, err
-	}
-	names := make([]string, 0, len(listed))
-	var found *sdk.Tool
-	for _, item := range listed {
-		if t.readOnly && mutates(item) {
-			if item.Name == action {
-				return value.Nothing, diag.Newf("`%s.%s` is not available because `tool %s` was declared readonly, and the tool server does not mark it as read only", t.name, action, t.name).
-					Fix("remove `readonly` from the declaration if this agent really needs it")
-			}
-			continue
-		}
-		names = append(names, item.Name)
-		if item.Name == action {
-			found = item
-		}
-	}
-	if found == nil {
-		sort.Strings(names)
-		return value.Nothing, tools.UnknownAction(t.name, action, names)
 	}
 
 	// At most MaxMCPCalls calls at the same time on each server: one that is slow does
@@ -499,18 +479,48 @@ func (t *tool) Call(ctx context.Context, action string, args tools.Args) (value.
 	}
 	result, err := session.CallTool(ctx, params)
 	if err != nil {
-		if ctx.Err() != nil {
-			return value.Nothing, ctx.Err()
-		}
-		if errors.Is(err, sdk.ErrConnectionClosed) || !alive(session) {
-			// The next call starts the server again.
-			t.srv.disconnect(session)
-			return value.Nothing, diag.Newf("the tool server of `%s` stopped while answering `%s.%s`", t.name, t.name, action).
-				Fix("call it again to start the server anew; if it keeps stopping, run its command in a terminal to see why")
-		}
-		return value.Nothing, diag.Newf("the tool server of `%s` could not answer `%s.%s`: %s", t.name, t.name, action, t.srv.redact(err.Error()))
+		return value.Nothing, t.callFailed(ctx, session, action, err)
 	}
 	return t.answer(action, result)
+}
+
+// offers says whether the server has the action, and whether this agent may call it:
+// with `readonly`, only the actions the server marks as read only.
+func (t *tool) offers(ctx context.Context, action string) error {
+	listed, err := t.srv.tools(ctx)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(listed))
+	for _, item := range listed {
+		if t.readOnly && mutates(item) {
+			if item.Name == action {
+				return diag.Newf("`%s.%s` is not available because `tool %s` was declared readonly, and the tool server does not mark it as read only", t.name, action, t.name).
+					Fix("remove `readonly` from the declaration if this agent really needs it")
+			}
+			continue
+		}
+		if item.Name == action {
+			return nil
+		}
+		names = append(names, item.Name)
+	}
+	sort.Strings(names)
+	return tools.UnknownAction(t.name, action, names)
+}
+
+// callFailed tells a call that was given up, a server that is gone and a server that said no.
+func (t *tool) callFailed(ctx context.Context, session *sdk.ClientSession, action string, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, sdk.ErrConnectionClosed) || !alive(session) {
+		// The next call starts the server again.
+		t.srv.disconnect(session)
+		return diag.Newf("the tool server of `%s` stopped while answering `%s.%s`", t.name, t.name, action).
+			Fix("call it again to start the server anew; if it keeps stopping, run its command in a terminal to see why")
+	}
+	return diag.Newf("the tool server of `%s` could not answer `%s.%s`: %s", t.name, t.name, action, t.srv.redact(err.Error()))
 }
 
 // alive asks the server whether it still answers. It is used after an error,
