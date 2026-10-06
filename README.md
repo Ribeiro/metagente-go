@@ -530,8 +530,7 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 ## What comes next
 
 1. **S10 is done** (MCP over HTTP with `--mcp`), and the CI on Linux, macOS (once a week) and Windows is
-   done, and Claude Desktop reached it over HTTP through `mcp-remote` (check 1). What is left of it is to
-   try it behind a proxy. **E4 on Windows** is left out on purpose (see its row above); to take it up, the
+   done, and it was tried with Claude Desktop through `mcp-remote` (check 1) and behind Caddy (check 4). **E4 on Windows** is left out on purpose (see its row above); to take it up, the
    program has to be started with the pipes of this project, put in a job object right after `Start`, and
    ended the way the SDK ends it.
 2. **The port of the tests of the original project is done** (see the table above), with the City Briefing
@@ -564,7 +563,8 @@ Checked against the real thing (the steps and the results are in `validation/REA
 - the City Briefing sample with Claude: `think` chose the fetch tool and read a page, and the Concierge got
   the facts from the Researcher over A2A, with the token;
 - `think` with a model that speaks the format of OpenAI, on this computer (Ollama), with tools;
-- `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks;
+- `--behind-proxy`, with a reverse proxy (Caddy) and a certificate that the client checks, for A2A and for
+  MCP over HTTP;
 - the A2A server, with the command line of the official A2A SDK in JavaScript, and with its client in Python;
 - the A2A client (`remote`), with two sample agents of the same SDK. The first showed that an agent whose card
   takes only text has to be sent text. The second, that the other side has to be asked to answer at once: a
@@ -574,7 +574,6 @@ These work in the tests, which use doubles, or were run only on macOS, and are n
 
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
 - `--public`, with a certificate of its own;
-- MCP over HTTP behind a proxy;
 - the end of the group of processes of a tool server (E4): tested on macOS and, in the CI, on Linux;
   on Windows it does not exist yet;
 - Windows: the CI builds and tests it (without the race detector), and the tests of symbolic links run there
