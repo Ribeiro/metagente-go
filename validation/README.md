@@ -40,8 +40,10 @@ mkdir -p ~/metagente-demo && cd ~/metagente-demo
 
 The last line has to print, on the error output, the tool `Hello__greet` and wait. Then, in the
 settings of the client (Claude Desktop on macOS:
-`~/Library/Application Support/Claude/claude_desktop_config.json`; keep what is already in the file),
-with **full paths**:
+`~/Library/Application Support/Claude/claude_desktop_config.json`, which Settings → Developer → Edit
+Config opens; it does not exist before the first server is added; keep what is already in it), with
+**full paths**, because the client starts the program without the `PATH` of the shell and in a folder of
+its own:
 
 ```json
 {
@@ -60,6 +62,16 @@ Maria. **Expected:** the tool is listed, and the answer has `Hello, Maria!`.
 
 If it does not work, the client keeps a log per server (Claude Desktop:
 `~/Library/Logs/Claude/mcp-server-hello.log`). Keep its first 40 lines.
+
+### With Claude Code instead
+
+Claude Code, in a terminal, is another client of MCP that starts the program with `--stdio`:
+
+```text
+claude mcp add hello -- ~/bin/metagente serve --stdio \
+  --config ~/metagente-demo/metagente.toml ~/metagente-demo/hello.ag
+claude                                               # then ask it to greet Maria with Hello__greet
+```
 
 ### With the MCP Inspector instead
 
@@ -594,6 +606,7 @@ Keep what each command printed, without the key. To end: Ctrl-C in Terminal 1, a
 | # | Date | System | Version (`metagente --version`) | Result | Notes |
 |---|---|---|---|---|---|
 | 1 | 2026-10-04 | macOS, arm64 | 0.0.0-dev | passed with the MCP Inspector 1.0.2 | `initialize`, `tools/list` and `tools/call` work; the answer was `Hello, Maria!`. Not tried with a desktop assistant. |
+| 1 | 2026-10-06 | macOS, arm64; Claude Desktop and Claude Code (versions not recorded) | 0.3.1 | passed | Claude Desktop, with the configuration above in a file that did not exist before, listed the tool and answered `Hello, Maria!`; Claude Code, with `claude mcp add`, did the same. Both start the program themselves, with `--stdio` and full paths. |
 | 2 | 2026-10-04 | macOS, arm64; Node 18.18.2, npm 9.8.1 | 0.0.0-dev | passed | `npx` started `@modelcontextprotocol/server-everything` (not pinned; its version was not recorded) with the minimal environment. `say` answered `Echo: hello`. In `get-env`, `SECRET_TEST` and `ANTHROPIC_API_KEY` did not appear, nor did any other variable of the shell. The tool is `get-env` in the version fetched, not `printEnv`. The server does receive the whole `PATH` and the `HOME`: the environment is minimal, not an isolation. |
 | 3 | 2026-10-04 | macOS, arm64; Ollama 0.30.11, `llama3.1` (8B) | 0.0.0-dev | passed, with reservations | The request is accepted and the answers are read. With "What time is it now? Use the clock tool." the model asked for `clock__now`, the program ran it, and the answer had the time and the date of UTC, inside the two readings of `date -u`. Other ways to ask failed: an hour that was made up (`23:35`, which is neither UTC nor local), and a call written as text (`{"name": "clock", ...}`) followed by an invented result. A model of 8B is not reliable at this, and the program cannot tell, so it gives that text as the answer. |
 | 4 | 2026-10-04 | macOS, arm64; Caddy (version not recorded) | 0.0.0-dev | passed | Through a reverse proxy with the certificate of the local authority of Caddy, checked without `-k`: the card says `https://hello.localhost:8443/agents/Hello`; no token gives `401`; a header `Origin` gives `403`; a `SendMessage` through the proxy answers `Hello, Maria!`; going around the proxy, to `127.0.0.1:8080`, gives `421 unexpected host`. The host of the request and the host of the public address were the same, so the card does not show that the address is not taken from the request: that is what the test `TestTheCardDoesNotChangeWithTheHostOfTheRequest` checks. The access log has one line for each request, as it should: the call to the agent with `agent=Hello rpc=SendMessage message=greet task=... result=ok`, the refusals without those fields, the sizes of the answers right, and no token, no body and no value in any of them. |

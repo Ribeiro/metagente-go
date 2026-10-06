@@ -552,7 +552,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 
 Checked against the real thing (the steps and the results are in `validation/README.md`):
 
-- the MCP server, with the MCP Inspector, a client of another team, in TypeScript;
+- the MCP server over standard input and output (`--stdio`), with the MCP Inspector, with Claude Desktop
+  and with Claude Code;
 - the MCP server over HTTP (`--mcp`), with the client of the official SDK in TypeScript and with the command
   line of the MCP Inspector: the token, the session and its memory, the end of a session, the refusals;
 - a tool server started by `npx`, with the minimal environment of E1: what the shell had did not reach it;
@@ -570,7 +571,6 @@ Checked against the real thing (the steps and the results are in `validation/REA
 
 These work in the tests, which use doubles, or were run only on macOS, and are not checked yet:
 
-- the MCP server with a desktop assistant (Claude Desktop); only the Inspector was tried;
 - `think` with Azure, or another provider of the format of OpenAI that is not on this computer;
 - `--public`, with a certificate of its own;
 - MCP over HTTP behind a proxy, and with a desktop assistant;
