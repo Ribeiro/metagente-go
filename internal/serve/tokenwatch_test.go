@@ -132,3 +132,37 @@ func renameOver(from, to string) error {
 	}
 	return err
 }
+
+// req: S1
+func TestATokenFileGoneForAMomentIsNotAProblem(t *testing.T) {
+	mac := GenerateToken()
+	path := filepath.Join(t.TempDir(), "tokens")
+	text := []byte("mac " + mac + "\n")
+	if err := os.WriteFile(path, text, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	since, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &watched{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { WatchTokenFile(ctx, path, since, time.Millisecond, w.apply, w.say); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	// Gone, as while a file is replaced by hand or held by whoever removes it, and back well within
+	// the moment a problem has to last.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(minSettle / 5)
+	if err := os.WriteFile(path, text, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.wait(t, "the file that came back", func(applied int, _ string) bool { return applied == 1 })
+	time.Sleep(minSettle + 100*time.Millisecond)
+	if _, said := w.state(); strings.Contains(said, "Problem:") {
+		t.Errorf("a file gone for a moment was told as a problem:\n%s", said)
+	}
+}
