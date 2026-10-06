@@ -188,6 +188,12 @@ with `401`, and because the Researcher listens on this computer only, another co
 - Ask about another city: `metagente run concierge.ag city=Porto`.
 - Ask for a place that has no page (`city=Xyzzyplugh`): the Researcher says no facts were found.
 
+## Across two computers
+
+To leave the Researcher running on another computer of your network (a Linux home server, say) and ask it
+from the Concierge on your Mac, see [TWO-COMPUTERS.md](TWO-COMPUTERS.md): a certificate of your own, the
+Researcher served on the network, the Mac told to trust it, and a service that keeps the Researcher up.
+
 ## Troubleshooting
 
 | You see | What it means | What to do |
