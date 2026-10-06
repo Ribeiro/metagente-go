@@ -79,6 +79,11 @@ jobs:
         run: go mod tidy -diff
       - name: go vet
         run: go vet ./...
+      # The vulnerabilities known in the standard library and in the modules, that the code reaches. The
+      # version of Go comes from the toolchain line of go.mod: a new fix of Go turns this red until it is
+      # raised there.
+      - name: Known vulnerabilities (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
   # Linux and Windows, at every push. The program starts other programs, closes them as a group,
   # follows links between folders and writes files, so what it does is not the same on each system.

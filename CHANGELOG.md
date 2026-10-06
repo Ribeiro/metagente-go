@@ -7,6 +7,13 @@ minor versions.
 
 ## [Unreleased]
 
+### Security
+
+- Built with Go 1.26.8 (`toolchain go1.26.8` in `go.mod`), not 1.26.0. The program reached 20 known
+  vulnerabilities of the standard library of 1.26.0, fixed in its later patches: among them `crypto/tls`,
+  `crypto/x509` (the certificates of `--public`), `net/http` and `net/url` (the server and the `http`
+  tool). `govulncheck` now runs in the CI.
+
 ## [0.4.2] - 2026-10-06
 
 ### Fixed
