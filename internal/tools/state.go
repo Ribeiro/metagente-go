@@ -84,7 +84,7 @@ func (m *StateMap) Set(key string, v value.Value) error {
 	if !exists && len(m.items) >= m.maxEntries {
 		return memoryFull("it already holds %d things", m.maxEntries)
 	}
-	if next := m.total - m.sizes[key] + size; next > m.maxBytes {
+	if m.total-m.sizes[key]+size > m.maxBytes {
 		return memoryFull("it would hold more than %d bytes", m.maxBytes)
 	}
 	m.total += size - m.sizes[key]

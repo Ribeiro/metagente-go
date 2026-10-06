@@ -176,7 +176,7 @@ func setBool(field func(*Config) *bool) setter {
 	}
 }
 
-func atLeast(n int64, least int64) error {
+func atLeast(n, least int64) error {
 	if n < least {
 		return fmt.Errorf("a whole number of at least %d", least)
 	}

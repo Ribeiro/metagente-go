@@ -122,7 +122,7 @@ func (g *Guard) ProtectMCP(next http.Handler) http.Handler {
 			return
 		}
 		if r.URL.RawQuery != "" {
-			refuse(w, http.StatusBadRequest, "query strings are not accepted")
+			refuse(w, http.StatusBadRequest, refusedQuery)
 			return
 		}
 		switch r.Method {
@@ -134,7 +134,7 @@ func (g *Guard) ProtectMCP(next http.Handler) http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, g.bodyLimit())
 		default:
 			w.Header().Set("Allow", "POST, DELETE")
-			refuse(w, http.StatusMethodNotAllowed, "method not allowed")
+			refuse(w, http.StatusMethodNotAllowed, refusedMethod)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -168,11 +168,11 @@ func (g *Guard) PublicGet(next http.Handler) http.Handler {
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
-			refuse(w, http.StatusMethodNotAllowed, "method not allowed")
+			refuse(w, http.StatusMethodNotAllowed, refusedMethod)
 			return
 		}
 		if r.URL.RawQuery != "" {
-			refuse(w, http.StatusBadRequest, "query strings are not accepted")
+			refuse(w, http.StatusBadRequest, refusedQuery)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -242,12 +242,12 @@ func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request) bool {
 // carries JSON, the right type and a body that is not too large.
 func (g *Guard) wellFormed(w http.ResponseWriter, r *http.Request, method string, jsonBody bool) bool {
 	if r.URL.RawQuery != "" {
-		refuse(w, http.StatusBadRequest, "query strings are not accepted")
+		refuse(w, http.StatusBadRequest, refusedQuery)
 		return false
 	}
 	if r.Method != method {
 		w.Header().Set("Allow", method)
-		refuse(w, http.StatusMethodNotAllowed, "method not allowed")
+		refuse(w, http.StatusMethodNotAllowed, refusedMethod)
 		return false
 	}
 	return !jsonBody || g.acceptBody(w, r)
@@ -451,6 +451,12 @@ func safeHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
+
+// The texts of the refusals that more than one door gives.
+const (
+	refusedQuery  = "query strings are not accepted"
+	refusedMethod = "method not allowed"
+)
 
 // refuse answers a refusal with a fixed, short text.
 func refuse(w http.ResponseWriter, code int, text string) {

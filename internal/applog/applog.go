@@ -123,7 +123,7 @@ func (l *Log) Panic(where string, recovered any, stack []byte) (string, error) {
 // cannot be written must not make a failure worse.
 func (l *Log) Write(level, where, message, detail string) (path string, err error) {
 	defer func() {
-		if r := recover(); r != nil {
+		if recover() != nil {
 			path, err = "", errors.New("the log could not be written")
 		}
 	}()

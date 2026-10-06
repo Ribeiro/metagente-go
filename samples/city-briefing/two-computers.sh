@@ -27,7 +27,10 @@ METAGENTE="${METAGENTE:-$HOME/bin/metagente}"
 
 die() { printf 'two-computers: %s\n' "$*" >&2; exit 1; }
 say() { printf '\n== %s\n' "$*"; }
-need() { command -v "$1" >/dev/null 2>&1 || die "$1 is needed: $2"; }
+need() {
+	local program="$1" why="$2"
+	command -v "$program" >/dev/null 2>&1 || die "$program is needed: $why"
+}
 
 usage() {
 	sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
@@ -37,8 +40,8 @@ usage() {
 # ---------- on the Mac ----------
 
 config() {
-	[ -n "${LAB_IP:-}" ] || die "set LAB_IP to the address of the Linux machine, for example: export LAB_IP=192.168.1.20"
-	[ -n "${LAB_USER:-}" ] || die "set LAB_USER to your user on the Linux machine, for example: export LAB_USER=me"
+	[[ -n "${LAB_IP:-}" ]] || die "set LAB_IP to the address of the Linux machine, for example: export LAB_IP=192.168.1.20"
+	[[ -n "${LAB_USER:-}" ]] || die "set LAB_USER to your user on the Linux machine, for example: export LAB_USER=me"
 	printf '%s' "$LAB_IP" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || die "LAB_IP is not an IPv4 address: $LAB_IP"
 	printf '%s' "$LAB_USER" | grep -Eq '^[a-z_][a-z0-9_.-]*$' || die "LAB_USER is not a user name: $LAB_USER"
 	LAB_NET="${LAB_NET:-${LAB_IP%.*}.0}"
@@ -51,7 +54,10 @@ config() {
 # shellcheck disable=SC2029
 lab() { ssh "$TARGET" "$@"; }
 
-github_file() { gh api -H "Accept: application/vnd.github.raw" "repos/$REPO/contents/samples/city-briefing/$1" > "$1"; }
+github_file() {
+	local name="$1"
+	gh api -H "Accept: application/vnd.github.raw" "repos/$REPO/contents/samples/city-briefing/$name" > "$name"
+}
 
 setup() {
 	config
@@ -59,10 +65,13 @@ setup() {
 	need ssh "it comes with macOS"
 	need shasum "it comes with macOS"
 	need security "run this part on macOS"
-	[ -x "$METAGENTE" ] || die "Metagente is not at $METAGENTE (set METAGENTE=path)"
+	[[ -x "$METAGENTE" ]] || die "Metagente is not at $METAGENTE (set METAGENTE=path)"
 	key="${ANTHROPIC_API_KEY:-}"
-	[ -n "$key" ] || die "set ANTHROPIC_API_KEY in this terminal: setup writes it on the Linux machine"
-	case "$key" in *[[:space:]]*) die "ANTHROPIC_API_KEY holds a space or a line break: put only the key in it" ;; esac
+	[[ -n "$key" ]] || die "set ANTHROPIC_API_KEY in this terminal: setup writes it on the Linux machine"
+	case "$key" in
+	*[[:space:]]*) die "ANTHROPIC_API_KEY holds a space or a line break: put only the key in it" ;;
+	*) ;;
+	esac
 
 	say "The Linux machine ($TARGET)"
 	case "$(lab uname -m)" in
@@ -117,10 +126,10 @@ setup() {
 
 ask() {
 	config
-	[ -n "${1:-}" ] || die "say which city: $0 ask Lisbon"
-	[ -f "$MAC_DIR/.researcher-token" ] || die "run setup first"
+	[[ -n "${1:-}" ]] || die "say which city: $0 ask Lisbon"
+	[[ -f "$MAC_DIR/.researcher-token" ]] || die "run setup first"
 	cd "$MAC_DIR"
-	if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+	if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
 		# The key that setup wrote on the Linux machine, read without showing it.
 		ANTHROPIC_API_KEY="$(lab "grep '^ANTHROPIC_API_KEY=' ~/$LAB_DIR/.env | cut -d= -f2-")"
 		export ANTHROPIC_API_KEY
@@ -135,11 +144,11 @@ status() {
 	say "The Researcher, from this Mac ($URL)"
 	without="$(curl -s -o /dev/null -w '%{http_code}' "$URL/.well-known/agent-card.json" || true)"
 	with="000"
-	if [ -f "$MAC_DIR/.researcher-token" ]; then
+	if [[ -f "$MAC_DIR/.researcher-token" ]]; then
 		with="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$MAC_DIR/.researcher-token")" "$URL/.well-known/agent-card.json" || true)"
 	fi
 	echo "without the token: $without (401 expected); with it: $with (200 expected)"
-	if [ "$without" = "000" ]; then
+	if [[ "$without" = "000" ]]; then
 		echo "000: the Mac does not reach it, or does not trust its certificate"
 	fi
 	say "The service on the Linux machine"
@@ -181,7 +190,7 @@ remote_setup() {
 	$FETCH --help >/dev/null
 
 	say "The certificate for $ip"
-	if [ -f server.crt ] && openssl x509 -in server.crt -noout -text | grep -q "IP Address:$ip\$" &&
+	if [[ -f server.crt ]] && openssl x509 -in server.crt -noout -text | grep -q "IP Address:$ip\$" &&
 		openssl x509 -in server.crt -noout -checkend 2592000 >/dev/null; then
 		echo "kept: it is for $ip and valid for more than 30 days"
 	else
@@ -199,8 +208,8 @@ remote_setup() {
 	sed -i "s/^timeout_seconds = [0-9]*/timeout_seconds = $timeout/" metagente.toml
 	metagente trust --yes researcher.ag
 	umask 077
-	[ -s .token ] || metagente token > .token
-	[ -s .anthropic-key ] || die "the key did not arrive"
+	[[ -s .token ]] || metagente token > .token
+	[[ -s .anthropic-key ]] || die "the key did not arrive"
 	printf 'METAGENTE_TOKEN=%s\nANTHROPIC_API_KEY=%s\n' "$(cat .token)" "$(cat .anthropic-key)" > .env
 	rm -f .anthropic-key
 	if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q "Status: active"; then
@@ -229,7 +238,7 @@ EOF
 	systemctl --user enable researcher >/dev/null 2>&1
 	systemctl --user restart researcher
 	for _ in 1 2 3 4 5 6 7 8 9 10; do
-		if [ "$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:$PORT/" || true)" != "000" ]; then
+		if [[ "$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:$PORT/" || true)" != "000" ]]; then
 			systemctl --user is-active researcher
 			return 0
 		fi
