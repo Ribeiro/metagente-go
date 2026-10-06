@@ -489,6 +489,14 @@ func codeLines(text string) []string {
 	return lines
 }
 
+// The guide for two computers changes the address of the Researcher with sed, and names the pinned fetch
+// server: if the sample changes either, the guide has to change with it.
+func TestTheGuideForTwoComputersFollowsTheSample(t *testing.T) {
+	guide := readSample(t, "TWO-COMPUTERS.md")
+	assertContains(t, guide, "s|"+sampleAddress+"|", sampleFetch+" --help", "--host $LAB_IP:8443")
+	assertContains(t, readSample(t, "README.md"), "(TWO-COMPUTERS.md)")
+}
+
 func TestTheSampleStaysSmallAndHoldsNoKey(t *testing.T) {
 	if n := strings.Count(readSample(t, "researcher.ag"), "\n"); n >= 20 {
 		t.Errorf("researcher.ag has %d lines", n)
