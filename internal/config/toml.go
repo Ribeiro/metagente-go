@@ -138,33 +138,34 @@ func keyLines(data []byte) map[string]int {
 	section := ""
 	for p.NextExpression() {
 		node := p.Expression()
+		path := keyPath(node.Key())
+		if len(path) == 0 {
+			continue
+		}
 		switch node.Kind {
 		case unstable.Table, unstable.ArrayTable:
-			path := keyPath(node.Key())
-			if len(path) == 0 {
-				continue
-			}
 			section = path[0]
 			if _, seen := lines["\x00"+section]; !seen {
 				lines["\x00"+section] = lineOf(&p, node.Key())
 			}
 		case unstable.KeyValue:
-			path := keyPath(node.Key())
-			if len(path) == 0 {
-				continue
-			}
-			line := lineOf(&p, node.Key())
-			if section == "" {
-				lines["\x00"+path[0]] = line
-				if len(path) > 1 {
-					lines[path[0]+"\x00"+path[1]] = line
-				}
-				continue
-			}
-			lines[section+"\x00"+path[0]] = line
+			recordKey(lines, section, path, lineOf(&p, node.Key()))
 		}
 	}
 	return lines
+}
+
+// recordKey keeps the line of a key: in its section, or, at the top of the file, under its
+// own name and, when it is dotted like `serve.bind`, under its section too.
+func recordKey(lines map[string]int, section string, path []string, line int) {
+	if section != "" {
+		lines[section+"\x00"+path[0]] = line
+		return
+	}
+	lines["\x00"+path[0]] = line
+	if len(path) > 1 {
+		lines[path[0]+"\x00"+path[1]] = line
+	}
 }
 
 func keyPath(it unstable.Iterator) []string {

@@ -227,9 +227,22 @@ func TestTheConciergeAsksTheResearcherOverA2AAndWritesTheBriefing(t *testing.T) 
 			t.Errorf("request %d: model %v, path %s, key %q", i, bodies[i]["model"], paths[i], keys[i])
 		}
 	}
-	// The Researcher offered the model only what it declared.
+	checkOfferedTools(t, bodies[0])
+	// The page that was fetched is the one of the city, and the facts and the time travelled over A2A.
+	if urls := fetch.urls(); len(urls) != 1 || !strings.HasSuffix(urls[0], "/Lisbon") {
+		t.Errorf("fetched %v", urls)
+	}
+	last, _ := json.Marshal(bodies[2])
+	if !strings.Contains(string(last), "Lisbon is a city with a river.") || !strings.Contains(string(last), "(checked 20") {
+		t.Errorf("the Concierge did not write from what the Researcher sent:\n%s", last)
+	}
+}
+
+// checkOfferedTools wants the Researcher to offer the model only what it declared: fetch and the clock.
+func checkOfferedTools(t *testing.T, body map[string]any) {
+	t.Helper()
 	var offered []string
-	tools, _ := bodies[0]["tools"].([]any)
+	tools, _ := body["tools"].([]any)
 	for _, tool := range tools {
 		name, _ := tool.(map[string]any)["name"].(string)
 		offered = append(offered, name)
@@ -239,14 +252,6 @@ func TestTheConciergeAsksTheResearcherOverA2AAndWritesTheBriefing(t *testing.T) 
 	}
 	if joined := strings.Join(offered, " "); !strings.Contains(joined, "fetch__fetch") || !strings.Contains(joined, "clock__now") {
 		t.Errorf("offered %v", offered)
-	}
-	// The page that was fetched is the one of the city, and the facts and the time travelled over A2A.
-	if urls := fetch.urls(); len(urls) != 1 || !strings.HasSuffix(urls[0], "/Lisbon") {
-		t.Errorf("fetched %v", urls)
-	}
-	last, _ := json.Marshal(bodies[2])
-	if !strings.Contains(string(last), "Lisbon is a city with a river.") || !strings.Contains(string(last), "(checked 20") {
-		t.Errorf("the Concierge did not write from what the Researcher sent:\n%s", last)
 	}
 }
 
@@ -417,15 +422,7 @@ func TestTheAgentsOfTheSampleDeclareOnlyWhatTheyNeed(t *testing.T) {
 		t.Errorf("the Concierge accepts %+v", c.Accepts)
 	}
 	for _, file := range []string{"researcher.ag", "concierge.ag"} {
-		if code, _, stderr := run(t, "check", "--strict", filepath.Join(sampleDir, file)); code != 0 {
-			t.Errorf("check --strict %s:\n%s", file, stderr)
-		}
-		text := strings.ToLower(readSample(t, file))
-		for _, word := range []string{"anthropic", "claude", "sonnet", "model", "provider"} {
-			if strings.Contains(text, word) {
-				t.Errorf("%s names `%s`: that belongs in metagente.toml", file, word)
-			}
-		}
+		checkNamesNoModel(t, file)
 	}
 	toml := readSample(t, "metagente.toml")
 	assertContains(t, toml, `provider = "anthropic"`, `model = "`+sampleModel+`"`, sampleTokenVar)
@@ -456,14 +453,40 @@ func TestTheReadmeOfTheSampleCoversEverythingAndShowsTheAgentsAsTheyAre(t *testi
 			t.Errorf("the README does not show %s as it is", file)
 		}
 	}
-	inCode := false
-	for _, line := range strings.Split(readme, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inCode = !inCode
-		} else if inCode && strings.Contains(line, "--public") {
+	for _, line := range codeLines(readme) {
+		if strings.Contains(line, "--public") {
 			t.Errorf("a command of the README uses --public, which the demo never needs: %s", line)
 		}
 	}
+}
+
+// checkNamesNoModel wants a file of the sample to pass check --strict and to name no provider or
+// model: which model is used is written only in metagente.toml.
+func checkNamesNoModel(t *testing.T, file string) {
+	t.Helper()
+	if code, _, stderr := run(t, "check", "--strict", filepath.Join(sampleDir, file)); code != 0 {
+		t.Errorf("check --strict %s:\n%s", file, stderr)
+	}
+	text := strings.ToLower(readSample(t, file))
+	for _, word := range []string{"anthropic", "claude", "sonnet", "model", "provider"} {
+		if strings.Contains(text, word) {
+			t.Errorf("%s names `%s`: that belongs in metagente.toml", file, word)
+		}
+	}
+}
+
+// codeLines are the lines of a Markdown text that are inside blocks of code.
+func codeLines(text string) []string {
+	var lines []string
+	inCode := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inCode = !inCode
+		} else if inCode {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func TestTheSampleStaysSmallAndHoldsNoKey(t *testing.T) {

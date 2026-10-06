@@ -537,8 +537,11 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    sample, which was also run with the live Claude API and the real fetch server (check 11).
 3. **Checks in real conditions** that cannot be automated (next section), most of which were done.
 4. **Quality:** the functions that Sonar marked, in the code and in the tests, are split, and the copies
-   of `shorten` are one function (`internal/clip`). Run Sonar again to see what is left; the
-   record of the language (above) is what makes the next change in `internal/lang` safe.
+   of `shorten` are one function (`internal/clip`). On 2026-10-06 no function, in the code or in the
+   tests, was above 15 of cognitive complexity, the limit of the rule of Sonar for Go (`go:S3776`),
+   measured with `gocognit -over 15`, which counts the same way; the duplicated lines were not measured.
+   A run of Sonar itself is still the check. The record of the language (above) is what makes the next
+   change in `internal/lang` safe.
 5. **Distribution is done:** the archives for the three systems, the release on GitHub from a tag, and
    [the reference of the language](docs/LANGUAGE.md).
 6. **Smaller decisions, done:** the default of `max_state_bytes` is 256 KiB, `--token-file` exists, TOML is
