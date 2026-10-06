@@ -12,8 +12,9 @@ minor versions.
 - On Windows, the programs that a tool server started by `npx` or `uvx` runs are ended when Metagente
   ends, however it ends: the process puts itself in a job object when it starts (E4). They were left
   running before.
-- On Windows, a token file caught while it was being replaced or removed (used by another process, or
-  waiting to be deleted) is looked at again a moment later, without a `Problem:` line about it.
+- A token file caught in the middle of a change (half written, renamed over, or on Windows held for a
+  moment while it is removed) no longer gives a `Problem:` line: a problem is told only once it has
+  lasted, at least half a second and two looks.
 
 ## [0.4.1] - 2026-10-06
 
