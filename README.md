@@ -485,7 +485,9 @@ go test -tags acceptance ./internal/acceptance/...   # the binary, through the s
 and on macOS once a week and on request, and at every push too while the repository is public (in a
 private one a minute of macOS costs ten). A change of the documents only skips the tests. The job `CI
 passed` is green when every test passed or did not need to run: it is the one a rule of the branch
-should require. The
+should require. The job `Sonar` sends the analysis of SonarQube Cloud with the coverage of the unit
+tests (`sonar-project.properties`); it needs the secret `SONAR_TOKEN`, and without it (a pull request
+from a fork) it is skipped. The
 Windows job lists the tests that skip themselves there; the test of the groups of processes (E4) is
 built only for Linux and macOS, and Windows has its own, of the job object, which starts a program that
 starts another and checks that both end with the process.
