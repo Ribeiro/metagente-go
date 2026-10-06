@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"metagente/internal/cli"
+	"github.com/Ribeiro/metagente-go/internal/cli"
 )
 
 func main() {

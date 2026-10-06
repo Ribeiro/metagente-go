@@ -7,6 +7,11 @@ minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- `go install github.com/Ribeiro/metagente-go/cmd/metagente@latest` works: the module is now
+  `github.com/Ribeiro/metagente-go`, and a program installed that way from a release says its version.
+
 ## [0.4.0] - 2026-10-06
 
 ### Added

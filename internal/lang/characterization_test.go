@@ -12,7 +12,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // The characterization test records what the lexer, the parser and the checks do with a large set of

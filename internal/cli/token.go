@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"metagente/internal/serve"
+	"github.com/Ribeiro/metagente-go/internal/serve"
 )
 
 // runToken makes a token for the server to be given in METAGENTE_TOKEN. Only the

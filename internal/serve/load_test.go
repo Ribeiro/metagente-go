@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/lang"
 )
 
 // The tests of load and of limits that the specification asks for in S6. They run

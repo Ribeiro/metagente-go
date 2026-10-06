@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"metagente/internal/clip"
+	"github.com/Ribeiro/metagente-go/internal/clip"
 )
 
 // AccessLog writes one structured line (log/slog, key=value) for each request that

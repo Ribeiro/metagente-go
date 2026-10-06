@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/lang"
 )
 
 func TestAgentName(t *testing.T) {

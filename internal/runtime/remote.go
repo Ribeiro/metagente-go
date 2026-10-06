@@ -3,12 +3,12 @@ package runtime
 import (
 	"context"
 
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/mcp"
-	"metagente/internal/remote"
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/mcp"
+	"github.com/Ribeiro/metagente-go/internal/remote"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // remoteTool is an agent that runs somewhere else, used like a tool. It adds

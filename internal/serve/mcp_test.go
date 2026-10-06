@@ -15,8 +15,8 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"metagente/internal/applog"
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/applog"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 func newMCP(t *testing.T, tweak func(*MCPConfig), agents ...Agent) *MCPServer {

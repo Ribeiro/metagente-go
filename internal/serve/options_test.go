@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 var defaults = Defaults{Bind: "127.0.0.1", Port: 8080}

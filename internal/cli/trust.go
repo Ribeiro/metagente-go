@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"metagente/internal/config"
-	"metagente/internal/runtime"
-	"metagente/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/runtime"
+	"github.com/Ribeiro/metagente-go/internal/trust"
 )
 
 // These are variables so the tests can pretend a person is at the keyboard.

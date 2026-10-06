@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/applog"
-	"metagente/internal/diag"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/applog"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // ---------- an agent that needs nothing to run ----------

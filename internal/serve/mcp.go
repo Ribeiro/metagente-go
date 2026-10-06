@@ -16,8 +16,8 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"metagente/internal/applog"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/applog"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // The agents, served as tools of the Model Context Protocol: each message an agent

@@ -16,13 +16,13 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 
-	"metagente/internal/config"
-	"metagente/internal/lang"
-	"metagente/internal/remote"
-	"metagente/internal/runtime"
-	"metagente/internal/tools"
-	"metagente/internal/trust"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/remote"
+	"github.com/Ribeiro/metagente-go/internal/runtime"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // listen starts the server on a real port, with the Host it will be asked for.

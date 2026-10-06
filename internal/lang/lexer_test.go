@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // errorText renders an error the way a person would read it.

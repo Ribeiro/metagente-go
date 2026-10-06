@@ -1,4 +1,4 @@
-module metagente
+module github.com/Ribeiro/metagente-go
 
 go 1.26.0
 

@@ -48,7 +48,7 @@ characterize-cover:
 ifndef VERSION
 VERSION := $(shell v="$$(git describe --tags --dirty 2>/dev/null)"; if [ -n "$$v" ]; then echo "$$v" | sed 's/^v//'; else echo "0.0.0-dev+$$(git describe --always --dirty 2>/dev/null || echo unknown)"; fi)
 endif
-LDFLAGS := -s -w -X metagente/internal/cli.Version=$(VERSION)
+LDFLAGS := -s -w -X github.com/Ribeiro/metagente-go/internal/cli.Version=$(VERSION)
 
 version:
 	@echo $(VERSION)

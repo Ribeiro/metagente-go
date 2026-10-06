@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // put writes a file, creating its folders, and returns its path.

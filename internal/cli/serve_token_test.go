@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/serve"
+	"github.com/Ribeiro/metagente-go/internal/serve"
 )
 
 // req: S1

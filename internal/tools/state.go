@@ -6,10 +6,10 @@ import (
 	"strings"
 	"sync"
 
-	"metagente/internal/config"
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // StateStore keeps the memory of agents. Each agent has one memory per

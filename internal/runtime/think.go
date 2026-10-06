@@ -14,11 +14,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/llm"
-	"metagente/internal/tools"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/llm"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // dataNotice tells the model how to treat what tools bring back (requirement L6).

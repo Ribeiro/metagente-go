@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // checkSource parses and checks a source text. A syntax error comes back as

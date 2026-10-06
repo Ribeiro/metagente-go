@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // TokenKind is the kind of a token.

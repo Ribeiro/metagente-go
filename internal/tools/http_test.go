@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"metagente/internal/config"
-	"metagente/internal/lang"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 func newHTTP(decl lang.ToolDecl, maxBytes int64) *HTTP {

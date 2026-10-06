@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/config"
-	"metagente/internal/lang"
-	"metagente/internal/llm"
-	"metagente/internal/tools"
-	"metagente/internal/trust"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/llm"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 func thinkSource(declarations []string, think string) string {

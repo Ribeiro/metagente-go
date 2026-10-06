@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"metagente/internal/diag"
-	"metagente/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
 )
 
 func agentsFrom(t *testing.T, source string) []*lang.AgentDef {

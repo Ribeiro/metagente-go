@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 // RunOptions are the limits of the listener (requirement S6).

@@ -5,9 +5,9 @@ import (
 	"math"
 	"time"
 
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // Clock is `tool clock`: the current time, and waiting.

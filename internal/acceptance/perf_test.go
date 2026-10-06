@@ -21,7 +21,7 @@ func TestATrivialAgentAnswersFromAColdStartInUnder100ms(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", binary, "metagente/cmd/metagente")
+	build := exec.Command("go", "build", "-o", binary, "github.com/Ribeiro/metagente-go/cmd/metagente")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}

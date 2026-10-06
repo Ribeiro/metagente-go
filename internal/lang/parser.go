@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"metagente/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
 var (

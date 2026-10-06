@@ -3,8 +3,8 @@ package tools
 import (
 	"testing"
 
-	"metagente/internal/config"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // req: S7, S9

@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"metagente/internal/config"
-	"metagente/internal/diag"
-	"metagente/internal/lang"
-	"metagente/internal/tools"
-	"metagente/internal/trust"
-	"metagente/internal/value"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/tools"
+	"github.com/Ribeiro/metagente-go/internal/trust"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 const examples = "../../testdata/examples"
