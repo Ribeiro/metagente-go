@@ -43,3 +43,10 @@ Do not open a public issue. Use "Report a vulnerability", in the Security tab of
 4. If the tag was made too early and nothing was published, move it to the `master` that has the section:
    `git tag -d v0.2.0 && git push origin :refs/tags/v0.2.0`, then step 2 again. Never move the tag of a
    release that was published: make the next version instead.
+5. **Ask for the version with `go install` only once the tag is on GitHub**:
+   `go install github.com/Ribeiro/metagente-go/cmd/metagente@v0.2.0`, after `git push origin v0.2.0`. The
+   mirror of Go modules (`proxy.golang.org`, and `sum.golang.org` with it) keeps a "not found" for up to 30
+   minutes, and nobody can clear it: a request made before the tag existed leaves `unknown revision` for
+   everyone until then (it happened with 0.4.2). After the push the version is there within a minute. To
+   install it during those 30 minutes, go around the mirror, for yourself only:
+   `GOPROXY=direct GONOSUMDB=github.com/Ribeiro/metagente-go go install ...@v0.2.0`.
