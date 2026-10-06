@@ -7,6 +7,8 @@ minor versions.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-06
+
 ### Added
 
 - `go install github.com/Ribeiro/metagente-go/cmd/metagente@latest` works: the module is now
@@ -175,7 +177,8 @@ showed was fixed (the steps and the results are in `validation/README.md`):
 - Not tried against the real thing yet: a desktop assistant as a client of `serve --stdio`, Azure as a
   provider, tool servers started with `uvx`, and `--public` with a certificate of its own.
 
-[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Ribeiro/metagente-go/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Ribeiro/metagente-go/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Ribeiro/metagente-go/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Ribeiro/metagente-go/compare/v0.3.0...v0.3.1
