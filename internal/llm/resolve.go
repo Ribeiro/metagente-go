@@ -162,11 +162,35 @@ func FromConfig(cfg config.LLM, getenv func(string) string) (Llm, error) {
 		return nil, diag.Newf("the language model could not answer: the variable %s is not set", r.KeyEnv).
 			Fixf("set it in the terminal that runs Metagente, for example: export %s=...", r.KeyEnv)
 	}
+	if what := notInAKey(key); what != "" {
+		// Sent as it is, the key would be refused by the HTTP library before any connection,
+		// and the person would be told that the model could not be reached.
+		return nil, diag.Newf("the language model could not answer: the variable %s holds %s, which cannot be part of a key", r.KeyEnv, what).
+			Fix("put in it only the key, one word with no spaces or line breaks; if it came from a file or the clipboard, more than the key may have been copied")
+	}
 	settings := Settings{BaseURL: r.BaseURL, Model: r.Model, APIKey: key, MaxTokensField: cfg.MaxTokensField, WorkspaceID: r.WorkspaceID}
 	if r.Provider == "anthropic" {
 		return NewAnthropic(settings)
 	}
 	return NewOpenAI(settings)
+}
+
+// notInAKey names the first character of key that no key of a provider has, or is "" when there is
+// none. It never says which character it was, or where, so that nothing of the key is told.
+func notInAKey(key string) string {
+	for _, c := range key {
+		switch {
+		case c == '\n' || c == '\r':
+			return "a line break"
+		case c == ' ' || c == '\t':
+			return "a space"
+		case c < 0x20 || c == 0x7f:
+			return "a control character"
+		case c > 0x7e:
+			return "a character that is not ASCII"
+		}
+	}
+	return ""
 }
 
 // validEnvName reports whether text can be the name of an environment variable.

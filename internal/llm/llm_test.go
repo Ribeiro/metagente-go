@@ -694,6 +694,30 @@ func TestTheKeyIsReadFromTheVariableTheConfigurationNames(t *testing.T) {
 	}
 }
 
+func TestAKeyWithALineBreakIsRefusedBeforeAnyRequest(t *testing.T) {
+	for value, what := range map[string]string{
+		"umask 077; pbpaste > ~/.key\nwc -c < ~/.key": "a space",
+		"sk-ant-abc\ndef":     "a line break",
+		"sk-ant-abc\rdef":     "a line break",
+		"sk-ant-abc def":      "a space",
+		"sk-ant-abc\x00def":   "a control character",
+		"sk-ant-abc\u200bdef": "a character that is not ASCII",
+	} {
+		getenv := func(string) string { return value }
+		_, err := FromConfig(config.LLM{Provider: "anthropic"}, getenv)
+		text := rendered(t, err)
+		mustContain(t, text, "the variable ANTHROPIC_API_KEY holds "+what+", which cannot be part of a key", "only the key")
+		if strings.Contains(text, "abc") || strings.Contains(text, "pbpaste") {
+			t.Errorf("the message tells part of the key: %s", text)
+		}
+	}
+	// Spaces and line breaks around the key are not part of it, and are left out as before.
+	getenv := func(string) string { return "  " + testKey + "\n" }
+	if _, err := FromConfig(config.LLM{Provider: "anthropic"}, getenv); err != nil {
+		t.Errorf("a key with a line break at its end was refused: %s", rendered(t, err))
+	}
+}
+
 // req: L8
 func TestRedactingHidesTheKeyAndLeavesShortWordsAlone(t *testing.T) {
 	if got := Redact("bad key sk-test-123456 here", testKey); got != "bad key [hidden] here" {
