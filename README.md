@@ -4,7 +4,8 @@ A port of [Metagente / MetaAgent](https://github.com/cleuton/MetaAgent), an inte
 language for AI agents, from Rust to Go, with the hardening described in the
 specification.
 
-All code, comments and tests are written in English. How to write agents is in
+All code, comments and tests are written in English. New to Metagente? Start with
+[your first agent in 15 minutes](docs/tutorial.md). How to write agents is in
 [the reference of the language](docs/LANGUAGE.md).
 
 ## Status

@@ -7,6 +7,11 @@ minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- `docs/tutorial.md`: your first agent in 15 minutes, adapted from the tutorial of the original project
+  to this port (installing, `trust`, the token of `serve`, `[credentials]` for `remote`).
+
 ## [0.5.0] - 2026-10-07
 
 ### Added
