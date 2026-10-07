@@ -7,6 +7,15 @@ minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- `tool http` can go through the web proxy of a company, named in a new `[network]` section of
+  `metagente.toml` (`http_proxy`). Its user and password come from the variable that
+  `http_proxy_auth_env` names, as `user:password`, never from the file; agents and tool servers cannot
+  read that variable, and it never reaches an error or the log. Through the proxy the guard still refuses
+  internal addresses written as numbers, `localhost`, and names this computer finds at an internal
+  address. A proxy from the environment (`HTTPS_PROXY`) is still never used.
+
 ## [0.4.3] - 2026-10-06
 
 ### Security

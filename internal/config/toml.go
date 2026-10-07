@@ -24,8 +24,9 @@ type entry struct {
 // text). What comes out is a list of settings with their lines, in the order of the
 // file; what each setting must be is checked by its setter, not here.
 //
-// A line of the credentials section may hold a token, so a problem there is told
-// without the words of the library and with the line hidden.
+// A line of the credentials section may hold a token, and one of the network
+// section a password, so a problem there is told without the words of the library
+// and with the line hidden.
 func parseTOML(file, text string) ([]entry, error) {
 	var doc map[string]any
 	if err := toml.Unmarshal([]byte(text), &doc); err != nil {
@@ -85,7 +86,7 @@ func plain(value any) any {
 }
 
 // syntaxProblem is a file that is not TOML. It says where, and what the library
-// found, except in the credentials section.
+// found, except in the credentials and network sections.
 func syntaxProblem(file, text string, err error) error {
 	line, column := 1, 1
 	message := err.Error()
@@ -95,10 +96,15 @@ func syntaxProblem(file, text string, err error) error {
 	}
 	message = strings.TrimPrefix(message, "toml: ")
 	source := text
-	if sectionAt(text, line) == "credentials" {
+	switch sectionAt(text, line) {
+	case "credentials":
 		message = "the value must be the NAME of an environment variable, in quotes, like \"BOB_TOKEN\", not the token itself"
 		source, column = maskLine(text, line), 1
-	} else {
+	case "network":
+		// The address of a proxy may have been written with its password.
+		message = "this is not TOML I can read; the line is not shown, since it may hold the password of a proxy"
+		source, column = maskLine(text, line), 1
+	default:
 		message = "this is not TOML I can read: " + message
 	}
 	return diag.New(message).At(file, line, column).WithSource(source).

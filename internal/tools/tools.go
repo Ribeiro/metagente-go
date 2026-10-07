@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/Ribeiro/metagente-go/internal/config"
@@ -39,6 +40,8 @@ type Options struct {
 	States         *StateStore
 	// ContextID tells conversations apart, for the memory of `tool state`.
 	ContextID string
+	// Proxy is the web proxy of [network] for `tool http`, or nil.
+	Proxy *url.URL
 }
 
 // Build creates the tools an agent declared.
@@ -52,7 +55,7 @@ func Build(def *lang.AgentDef, opts Options) (Registry, error) {
 		case lang.ToolFile:
 			registry[decl.Name] = NewFile(opts.Root, decl, opts.Limits)
 		case lang.ToolHTTP:
-			registry[decl.Name] = NewHTTP(decl, opts.Limits)
+			registry[decl.Name] = NewHTTP(decl, opts.Limits, opts.Proxy)
 		case lang.ToolState:
 			registry[decl.Name] = NewState(decl, opts.States.For(def.Name, opts.ContextID))
 		case lang.ToolClock:

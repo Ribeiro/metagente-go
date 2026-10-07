@@ -216,6 +216,9 @@ lower one of the two.
   token file with one token for each client.
 - `[credentials]` in `metagente.toml`: the bearer token for a `remote` agent or for a tool server
   that is an address, named by the variable that holds it.
+- `[network]` in `metagente.toml`: the web proxy of a company for `tool http` (`http_proxy`), and the
+  variable that holds its user and password (`http_proxy_auth_env`). See
+  [the language](docs/LANGUAGE.md#tool).
 - A log of failures inside Metagente, in the folder of the user, that holds the cause and the stack
   of what a person or a remote caller was only told in one sentence.
 
@@ -246,9 +249,9 @@ Today: 42 done, 5 done, changed (agreed), none partial.
 | F2 | done | ceiling on the size of files read and written | `internal/tools/file.go` |
 | F3 | done | names that are not portable (Windows device names, `:`, trailing dot or space) are refused everywhere | `internal/tools/file.go` |
 | F4 | done | writing to a hard link is refused, and a write goes to a temporary file in the same folder that is then renamed over the target, so a failure never leaves a half written file. A link inside the folder is still written through, in place. On Windows the number of names is asked of the system (`GetFileInformationByHandle`) | `internal/tools/file.go`, `links_*.go` |
-| H1 | done | `http` refuses internal addresses after name resolution, on every connection and redirect | `internal/tools/http.go` |
+| H1 | done | `http` refuses internal addresses after name resolution, on every connection and redirect; through the proxy of `[network]`, on the address of every request and redirect, and on the addresses this computer finds for its name | `internal/tools/http.go` |
 | H2 | done | `tool http allow "domain"` and `allow private` | `internal/tools/http.go` |
-| H3 | done | ceiling on the answer, at most 5 redirects, 10 s to connect, no proxy from the environment | `internal/tools/http.go` |
+| H3 | done | ceiling on the answer, at most 5 redirects, 10 s to connect, no proxy from the environment; only the one named in `[network]` of `metagente.toml` | `internal/tools/http.go`, `internal/config/network.go` |
 | L1 | done | `max_tokens` is configurable (default 4096) and an answer cut by it is an error, never a short answer | `internal/runtime/think.go`, `internal/llm` |
 | L2 | done | tools asked in the same answer run together up to `think_max_parallel`, and come back in the order asked | `internal/runtime/think.go` |
 | L3 | done | a result is cut at `max_tool_result_bytes` (default 32 KiB) and says so | `internal/runtime/think.go` |
@@ -314,6 +317,13 @@ Today: 42 done, 5 done, changed (agreed), none partial.
 - **Too many requests at the same time is a 503, and not a message of the protocol.** A proxy or a
   client that knows nothing of A2A understands it, and the client of this project says that the
   other side is busy.
+- **Through the proxy of `[network]`, a name this computer cannot find goes to the proxy.** With a
+  proxy, Metagente connects only to the proxy, so the guard cannot see the address the proxy reaches.
+  It refuses what it can know: an internal address written as numbers, `localhost`, and a name that this
+  computer finds at an internal address. A name it cannot find is let through, because in many companies
+  only the proxy finds the names of the internet, and refusing them would make the proxy useless; what
+  the proxy may reach is then the rule of the proxy. The proxy is only for `tool http`: the models,
+  `remote` agents and tool servers at an address still connect directly.
 - **TOML is read by a library, `pelletier/go-toml/v2`.** So `metagente.toml` may use anything TOML
   allows (lists over several lines, keys in quotes, every kind of text). A value that TOML reads and a
   setting does not take (a fraction where a whole number goes, a table where a text goes) is explained by
@@ -447,7 +457,7 @@ Today: 42 done, 5 done, changed (agreed), none partial.
 ```text
 cmd/metagente          the binary: it only calls internal/cli
 internal/cli           commands; Run(args, stdout, stderr) is testable in-process
-internal/config        metagente.toml, defaults, limits, [credentials], the T4 search
+internal/config        metagente.toml, defaults, limits, [credentials], [network], the T4 search
 internal/diag          the one error shape users see (and its Public form)
 internal/lang          lexer, parser, AST, checker, capabilities
 internal/runtime       the interpreter, `run`, `think`, `link`, `remote`, the approvals

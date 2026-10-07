@@ -108,6 +108,23 @@ The tools an agent may use. An agent can only call what it declared.
 The clauses of `http` (`allow`, `readonly`) and of a tool server (`env`, `readonly`) may come in any
 order and more than once.
 
+`http` never uses a proxy from the environment (`HTTPS_PROXY`). Where the web is only reached through
+the proxy of a company, the person who runs the agents names it in `metagente.toml`, not the agent:
+
+```toml
+[network]
+http_proxy = "http://proxy.example.com:3128"
+http_proxy_auth_env = "PROXY_AUTH"   # only if the proxy asks for a user and password
+```
+
+The user and password go in the variable that `http_proxy_auth_env` names, as `user:password`
+(`export PROXY_AUTH='ana:...'`), never in the file, and no agent or tool server can read that variable.
+Through the proxy the guard still refuses an address written as numbers that is internal, `localhost`,
+and a name that this computer finds at an internal address (`allow private` lets private networks
+through, never link-local addresses). A name this computer cannot find is left to the proxy, since in
+many companies only the proxy finds the names of the internet; what the proxy itself may reach is then
+its own rule. A proxy that refuses, asks for a password, or does not answer is told as such.
+
 `readonly` on a tool server offers, to the agent and to `think`, only the actions that the server marks
 as read only (`readOnlyHint` in MCP); calling another one is a problem that says why. That mark is the
 word of the server: it keeps a model or a mistake from using an action that changes things, not a

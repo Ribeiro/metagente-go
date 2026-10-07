@@ -16,6 +16,12 @@ func (rt *Runtime) secretValues() []string {
 			values = append(values, v)
 		}
 	}
+	// The password of the proxy may be written on its own, without the user.
+	if name := rt.Config.Network.HTTPProxyAuthEnv; name != "" {
+		if _, password, ok := strings.Cut(strings.TrimSpace(rt.Getenv(name)), ":"); ok && password != "" {
+			values = append(values, password)
+		}
+	}
 	return values
 }
 

@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,6 +108,15 @@ type Agent struct {
 // NewAgent prepares an agent. contextID tells conversations apart: calls with
 // the same one share the memory of `tool state`.
 func NewAgent(rt *Runtime, def *lang.AgentDef, contextID string) (*Agent, error) {
+	// The proxy is only read for an agent that uses it, so a missing password
+	// does not stop the agents that never reach the web.
+	var proxy *url.URL
+	if slices.ContainsFunc(def.Tools, func(t *lang.ToolDecl) bool { return t.Kind == lang.ToolHTTP }) {
+		var err error
+		if proxy, err = rt.Config.Network.ProxyURL(rt.Getenv); err != nil {
+			return nil, err
+		}
+	}
 	registry, err := tools.Build(def, tools.Options{
 		Root:           rt.Config.Root,
 		Limits:         rt.Config.Limits,
@@ -113,6 +124,7 @@ func NewAgent(rt *Runtime, def *lang.AgentDef, contextID string) (*Agent, error)
 		MaxWaitSeconds: rt.Config.Runtime.MaxWaitSeconds,
 		States:         rt.states,
 		ContextID:      contextID,
+		Proxy:          proxy,
 	})
 	if err != nil {
 		return nil, err
