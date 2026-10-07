@@ -7,6 +7,8 @@ minor versions.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-07
+
 ### Added
 
 - `tool http` can go through the web proxy of a company, named in a new `[network]` section of
@@ -208,7 +210,8 @@ showed was fixed (the steps and the results are in `validation/README.md`):
 - Not tried against the real thing yet: a desktop assistant as a client of `serve --stdio`, Azure as a
   provider, tool servers started with `uvx`, and `--public` with a certificate of its own.
 
-[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/Ribeiro/metagente-go/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Ribeiro/metagente-go/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/Ribeiro/metagente-go/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/Ribeiro/metagente-go/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Ribeiro/metagente-go/compare/v0.4.0...v0.4.1

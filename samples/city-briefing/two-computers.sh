@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-VERSION="${METAGENTE_VERSION:-0.4.3}"
+VERSION="${METAGENTE_VERSION:-0.5.0}"
 REPO="Ribeiro/metagente-go"
 FETCH="uvx mcp-server-fetch==2026.8.18"                 # as in researcher.ag
 SAMPLE_ADDRESS="http://127.0.0.1:8080/agents/Researcher" # as in concierge.ag
