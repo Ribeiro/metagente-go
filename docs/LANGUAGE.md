@@ -3,9 +3,61 @@
 This is the reference for people who write agents: what a `.ag` file may hold, what each line means,
 and what the program checks before it runs anything. Everything here was taken from the lexer, the
 parser, the checks and the interpreter (`internal/lang`, `internal/runtime`, `internal/tools`), and
-every example in this page passes `metagente check`.
+every example in this page passes `metagente check` (a test reads the whole agents of this page and
+of [the tutorial](tutorial.md) and checks them).
 
-How to run, serve and configure agents is in the [README](../README.md).
+How to run, serve and configure agents is in the [README](../README.md); the commands are listed in
+[Commands](#commands). New to Metagente? Start with [your first agent in 15 minutes](tutorial.md).
+
+Contents: [Index](#index), [A first agent](#a-first-agent), [The shape of a file](#the-shape-of-a-file),
+[The lines of an agent](#the-lines-of-an-agent), [The lines of a section](#the-lines-of-a-section),
+[Values](#values), [Calls](#calls), [Conditions](#conditions), [think](#think),
+[What check looks at](#what-check-looks-at), [Limits](#limits),
+[Words the language keeps](#words-the-language-keeps), [A larger example](#a-larger-example),
+[Commands](#commands), [Grammar](#grammar).
+
+## Index
+
+Every word and call of the language, in alphabetical order, with where it is explained.
+
+| Word | What it is | Where |
+|---|---|---|
+| `accepts` | a message the agent understands, and its values | [accepts](#accepts) |
+| `agent` | begins an agent | [The shape of a file](#the-shape-of-a-file) |
+| `allow` | the domains `tool http` may reach, or `allow private` | [tool](#tool) |
+| `and` | both are true | [Conditions](#conditions) |
+| `at` | the address of a `remote` | [remote](#remote) |
+| `clock.now`, `clock.wait` | the time, and waiting | [tool](#tool) |
+| `contains` | a text has a piece, or a list has an item | [Conditions](#conditions) |
+| `env` | `tool env "NAME"`, or the variables given to a tool server | [tool](#tool) |
+| `env.get` | reads a variable that `tool env` names | [tool](#tool) |
+| `fail` | ends the section with a failure | [fail](#fail) |
+| `file.read`, `file.write` | reads and writes texts | [tool](#tool) |
+| `for` ... `in` | repeats lines for each item of a list | [for](#for) |
+| `from` | `link Name from "file.ag"`, `tool name from mcp "..."` | [link](#link), [tool](#tool) |
+| `goal` | what the agent is for | [goal](#goal) |
+| `http.get`, `http.post` | web requests | [tool](#tool) |
+| `if`, `otherwise` | choose | [if and otherwise](#if-and-otherwise) |
+| `is`, `is not`, `is more than`, `is less than` | compare | [Conditions](#conditions) |
+| `link` | another agent of this computer | [link](#link) |
+| `mcp` | a tool server: `tool name from mcp "..."` | [tool](#tool) |
+| `name = value` | keeps a value | [Keeping a value](#keeping-a-value) |
+| `not` | the opposite | [Conditions](#conditions) |
+| `nothing` | the absence of a value | [Values](#values) |
+| `on`, `on start` | the lines to run for a message, or once at the start | [on](#on) |
+| `or` | at least one is true | [Conditions](#conditions) |
+| `private` | `tool http allow private` | [tool](#tool) |
+| `readonly` | only the actions that change nothing | [tool](#tool) |
+| `remote` | an agent served somewhere else (A2A) | [remote](#remote) |
+| `reply` | ends the section with the answer | [reply](#reply) |
+| `state.get`, `state.set` | the memory of a conversation | [tool](#tool) |
+| `target.action key: value` | a call to a tool, a `link` or a `remote` | [Calls](#calls) |
+| `think`, `using` | asks a language model | [think](#think) |
+| `tool` | a tool the agent may use | [tool](#tool) |
+| `within N seconds` | the time a call may take | [Calls](#calls) |
+| `yes`, `no` | true and false | [Values](#values) |
+| `{name}` | a value inside a text | [Values](#values) |
+| `#` | a comment, or the description of a message | [The shape of a file](#the-shape-of-a-file) |
 
 ## A first agent
 
@@ -399,3 +451,119 @@ agent Packer
       reply ["umbrella", "boots"]
     reply ["sunglasses"]
 ```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `metagente new NAME` | creates `NAME.ag`, a starter agent, and a `metagente.toml` |
+| `metagente check [--strict] FILE.ag` | looks for problems without running; `--strict` turns the warnings into problems |
+| `metagente run FILE.ag [MESSAGE] [key=value ...]` | runs an agent. `--agent NAME` picks one of a file with several; `--config FILE` a `metagente.toml` |
+| `metagente trust FILE.ag [--yes]` | approves the programs and addresses the agents of the file use (and the agents they link to) |
+| `metagente trust --list`, `metagente trust --revoke` | shows what is approved; removes the approvals of this project |
+| `metagente token [--name NAME]` | makes a token for a server; with `--name`, a line of a `--token-file` |
+| `metagente serve FILE.ag ... [--port N]` | serves the agents over A2A on this computer, behind a token. `--mcp` serves them as MCP tools too, at `/mcp`; `--agent NAME` serves only some; `--public-card`, `--quiet`, `--config FILE` |
+| `metagente serve FILE.ag ... --stdio` | the agents as MCP tools on standard input and output |
+| `metagente serve ... --public --tls-cert FILE --tls-key FILE --host NAME` | open to the network, with TLS of its own; `--token-file FILE` for a token for each client |
+| `metagente serve ... --behind-proxy --host NAME --public-url https://NAME` | behind a proxy on this computer, which does the TLS |
+| `metagente --version` | the version |
+
+```text
+metagente new hello
+metagente check --strict hello.ag
+metagente run hello.ag greet name=World
+metagente run team.ag ask city=Lisbon --agent Weather
+metagente trust trip.ag
+metagente serve weather.ag --port 8080 --mcp
+metagente serve weather.ag --stdio
+```
+
+The exit code is 0 when it worked, 1 for a problem in the agent or the files, and 2 for a mistake in
+how the command was written. Serving, tokens and TLS are explained in the [README](../README.md#serving-agents).
+
+## Grammar
+
+The grammar of a `.ag` file, taken from the lexer and the parser (`internal/lang/lexer.go`,
+`internal/lang/parser.go`). It says what is read; what `check` refuses after that (an agent without
+`goal`, an `on` without its `accepts`, a call to a tool that was not declared, ...) is in
+[What check looks at](#what-check-looks-at).
+
+Notation: `=` defines a rule, `|` is a choice, `[ x ]` is optional, `{ x }` is zero or more times,
+`( x )` groups, `"x"` is a word or a sign written as it is. `NEWLINE` ends a line. `INDENT` and
+`DEDENT` come from the indentation: two spaces more than the line above, or less. A line that is blank
+or only a comment is not read at all, and `#` ends any other line (see `COMMENT`).
+
+```ebnf
+(* A file *)
+file          = agent { agent } ;
+agent         = "agent" NAME NEWLINE [ INDENT agent_line { agent_line } DEDENT ] ;
+agent_line    = goal | tool | link | remote | accepts | handler ;      (* in any order *)
+
+(* The lines of an agent *)
+goal          = "goal" TEXT NEWLINE ;                                   (* a TEXT without {names} *)
+link          = "link" NAME [ "from" TEXT ] NEWLINE ;
+remote        = "remote" NAME "at" TEXT NEWLINE ;
+accepts       = "accepts" NAME { NAME } [ COMMENT ] NEWLINE ;          (* the comment describes it *)
+handler       = "on" NAME NEWLINE block ;                               (* "on start" runs first *)
+
+tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | server_tool ) NEWLINE ;
+file_tool     = "file" [ TEXT ] { "readonly" } ;
+http_tool     = "http" { "readonly" | "allow" ( "private" | TEXT { TEXT } ) } ;
+env_tool      = "env" TEXT { TEXT } ;
+server_tool   = NAME "from" "mcp" TEXT { "readonly" | "env" TEXT { TEXT } } ;
+                                                     (* NAME is not file, http, env, state or clock *)
+
+(* The lines of a section *)
+block         = INDENT statement { statement } DEDENT ;
+statement     = reply | fail | if | for | assignment | expression_line ;
+reply         = "reply" expression NEWLINE ;
+fail          = "fail" expression NEWLINE ;
+if            = "if" expression NEWLINE block [ "otherwise" NEWLINE [ block ] ] ;
+for           = "for" NAME "in" expression NEWLINE block ;
+assignment    = NAME "=" expression NEWLINE ;
+expression_line = expression NEWLINE ;      (* begins with "think", with NAME ".", or with no NAME *)
+
+(* Expressions, from the loosest to the tightest *)
+expression    = and_test { "or" and_test } ;
+and_test      = not_test { "and" not_test } ;
+not_test      = "not" not_test | comparison ;
+comparison    = operand [ ( "is" [ "not" | "more" "than" | "less" "than" ] | "contains" ) operand ] ;
+operand       = call | think | value ;
+
+call          = path { argument } [ within ] ;          (* at least one argument or a within *)
+argument      = NAME ":" value ;
+within        = "within" NUMBER ( "seconds" | "second" ) ;
+think         = "think" value [ "using" NAME { NAME } ] ;
+
+value         = TEXT | NUMBER | "yes" | "no" | "nothing" | list | path ;
+list          = "[" [ value { "," value } ] "]" ;
+path          = NAME { "." NAME } ;
+
+(* Words and signs *)
+NAME          = ( letter | "_" ) { letter | digit | "_" | "-" } ;
+NUMBER        = digit { digit } [ "." digit { digit } ] ;              (* at most 15 digits *)
+TEXT          = '"' { character | escape | hole } '"' ;
+escape        = "\" character ;            (* \n a line break, \t a tab; any other stands for itself *)
+hole          = "{" path "}" ;                (* spaces around the names are allowed *)
+COMMENT       = "#" { character } ;           (* to the end of the line, outside a TEXT *)
+```
+
+Reading notes:
+
+- **A call and a path look alike.** `clock.now` has no values, so it is read as a `path`; when the
+  agent runs, a path whose first name is a tool, a `link` or a `remote` of the agent is a call, and
+  otherwise the fields of a value (`forecast.summary`). With values or `within` it is always a call,
+  and it needs the form `target.action`. The action may have more names (`weather.Weather.ask`) and
+  dashes (`github.create-issue`), since `-` belongs to names.
+- **A call is not a value.** The values of a call, the items of a list and the question of `think`
+  are a `value`: a call or a `think` there has to be kept in a name first. A `comparison` takes calls
+  on both sides.
+- **There are no parentheses, no arithmetic and no minus sign.** `-` is part of a name (`a-b` is one
+  name), and a negative number can only come from a tool. Keep the parts of a long condition in names.
+- **The signs** outside a text are only `.`, `:`, `=`, `,`, `[` and `]`. Any other character there is
+  a problem that says which one.
+- **`using`** takes names until the line ends or one of `and`, `or`, `is`, `contains` and `within`
+  comes.
+- **Names are letters of any language**, digits, `_` and `-`, and upper and lower case are different.
+  The words in [Words the language keeps](#words-the-language-keeps) have a meaning where they appear,
+  so do not use them as names.

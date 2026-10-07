@@ -11,6 +11,9 @@ minor versions.
 
 - `docs/tutorial.md`: your first agent in 15 minutes, adapted from the tutorial of the original project
   to this port (installing, `trust`, the token of `serve`, `[credentials]` for `remote`).
+- `docs/LANGUAGE.md` has an index of every word of the language, a table of the commands, and the
+  grammar of a `.ag` file (EBNF), taken from the lexer and the parser. A test now checks that every
+  whole agent of `LANGUAGE.md` and of the tutorial passes `metagente check`.
 
 ## [0.5.0] - 2026-10-07
 
