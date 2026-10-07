@@ -116,23 +116,44 @@ type HTTP struct {
 	decl     *lang.ToolDecl
 	client   *http.Client
 	maxBytes int64
+	// proxy is the web proxy of [network], or nil.
+	proxy *url.URL
+	// lookup finds the addresses of a name, for the guard when a proxy connects.
+	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
-// NewHTTP creates the tool.
-func NewHTTP(decl *lang.ToolDecl, limits config.Limits) *HTTP {
-	h := &HTTP{decl: decl, maxBytes: limits.MaxHTTPBytes}
-	dialer := &net.Dialer{
-		Timeout: connectTimeout,
-		Control: func(network, address string, _ syscall.RawConn) error {
-			return checkAddress(address, decl.AllowPrivate)
-		},
-	}
-	// Proxy stays nil on purpose: a proxy taken from the environment would
-	// receive the connection instead of the guard seeing the real address.
+// NewHTTP creates the tool. proxy is the web proxy every request goes through,
+// or nil to connect directly.
+func NewHTTP(decl *lang.ToolDecl, limits config.Limits, proxy *url.URL) *HTTP {
+	h := &HTTP{decl: decl, maxBytes: limits.MaxHTTPBytes, proxy: proxy, lookup: lookupHost}
+	dialer := &net.Dialer{Timeout: connectTimeout}
+	// Proxy stays nil without a proxy of [network], on purpose: a proxy taken
+	// from the environment would receive the connection instead of the guard
+	// seeing the real address.
 	transport := &http.Transport{
 		Proxy:               nil,
 		DialContext:         dialer.DialContext,
 		TLSHandshakeTimeout: connectTimeout,
+	}
+	if proxy == nil {
+		dialer.Control = func(network, address string, _ syscall.RawConn) error {
+			return checkAddress(address, decl.AllowPrivate)
+		}
+	} else {
+		// Every connection is then to the proxy, which is usually on a private
+		// network itself: the guard looks at where the request goes instead.
+		transport.Proxy = func(req *http.Request) (*url.URL, error) {
+			if err := h.checkDestination(req.Context(), req.URL.Hostname()); err != nil {
+				return nil, err
+			}
+			return proxy, nil
+		}
+		transport.OnProxyConnectResponse = func(_ context.Context, _ *url.URL, _ *http.Request, resp *http.Response) error {
+			if resp.StatusCode != http.StatusOK {
+				return &proxyRefusedError{status: resp.StatusCode}
+			}
+			return nil
+		}
 	}
 	h.client = &http.Client{
 		Transport: transport,
@@ -150,6 +171,48 @@ func NewHTTP(decl *lang.ToolDecl, limits config.Limits) *HTTP {
 		},
 	}
 	return h
+}
+
+// proxyRefusedError is a proxy that did not open the connection to an https address.
+type proxyRefusedError struct{ status int }
+
+func (e *proxyRefusedError) Error() string {
+	return fmt.Sprintf("the proxy answered %d", e.status)
+}
+
+func lookupHost(ctx context.Context, host string) ([]netip.Addr, error) {
+	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+}
+
+// checkDestination is the guard when a proxy connects for Metagente. An address
+// written as numbers is tested as it is. A name is tested with the addresses this
+// computer finds for it; a name it does not find is left to the proxy, since in
+// many companies only the proxy can find the names of the internet. What the
+// proxy itself may reach is then the rule of the proxy.
+func (h *HTTP) checkDestination(ctx context.Context, host string) error {
+	host = strings.TrimSuffix(host, ".")
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if why := refusal(addr.Unmap(), h.decl.AllowPrivate); why != "" {
+			return &blockedError{address: addr.Unmap().String(), reason: why}
+		}
+		return nil
+	}
+	lower := strings.ToLower(host)
+	if !h.decl.AllowPrivate && (lower == "localhost" || strings.HasSuffix(lower, ".localhost")) {
+		return &blockedError{address: host, reason: "it is this computer"}
+	}
+	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	addrs, err := h.lookup(ctx, host)
+	if err != nil {
+		return nil
+	}
+	for _, addr := range addrs {
+		if why := refusal(addr.Unmap(), h.decl.AllowPrivate); why != "" {
+			return &blockedError{address: host + " (" + addr.Unmap().String() + ")", reason: why}
+		}
+	}
+	return nil
 }
 
 func (h *HTTP) Name() string { return h.decl.Name }
@@ -244,6 +307,9 @@ func (h *HTTP) do(ctx context.Context, method, address string, body io.Reader, c
 		return value.Nothing, h.requestError(address, err)
 	}
 	defer resp.Body.Close()
+	if h.proxy != nil && resp.StatusCode == http.StatusProxyAuthRequired {
+		return value.Nothing, h.proxyError(http.StatusProxyAuthRequired)
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, h.maxBytes+1))
 	if err != nil {
 		return value.Nothing, diag.Newf("%s answered, but I could not read the answer as text", address)
@@ -265,6 +331,16 @@ func (h *HTTP) do(ctx context.Context, method, address string, body io.Reader, c
 	}), nil
 }
 
+// proxyError is a proxy that refused the request.
+func (h *HTTP) proxyError(status int) error {
+	if status == http.StatusProxyAuthRequired {
+		return diag.Newf("the proxy %s asked for a user and password, and did not accept the ones it got", h.proxy.Host).
+			Fix("put them in a variable as user:password and name it in [network] of metagente.toml: http_proxy_auth_env = \"PROXY_AUTH\"")
+	}
+	return diag.Newf("the proxy %s refused the connection: it answered %d", h.proxy.Host, status).
+		Fix("ask who runs the proxy whether this address may be reached")
+}
+
 func notAllowed(host string) error {
 	return diag.Newf("`http` may only reach the domains this agent declared, and `%s` is not one of them", host).
 		Fixf("add it to the declaration, for example: tool http allow \"%s\"", host)
@@ -274,8 +350,15 @@ func notAllowed(host string) error {
 func (h *HTTP) requestError(address string, err error) error {
 	var blocked *blockedError
 	var denied *notAllowedError
+	var refused *proxyRefusedError
+	var opErr *net.OpError
 	var netErr net.Error
 	switch {
+	case errors.As(err, &refused):
+		return h.proxyError(refused.status)
+	case h.proxy != nil && errors.As(err, &opErr) && opErr.Op == "proxyconnect":
+		return diag.Newf("I could not reach %s: the proxy %s did not answer", address, h.proxy.Host).
+			Fix("check http_proxy in the [network] section of metagente.toml")
 	case errors.As(err, &blocked):
 		return diag.Newf("`http` refused to connect to %s: %s", blocked.address, blocked.reason).
 			Fix("if this agent really needs to reach a private network, declare it: tool http allow private")
@@ -289,7 +372,6 @@ func (h *HTTP) requestError(address string, err error) error {
 			Fix("check the address and your internet connection")
 	default:
 		why := "the request did not complete"
-		var opErr *net.OpError
 		if errors.As(err, &opErr) && opErr.Op == "dial" {
 			why = "the connection failed"
 		}

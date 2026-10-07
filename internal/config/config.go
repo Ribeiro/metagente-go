@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -80,12 +81,25 @@ type Limits struct {
 	MaxStateBytes      int64 // D3
 }
 
+// Network is the [network] section: how `tool http` reaches the web where it
+// cannot go there by itself.
+type Network struct {
+	// HTTPProxy is the address of the web proxy of a company, such as
+	// http://proxy.example.com:3128. Empty is no proxy: one in the environment
+	// (HTTPS_PROXY) is never used.
+	HTTPProxy string
+	// HTTPProxyAuthEnv is the NAME of the environment variable that holds the
+	// user and password of the proxy, as user:password.
+	HTTPProxyAuthEnv string
+}
+
 // Config is everything configurable.
 type Config struct {
 	LLM     LLM
 	Runtime Runtime
 	Serve   Serve
 	Limits  Limits
+	Network Network
 	// Root is the project folder: where metagente.toml was found, or where
 	// Metagente was started.
 	Root string
@@ -254,9 +268,12 @@ var settings = map[string]setter{
 	"limits.max_mcp_result_bytes":  setInt64(func(c *Config) *int64 { return &c.Limits.MaxMCPResultBytes }, 1),
 	"limits.max_state_entries":     setInt(func(c *Config) *int { return &c.Limits.MaxStateEntries }, 1),
 	"limits.max_state_bytes":       setInt64(func(c *Config) *int64 { return &c.Limits.MaxStateBytes }, 1),
+
+	"network.http_proxy":          setProxy,
+	"network.http_proxy_auth_env": setEnvName(func(c *Config) *string { return &c.Network.HTTPProxyAuthEnv }),
 }
 
-var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "credentials": true}
+var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "network": true, "credentials": true}
 
 // Load reads the configuration for a project started in the folder start.
 // When explicit is not empty, that file is read and nothing is searched.
@@ -386,8 +403,13 @@ func (cfg *Config) apply(name, text string) error {
 			continue
 		}
 		if err := set(cfg, e.value); err != nil {
+			source := text
+			if id == "network.http_proxy" {
+				// The address may hold a password, which an error never repeats.
+				source = maskLine(text, e.line)
+			}
 			return diag.Newf("`%s` in [%s] must be %s", e.key, e.section, err.Error()).
-				At(name, e.line, 1).WithSource(text).
+				At(name, e.line, 1).WithSource(source).
 				Fix("change the value in " + FileName)
 		}
 	}
@@ -437,10 +459,13 @@ func (cfg *Config) HiddenEnv() []string {
 		}
 	}
 	// A credential is for the connection it was given to, not for an agent to
-	// read and send elsewhere.
-	variables := make([]string, 0, len(cfg.Credentials))
+	// read and send elsewhere. The password of the proxy is one too.
+	variables := make([]string, 0, len(cfg.Credentials)+1)
 	for _, variable := range cfg.Credentials {
 		variables = append(variables, variable)
+	}
+	if cfg.Network.HTTPProxyAuthEnv != "" && !slices.Contains(variables, cfg.Network.HTTPProxyAuthEnv) {
+		variables = append(variables, cfg.Network.HTTPProxyAuthEnv)
 	}
 	sort.Strings(variables)
 	return append(hidden, variables...)

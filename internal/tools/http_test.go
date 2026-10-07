@@ -21,7 +21,7 @@ func newHTTP(decl lang.ToolDecl, maxBytes int64) *HTTP {
 	if maxBytes > 0 {
 		limits.MaxHTTPBytes = maxBytes
 	}
-	return NewHTTP(&decl, limits)
+	return NewHTTP(&decl, limits, nil)
 }
 
 // testServer answers a few routes and counts the requests that reach it.

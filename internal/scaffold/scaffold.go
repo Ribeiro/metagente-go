@@ -26,6 +26,12 @@ const config = `# Settings for Metagente. Agents never mention these, so they st
 # [credentials]
 # Bob = "BOB_TOKEN"
 
+# Only where the web is reached through the proxy of a company: ` + "`tool http`" + ` goes
+# through it. The user and password go in the variable, as user:password.
+# [network]
+# http_proxy = "http://proxy.example.com:3128"
+# http_proxy_auth_env = "PROXY_AUTH"
+
 [runtime]
 timeout_seconds = 30      # how long a tool call may take
 think_max_steps = 10      # how many steps ` + "`think`" + ` may take

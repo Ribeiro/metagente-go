@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -437,5 +438,47 @@ func TestTheOnStartSectionRunsBeforeTheHandler(t *testing.T) {
 	got, err := runSource(t, newRT(t.TempDir(), nil), source, "go")
 	if err != nil || got.Text != "started" {
 		t.Errorf("got %v, %v", got.Display(), err)
+	}
+}
+
+func TestOnlyAnAgentThatReachesTheWebNeedsThePasswordOfTheProxy(t *testing.T) {
+	rt := trustedRT(t)
+	rt.Config.Network = config.Network{HTTPProxy: "http://proxy.example.com:3128", HTTPProxyAuthEnv: "PROXY_AUTH"}
+	rt.Getenv = func(string) string { return "" }
+	plain := agentFrom(t, rt, "agent A\n  goal \"x\"\n  accepts go\n  on go\n    reply \"hi\"\n", "c")
+	if _, ok := plain.Tools["http"]; ok {
+		t.Error("an agent without tool http has it")
+	}
+
+	agents, err := lang.ParseFile("web.ag", "", "agent Web\n  goal \"x\"\n  tool http\n  accepts go\n  on go\n    reply \"hi\"\n")
+	if err != nil {
+		t.Fatal(errText(t, err))
+	}
+	_, err = NewAgent(rt, agents[0], "c")
+	mustContain(t, errText(t, err), "the variable PROXY_AUTH, which holds the user and password of the proxy, is not set")
+
+	rt.Getenv = func(name string) string {
+		if name == "PROXY_AUTH" {
+			return "ana:s3cret"
+		}
+		return ""
+	}
+	if _, err := NewAgent(rt, agents[0], "c"); err != nil {
+		t.Fatal(errText(t, err))
+	}
+}
+
+func TestThePasswordOfTheProxyNeverReachesTheLog(t *testing.T) {
+	rt := trustedRT(t)
+	rt.Config.Network = config.Network{HTTPProxy: "http://proxy.example.com:3128", HTTPProxyAuthEnv: "PROXY_AUTH"}
+	rt.Getenv = func(name string) string {
+		if name == "PROXY_AUTH" {
+			return "ana:pw-live-0123"
+		}
+		return ""
+	}
+	values := rt.secretValues()
+	if !slices.Contains(values, "ana:pw-live-0123") || !slices.Contains(values, "pw-live-0123") {
+		t.Errorf("secrets = %q", values)
 	}
 }
