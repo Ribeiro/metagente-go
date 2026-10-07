@@ -175,6 +175,35 @@ server keeps up to `max_retained_tasks` of them (1000 by default), of A2A and of
 about 250 MiB that someone who holds the token could make the server use. On a small machine,
 lower one of the two.
 
+## Through the proxy of a company
+
+Where the web is only reached through the proxy of a company, `tool http` goes through it once the
+proxy is named in `metagente.toml`. The agent does not change: the proxy belongs to the computer where it
+runs, not to the agent.
+
+```toml
+[network]
+http_proxy = "http://proxy.example.com:3128"
+http_proxy_auth_env = "PROXY_AUTH"   # only if the proxy asks for a user and password
+```
+
+```sh
+export PROXY_AUTH='ana:the-password'  # user:password, never in the file
+metagente run my-agent.ag    # an agent with `tool http`
+```
+
+- A proxy from the environment (`HTTPS_PROXY`, `HTTP_PROXY`) is never used; only this one.
+- The user and password are only in the variable. An address with `user:password@` in the file is
+  refused, and no error, log, agent (`tool env`) or tool server sees the variable.
+- Through the proxy, `http` still refuses internal addresses written as numbers, `localhost`, and names
+  that this computer finds at an internal address (`tool http allow private` lets private networks
+  through, never link-local addresses). A name this computer cannot find is left to the proxy; see
+  [Choices to review](#choices-to-review).
+- A proxy that asks for a password (407), refuses the connection, or does not answer is told as such,
+  with its address.
+- The proxy is only for `tool http`. The models of `think`, `remote` agents and tool servers at an
+  address still connect directly.
+
 ## What exists
 
 - `metagente check [--strict] FILE.ag`: lexer, parser, static checks, warnings.
@@ -218,7 +247,7 @@ lower one of the two.
   that is an address, named by the variable that holds it.
 - `[network]` in `metagente.toml`: the web proxy of a company for `tool http` (`http_proxy`), and the
   variable that holds its user and password (`http_proxy_auth_env`). See
-  [the language](docs/LANGUAGE.md#tool).
+  [Through the proxy of a company](#through-the-proxy-of-a-company).
 - A log of failures inside Metagente, in the folder of the user, that holds the cause and the stack
   of what a person or a remote caller was only told in one sentence.
 
