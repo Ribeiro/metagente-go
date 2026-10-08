@@ -335,6 +335,7 @@ func TestAProblemInAWritingConnectionIsTold(t *testing.T) {
 		"mode not text":      {"[sql.w]\ndriver = \"sqlite\"\npath = \"w.db\"\nmode = 1\n" + statements, "`mode` in [sql.w] must be a text in quotes"},
 		"a write on a read":  {read + "[sql.w.statements]\nmark = \"INSERT INTO t (a) VALUES (:a)\"\n", "needs a connection with mode = \"write\""},
 		"no where":           {head + "[sql.w.statements]\nwipe = \"DELETE FROM t\"\n", "DELETE with no WHERE"},
+		"merge on sqlite":    {head + "[sql.w.statements]\nput = \"MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = :a\"\n", "sqlite has no MERGE"},
 		"a bad result":       {head + "[sql.w.statements]\nmark = { sql = \"INSERT INTO t (a) VALUES (:a)\", result = \"rows\" }\n", "only gives count"},
 		"count of a read":    {head + "[sql.w.statements]\nlook = { sql = \"SELECT 1\", result = \"count\" }\n", "it has to be rows, row or value"},
 		"each alone":         {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a) VALUES (:a)\", each = \"rows\" }\n", "`each` and `columns` go together"},

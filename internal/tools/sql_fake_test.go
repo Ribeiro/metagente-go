@@ -368,3 +368,23 @@ func TestTheRowsOfADriverThatHandsOverNumbersAsTextHaveNumbers(t *testing.T) {
 		t.Errorf("id = %s (%v)", id.Display(), id.Kind)
 	}
 }
+
+func TestOnlySqlServerGetsASemicolonAfterAMerge(t *testing.T) {
+	text := "merge into t using s on t.id = s.id when matched then update set a = :a"
+	for driver, want := range map[string]string{"sqlserver": ";", "oracle": "", "postgres": ""} {
+		conn := networkConn(driver)
+		conn.Mode = config.ModeWrite
+		st := writing(t, text, "")
+		st.Name = "put"
+		conn.Statements["put"] = st
+		decl := &lang.ToolDecl{Name: "dest", Kind: lang.ToolSQL, Command: "db"}
+		tool, err := NewSQL(decl, SQLOptions{Conns: map[string]*config.SQLConn{"db": conn}, Getenv: func(string) string { return "" }, Pool: NewSQLPool()}, config.Default().Limits)
+		if err != nil {
+			t.Fatal(driver, err)
+		}
+		if strings.HasSuffix(tool.stmts["put"].query, ";") != (want == ";") {
+			t.Errorf("%s: query = %q", driver, tool.stmts["put"].query)
+		}
+		_ = tool.Close()
+	}
+}

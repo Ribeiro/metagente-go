@@ -232,8 +232,8 @@ metagente run my-agent.ag    # an agent with `tool http`
   `metagente trust`. See `docs/LANGUAGE.md`.
 - `tool orders from sql "orders-db"`: reads a database (SQLite, PostgreSQL, MySQL, MariaDB, SQL Server, Oracle) with named, parameterized
   `SELECT` statements written in `[sql.orders-db]` of `metagente.toml`; read only, with limits, approved
-  by `metagente trust`. A connection with `mode = "write"` may also run named `INSERT`, `UPDATE` and
-  `DELETE` statements, a list of rows in one transaction, and transactions of several statements (never
+  by `metagente trust`. A connection with `mode = "write"` may also run named `INSERT`, `UPDATE`,
+  `DELETE` and `MERGE` statements, a list of rows in one transaction, and transactions of several statements (never
   DDL), approved as a database that is changed. See `docs/LANGUAGE.md`.
 - `tool meter`: how much of the language model a conversation has used (`meter.model`), for an agent that keeps
   a budget for it. See `docs/LANGUAGE.md`.

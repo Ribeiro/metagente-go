@@ -4,6 +4,7 @@ package integration
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -111,5 +112,51 @@ func refuseACopy(t *testing.T, run func(string) (string, error)) {
 	}
 	if strings.Contains(out, "Customer") || strings.Contains(out, dbSecret) {
 		t.Errorf("the problem shows what the rows hold:\n%s", out)
+	}
+}
+
+// merge is an upsert of a mark, written with MERGE in the way each database wants it.
+func (s server) merge() string {
+	const tail = " ON (m.job = s.job) WHEN MATCHED THEN UPDATE SET state = s.state WHEN NOT MATCHED THEN INSERT (job, state) VALUES (s.job, s.state)"
+	switch s.driver {
+	case "oracle":
+		return "MERGE INTO marks m USING (SELECT :job AS job, :state AS state FROM dual) s" + tail
+	case "sqlserver":
+		return "MERGE INTO marks m USING (SELECT :job AS job, :state AS state) s" + tail
+	}
+	return "MERGE INTO marks m USING (SELECT CAST(:job AS bigint) AS job, CAST(:state AS varchar(20)) AS state) s" + tail
+}
+
+// A MERGE inserts the row the first time and changes it the second, and counts one row each time.
+func TestAnAgentUpsertsWithMerge(t *testing.T) {
+	for _, driver := range []string{"postgres", "sqlserver", "oracle"} {
+		t.Run(driver, func(t *testing.T) {
+			s := start(t, driver)
+			dir := s.writeProject(t)
+			raw, err := os.ReadFile(filepath.Join(dir, "metagente.toml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := string(raw)
+			config = strings.Replace(config, "[sql.db.statements]\n", "[sql.db.statements]\nupsert = "+fmt.Sprintf("%q", s.merge())+"\n", 1)
+			write(t, filepath.Join(dir, "metagente.toml"), config)
+			write(t, filepath.Join(dir, "merger.ag"), `agent Merger
+  goal "Upsert a mark"
+  tool dest from sql "db"
+  accepts put start
+  on put
+    first = dest.upsert job: 7 state: "new"
+    second = dest.upsert job: 7 state: "done"
+    state = dest.state job: 7
+    reply "merged {first} {second}: {state}"
+`)
+			if out, err := metagente(t, dir, dbSecret, "trust", "merger.ag", "--yes"); err != nil {
+				t.Fatalf("trust: %v\n%s", err, out)
+			}
+			run := func(message string) (string, error) {
+				return metagente(t, dir, dbSecret, "run", "merger.ag", message, "start=x")
+			}
+			expect(t, run, "put", "merged 1 1: done")
+		})
 	}
 }

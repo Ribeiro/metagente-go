@@ -133,6 +133,7 @@ func TestAStatementThatChangesRowsIsReadOnlyWhereItIsAllowed(t *testing.T) {
 		"UPDATE t SET a = :a WHERE id = :id":     Update,
 		"delete from t where day < :day":         Delete,
 		"update t set a = 'where' where b = :b ": Update,
+		"merge into t using s on t.id = s.id when matched then update set a = :a": Merge,
 	} {
 		s, err := ParseWrite(text)
 		if err != nil || s.Kind != kind || s.Kind.Writes() != (kind != Read) {
@@ -145,14 +146,16 @@ func TestAStatementThatChangesRowsIsReadOnlyWhereItIsAllowed(t *testing.T) {
 		}
 	}
 	for text, want := range map[string]string{
-		"update t set a = 1":                   "UPDATE with no WHERE",
-		"delete from t":                        "DELETE with no WHERE",
-		"delete from t -- where":               "no WHERE",
-		"update t set a = 'where'":             "no WHERE",
-		"drop table t":                         "begins with DROP",
-		"create table t (a int)":               "begins with CREATE",
-		"alter table t add b int":              "begins with ALTER",
-		"insert into t values (1); delete t w": "more than one statement",
+		"update t set a = 1":                            "UPDATE with no WHERE",
+		"delete from t":                                 "DELETE with no WHERE",
+		"delete from t -- where":                        "no WHERE",
+		"update t set a = 'where'":                      "no WHERE",
+		"merge into t using s when matched then delete": "MERGE with no ON",
+		"merge into t using s -- on x":                  "no ON",
+		"drop table t":                                  "begins with DROP",
+		"create table t (a int)":                        "begins with CREATE",
+		"alter table t add b int":                       "begins with ALTER",
+		"insert into t values (1); delete t w":          "more than one statement",
 	} {
 		_, err := ParseWrite(text)
 		if err == nil || !strings.Contains(err.Error(), want) {
