@@ -45,6 +45,8 @@ type Runtime struct {
 	ThinkTimeoutSeconds int // L5
 	MaxCallDepth        int // D2
 	MaxWaitSeconds      int // D1
+	// MaxLoopTurns is the most turns a `repeat while` may take before the run stops with a problem.
+	MaxLoopTurns int
 }
 
 // Serve is the [serve] section.
@@ -126,6 +128,7 @@ func Default() *Config {
 			ThinkTimeoutSeconds: 300,
 			MaxCallDepth:        8,
 			MaxWaitSeconds:      3600,
+			MaxLoopTurns:        10000,
 		},
 		Serve: Serve{
 			A2APort:                  8080,
@@ -243,6 +246,7 @@ var settings = map[string]setter{
 	"runtime.think_timeout_seconds":  setInt(func(c *Config) *int { return &c.Runtime.ThinkTimeoutSeconds }, 1),
 	"runtime.max_call_depth":         setInt(func(c *Config) *int { return &c.Runtime.MaxCallDepth }, 1),
 	"runtime.max_wait_seconds":       setInt(func(c *Config) *int { return &c.Runtime.MaxWaitSeconds }, 1),
+	"runtime.max_loop_turns":         setInt(func(c *Config) *int { return &c.Runtime.MaxLoopTurns }, 1),
 
 	"serve.a2a_port":                    setInt(func(c *Config) *int { return &c.Serve.A2APort }, 1),
 	"serve.bind":                        setString(func(c *Config) *string { return &c.Serve.Bind }),

@@ -295,6 +295,9 @@ func (w *walker) stmts(stmts []Stmt, vars map[string]bool) {
 			w.expr(s.Iter, vars)
 			vars[s.Var] = true
 			w.stmts(s.Body, vars)
+		case *RepeatStmt:
+			w.expr(s.Cond, vars)
+			w.stmts(s.Body, vars)
 		}
 	}
 }

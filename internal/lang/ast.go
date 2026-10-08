@@ -173,6 +173,15 @@ type (
 		Iter Expr
 		Body []Stmt
 	}
+	// RepeatStmt is `repeat while condition`, with an optional `up to N times`.
+	RepeatStmt struct {
+		Span
+		Cond Expr
+		// Limit is the N of `up to N times`; it is only meant when HasLimit is true.
+		Limit    int
+		HasLimit bool
+		Body     []Stmt
+	}
 	// FailStmt is `fail "message"`.
 	FailStmt struct {
 		Span
@@ -186,6 +195,10 @@ func (*ReplyStmt) stmtNode()  {}
 func (*IfStmt) stmtNode()     {}
 func (*ForStmt) stmtNode()    {}
 func (*FailStmt) stmtNode()   {}
+
+func (*RepeatStmt) stmtNode() {
+	// Only marks RepeatStmt as a statement.
+}
 
 // CompareOp is a comparison operator.
 type CompareOp int

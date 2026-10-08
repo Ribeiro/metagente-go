@@ -49,11 +49,13 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `private` | `tool http allow private` | [tool](#tool) |
 | `readonly` | only the actions that change nothing | [tool](#tool) |
 | `remote` | an agent served somewhere else (A2A) | [remote](#remote) |
+| `repeat while` | repeats lines while a condition is true | [repeat](#repeat) |
 | `reply` | ends the section with the answer | [reply](#reply) |
 | `state.get`, `state.set` | the memory of a conversation | [tool](#tool) |
 | `target.action key: value` | a call to a tool, a `link` or a `remote` | [Calls](#calls) |
 | `think`, `using` | asks a language model | [think](#think) |
 | `tool` | a tool the agent may use | [tool](#tool) |
+| `up to N times` | the most turns of a `repeat`, chosen by the author | [repeat](#repeat) |
 | `within N seconds` | the time a call may take | [Calls](#calls) |
 | `yes`, `no` | true and false | [Values](#values) |
 | `{name}` | a value inside a text | [Values](#values) |
@@ -291,6 +293,38 @@ for city in cities
 Runs the lines once for each item of a list, with the item in the name (`city`). A `reply` inside
 ends the whole section. Anything that is not a list is a problem.
 
+### repeat
+
+```text
+agent Pager
+  goal "Read every page of a list on the web"
+  tool http
+  accepts all first
+  on all
+    url = first
+    repeat while url is not nothing
+      page = http.get url: url
+      url = page.json.next
+    reply "done"
+```
+
+Runs the lines under it again and again while the condition is true. The condition is the same as
+that of `if`, and it is looked at before each turn, so when it is false at the start the lines never run.
+What changes the condition has to be among the lines: here `url` gets the address of the next page, and
+the last page says `null`, which is `nothing` and ends the loop. As with `for`, a `reply` inside ends the
+whole section, and a name given a value inside is known after the loop.
+
+A loop cannot go on for ever:
+
+- `repeat while condition up to 100 times` is a cap that you choose. After 100 turns the loop ends, even
+  if the condition is still true, and the lines after it run. Use it when "enough tries" is a normal way
+  to end, for example asking again up to 3 times. The number is a whole number from 1 to 1000000000
+  (`up to 1 time` is also accepted).
+- Without it, or with a number above what the setup allows, the loop ends with a problem if the condition
+  is still true after `max_loop_turns` turns (10000 by default, in `[runtime]` of `metagente.toml`). This
+  is on purpose: a loop that goes on that long is almost always one whose condition nothing changes, and
+  it is better that the problem says so than that the work is cut short in silence.
+
 ### A call on its own
 
 ```text
@@ -405,6 +439,7 @@ Words that look like a mistake get a suggestion: `acepts` gets "did you mean `ac
 | a number written in the file | 15 digits | fixed |
 | a call | `timeout_seconds` (30), at most `max_wait_seconds` (3600) | `[runtime]` |
 | agents calling agents | `max_call_depth` (8) | `[runtime]` |
+| turns of a `repeat` | `max_loop_turns` (10000) | `[runtime]` |
 | a file read or written | `max_file_bytes` (1 MiB) | `[limits]` |
 | an answer of `http` | `max_http_bytes` (5 MiB) | `[limits]` |
 | what `state` keeps in a conversation | `max_state_entries` (1000), `max_state_bytes` (256 KiB) | `[limits]` |
@@ -413,8 +448,11 @@ Words that look like a mistake get a suggestion: `acepts` gets "did you mean `ac
 ## Words the language keeps
 
 `agent`, `goal`, `tool`, `link`, `remote`, `accepts`, `on`, `from`, `mcp`, `env`, `at`, `allow`,
-`private`, `readonly`, `reply`, `fail`, `if`, `otherwise`, `for`, `in`, `think`, `using`, `within`,
-`seconds`, `is`, `not`, `more`, `less`, `than`, `contains`, `and`, `or`, `yes`, `no`, `nothing`.
+`private`, `readonly`, `reply`, `fail`, `if`, `otherwise`, `for`, `in`, `repeat`, `while`, `think`, `using`,
+`within`, `seconds`, `is`, `not`, `more`, `less`, `than`, `contains`, `and`, `or`, `yes`, `no`, `nothing`.
+
+`repeat` is a loop only when `while` comes right after it, and `up`, `to`, `times` and `time` have a
+meaning only in `up to N times`; anywhere else they are names like any other.
 
 ## A larger example
 
@@ -515,11 +553,12 @@ server_tool   = NAME "from" "mcp" TEXT { "readonly" | "env" TEXT { TEXT } } ;
 
 (* The lines of a section *)
 block         = INDENT statement { statement } DEDENT ;
-statement     = reply | fail | if | for | assignment | expression_line ;
+statement     = reply | fail | if | for | repeat | assignment | expression_line ;
 reply         = "reply" expression NEWLINE ;
 fail          = "fail" expression NEWLINE ;
 if            = "if" expression NEWLINE block [ "otherwise" NEWLINE [ block ] ] ;
 for           = "for" NAME "in" expression NEWLINE block ;
+repeat        = "repeat" "while" expression [ "up" "to" NUMBER ( "times" | "time" ) ] NEWLINE block ;
 assignment    = NAME "=" expression NEWLINE ;
 expression_line = expression NEWLINE ;      (* begins with "think", with NAME ".", or with no NAME *)
 
@@ -555,6 +594,9 @@ Reading notes:
   otherwise the fields of a value (`forecast.summary`). With values or `within` it is always a call,
   and it needs the form `target.action`. The action may have more names (`weather.Weather.ask`) and
   dashes (`github.create-issue`), since `-` belongs to names.
+- **`repeat`** is a loop only when `while` comes right after it, so a value or a tool may still be called
+  `repeat`. `up`, `to`, `times` and `time` are read only in the clause `up to N times`, where N is a whole
+  number from 1 to 1000000000; they stay free as names.
 - **A call is not a value.** The values of a call, the items of a list and the question of `think`
   are a `value`: a call or a `think` there has to be kept in a name first. A `comparison` takes calls
   on both sides.

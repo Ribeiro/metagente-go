@@ -557,3 +557,19 @@ func TestTheLimitsOfTheListenerAreSettingsWithTheValuesOfTheSpecification(t *tes
 		}
 	}
 }
+
+func TestTheCeilingOfTheTurnsOfARepeatIsASetting(t *testing.T) {
+	if got := Default().Runtime.MaxLoopTurns; got != 10000 {
+		t.Errorf("default = %d, want 10000", got)
+	}
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", "[runtime]\nmax_loop_turns = 250\n"); err != nil || cfg.Runtime.MaxLoopTurns != 250 {
+		t.Errorf("max_loop_turns = %d, %v", cfg.Runtime.MaxLoopTurns, err)
+	}
+	shown := problemText(t, Default().apply("metagente.toml", "[runtime]\nmax_loop_turns = 0\n"))
+	for _, want := range []string{"`max_loop_turns` in [runtime] must be a whole number of at least 1", "line 2"} {
+		if !strings.Contains(shown, want) {
+			t.Errorf("missing %q in:\n%s", want, shown)
+		}
+	}
+}

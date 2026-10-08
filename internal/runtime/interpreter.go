@@ -234,6 +234,8 @@ func (a *Agent) execStmt(ctx context.Context, stmt lang.Stmt, scope *env, call *
 		return a.execIf(ctx, s, scope, call)
 	case *lang.ForStmt:
 		return a.execFor(ctx, s, scope, call)
+	case *lang.RepeatStmt:
+		return a.execRepeat(ctx, s, scope, call)
 	case *lang.FailStmt:
 		return a.execFail(ctx, s, scope, call)
 	}
@@ -287,6 +289,56 @@ func (a *Agent) execFor(ctx context.Context, s *lang.ForStmt, scope *env, call *
 		}
 	}
 	return value.Nothing, false, nil
+}
+
+// execRepeat runs the body while the condition is true, and stops at a `reply`.
+//
+// `up to N times` is a cap the author chose: after N turns the loop ends and the lines after it run. The
+// ceiling max_loop_turns is a safety net: if the condition is still true after that many turns, the run
+// stops with a problem, since going on would only hide that nothing changes what the condition looks at.
+func (a *Agent) execRepeat(ctx context.Context, s *lang.RepeatStmt, scope *env, call *Call) (value.Value, bool, error) {
+	ceiling := a.RT.Config.Runtime.MaxLoopTurns
+	for turns := 0; ; turns++ {
+		if err := ctx.Err(); err != nil {
+			return value.Nothing, false, a.loopStopped(s.Span, err)
+		}
+		if s.HasLimit && turns >= s.Limit {
+			return value.Nothing, false, nil
+		}
+		cond, err := a.eval(ctx, s.Cond, scope, call)
+		if err != nil {
+			return value.Nothing, false, err
+		}
+		if !cond.Truthy() {
+			return value.Nothing, false, nil
+		}
+		if turns >= ceiling {
+			return value.Nothing, false, a.loopTooLong(s, ceiling)
+		}
+		if v, replied, err := a.execBlock(ctx, s.Body, scope, call); err != nil || replied {
+			return v, replied, err
+		}
+	}
+}
+
+// loopStopped is the problem for a loop that was cut off between two turns.
+func (a *Agent) loopStopped(span lang.Span, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return a.diag(span, "the time for this run ended before the loop finished").
+			Fix("try again, or give the run more time")
+	}
+	return a.diag(span, "the run was stopped before this loop finished")
+}
+
+// loopTooLong is the problem for a loop whose condition is still true at the ceiling of turns.
+func (a *Agent) loopTooLong(s *lang.RepeatStmt, ceiling int) error {
+	message := fmt.Sprintf("this `repeat` took %d turns and its condition is still true", ceiling)
+	if s.HasLimit {
+		message = fmt.Sprintf("`up to %d times` is more than the %d turns this setup allows, and the condition is still true after them",
+			s.Limit, ceiling)
+	}
+	return a.diag(s.Span, message).
+		Fix("make sure the lines under it change what the condition looks at; if more turns are really needed, raise max_loop_turns in the [runtime] section of metagente.toml")
 }
 
 func (a *Agent) execFail(ctx context.Context, s *lang.FailStmt, scope *env, call *Call) (value.Value, bool, error) {

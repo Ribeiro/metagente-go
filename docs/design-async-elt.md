@@ -296,7 +296,8 @@ The pipeline is made of **generic pieces**, with their safety rules, and of an e
 - Pulls batches (a limit in flight), tells the broker that a long batch is still in progress, and has
   the circuit breaker of section 8.
 
-**A bounded loop** (`repeat while … `, with a maximum number of turns) for paging.
+**A bounded loop**, `repeat while condition [up to N times]`, for paging. It is built: see
+[the language](LANGUAGE.md#repeat). The ceiling of turns is `max_loop_turns`.
 
 **`fail … retry`** (a change to the language)
 - `fail "The destination is busy" retry in 60 seconds`. The time is optional and is only a suggestion,
@@ -391,6 +392,10 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
 
 The questions that were open in the first draft, with what was decided. The items marked *to confirm*
 are proposals until the owner of data protection of the organization confirms them.
+
+Reported by the maintainer on 2026-10-08: the team accepts personal data inside the broker, which is the
+premise of the batch event in section 5. The rest of items 2 and 3 (the model step, and the retention
+times) is still to be confirmed.
 
 1. **What is a failure that can pass, and one that cannot?** *Decided.* The runtime classifies by where
    the error comes from. Infrastructure (a timeout, a connection, the destination or the broker down, the
