@@ -194,7 +194,9 @@ func (*ExprStmt) stmtNode()   {}
 func (*ReplyStmt) stmtNode()  {}
 func (*IfStmt) stmtNode()     {}
 func (*ForStmt) stmtNode()    {}
-func (*RepeatStmt) stmtNode() {}
+func (*RepeatStmt) stmtNode() {
+	// Only marks RepeatStmt as a statement.
+}
 func (*FailStmt) stmtNode()   {}
 
 // CompareOp is a comparison operator.
