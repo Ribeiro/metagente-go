@@ -632,3 +632,12 @@ func TestThePathOfTheFileIsNotInTheMessageOfAFailureToOpenIt(t *testing.T) {
 		t.Errorf("the path is in:\n%s", opened)
 	}
 }
+
+func TestTheNumbersThatADriverHandsOverAsTextAreNumbersAgain(t *testing.T) {
+	cells := []any{"25", "7.5", "9007199254740993", "abc", int64(3), "keep"}
+	numbersFromText(cells, []bool{true, true, true, true, true, false})
+	if cells[0] != int64(25) || cells[1] != 7.5 || cells[2] != int64(9007199254740993) || cells[3] != "abc" || cells[4] != int64(3) || cells[5] != "keep" {
+		t.Errorf("cells = %#v", cells)
+	}
+	numbersFromText(cells, nil) // a driver that gives numbers as numbers changes nothing
+}
