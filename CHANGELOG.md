@@ -9,6 +9,14 @@ minor versions.
 
 ### Added
 
+- `samples/async-elt`, first half: the Extractor of the asynchronous ELT (phase 3 of
+  `docs/design-async-elt.md`). It reads a table by key in pages, halves a page that is too big for the
+  size it aims at, saves the edges of every batch in a small outbox before publishing it, publishes each
+  batch (rows packed with `tool codec`, with their hash and an id that lets the broker drop a copy), and
+  ends with a control event with the totals. Started again with the same job, it sends again what was
+  planned and not confirmed, and nothing twice. The sample brings the migrations of the outbox and of a
+  demo source, and is tried at every change (a broker in memory in `internal/runtime`, a real JetStream
+  server in `integration/`). `codec.count` was added to `tool codec` for it.
 - `tool codec`, the small pieces that a pipeline needs to move rows between two programs (phase 3 of
   `docs/design-async-elt.md`): `codec.record` (a record made from the values given), `table` and `records`
   (rows as lists of values with the names of the columns said once, and back), `json` and `parse`, `size`,

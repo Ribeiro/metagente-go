@@ -1,0 +1,65 @@
+agent Extractor
+  goal "Copy a table into batch events on the broker, page by page, and be able to start again where it stopped"
+  tool source from sql "source"
+  tool outbox from sql "outbox"
+  tool events from broker "main" publish "etl.*.batch" "etl.*.control"
+  tool codec
+  tool clock
+
+  # job is the name of the job (a new one starts it, the same one starts it again where it stopped);
+  # size is the most rows of a page; bytes is the size a batch aims at before it is packed.
+  accepts extract job size bytes  # copy the table, and say how many batches and rows went out
+  on extract
+    version = outbox.version
+    if version is not 1
+      fail "the outbox has version {version}, and this Extractor works with version 1"
+    page_size = outbox.int n: size
+    limit = outbox.int n: bytes
+    more = yes
+    repeat while more
+      todo = outbox.next_planned job: job
+      if todo is nothing
+        # Nothing waits: plan the next batch. A page that is too big is halved until it fits.
+        seq = outbox.next_seq job: job
+        after = outbox.last_upto job: job
+        n = page_size
+        fits = no
+        repeat while not fits up to 40 times
+          rows = source.page after: after size: n
+          weight = codec.size value: rows
+          if weight is more than limit and n is more than 1
+            n = outbox.half n: n
+          otherwise
+            fits = yes
+        upto = nothing
+        for row in rows
+          upto = row.id
+        if upto is nothing
+          more = no
+        otherwise
+          planned = codec.count value: rows
+          saved = outbox.plan job: job seq: seq after_key: after upto_key: upto row_count: planned
+        batch_seq = seq
+        batch_after = after
+        batch_rows = rows
+      otherwise
+        # A batch was planned and never confirmed: build it again from the same edges.
+        batch_seq = todo.seq
+        batch_after = todo.after_key
+        upto = todo.upto_key
+        batch_rows = source.range after: batch_after upto: upto
+      if upto is not nothing
+        count = codec.count value: batch_rows
+        table = codec.table rows: batch_rows columns: ["id", "customer", "document", "total"]
+        body = codec.json value: table
+        hash = codec.sha256 text: body
+        payload = codec.gzip text: body
+        event_id = codec.uuid
+        read_at = clock.now
+        event = codec.record v: 1 event_id: event_id job_id: job seq: batch_seq table: "orders" key: "id" after: batch_after upto: upto read_at: read_at.text columns: ["id", "customer", "document", "total"] row_count: count encoding: "json+gzip" payload: payload sha256: hash
+        events.publish subject: "etl.{job}.batch" id: "{job}:{batch_seq}" data: event
+        confirmed = outbox.confirm job: job seq: batch_seq
+    totals = outbox.totals job: job
+    control = codec.record v: 1 job_id: job kind: "planned" batches: totals.batches rows: totals.rows
+    events.publish subject: "etl.{job}.control" id: "{job}:control" data: control
+    reply "job {job}: {totals.batches} batches, {totals.rows} rows"

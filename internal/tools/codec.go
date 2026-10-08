@@ -52,6 +52,12 @@ func (d *Codec) Call(_ context.Context, action string, args Args) (value.Value, 
 	case "json":
 		text, err := d.encode(action, args["value"])
 		return value.Text(text), err
+	case "count":
+		list := args["value"]
+		if list.Kind != value.KindList {
+			return value.Nothing, diag.Newf("`%s.count` needs a list, and it is %s", d.decl.Name, list.Describe())
+		}
+		return value.Number(float64(len(list.List))), nil
 	case "size":
 		text, err := d.encode(action, args["value"])
 		return value.Number(float64(len(text))), err
@@ -68,7 +74,7 @@ func (d *Codec) Call(_ context.Context, action string, args Args) (value.Value, 
 	case "uuid":
 		return newUUIDv7()
 	}
-	return value.Nothing, UnknownAction(d.decl.Name, action, []string{"record", "table", "records", "json", "parse", "size", "gzip", "gunzip", "sha256", "uuid"})
+	return value.Nothing, UnknownAction(d.decl.Name, action, []string{"record", "table", "records", "json", "parse", "count", "size", "gzip", "gunzip", "sha256", "uuid"})
 }
 
 // text reads the text value of an action, within the limit.

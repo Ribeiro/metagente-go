@@ -189,10 +189,21 @@ func TestAUUIDIsVersion7AndCarriesTheTime(t *testing.T) {
 	}
 }
 
+func TestCountSaysHowManyItemsAListHas(t *testing.T) {
+	c := codec(t, 0)
+	if n := call(t, c, "count", Args{"value": names("a", "b", "c")}); n.Number != 3 {
+		t.Errorf("count = %v", n.Number)
+	}
+	if n := call(t, c, "count", Args{"value": value.List(nil)}); n.Number != 0 {
+		t.Errorf("count of none = %v", n.Number)
+	}
+	fail(t, c, "count", Args{"value": text("abc")}, "needs a list")
+}
+
 func TestACodecKnowsItsActionsAndSaysSoForAnotherOne(t *testing.T) {
 	c := codec(t, 0)
 	actions, _ := c.Actions(context.Background())
-	if len(actions) != 10 {
+	if len(actions) != 11 {
 		t.Errorf("actions = %d", len(actions))
 	}
 	fail(t, c, "jsno", Args{}, "has no action called `jsno`")
