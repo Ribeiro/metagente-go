@@ -9,6 +9,16 @@ minor versions.
 
 ### Added
 
+- `samples/async-elt`, second half: the Worker of the asynchronous ELT (phase 3 of
+  `docs/design-async-elt.md`), run with `metagente consume`. For each batch it checks the version, the encoding
+  and the SHA-256, lands the rows in a staging table together with the mark of the batch (transaction 1),
+  and transforms them (transaction 2): rows that break a rule go to a rejects table with their key and a code,
+  never the content, the rest are written by an upsert, and the batch is marked done with its counts. A copy of
+  an event is only confirmed, a batch that was landed goes straight to transaction 2, and a batch with more than
+  20 percent of rejected rows is stopped and ends in a dead letter that can be sent again. A job is closed by one
+  conditional `UPDATE` when every batch is done and the rows add up, and a `purge` message cleans staging. The
+  sample brings the control tables for SQLite and PostgreSQL (migrations, and a configuration for PostgreSQL),
+  and is tried at every change, and against real JetStream and PostgreSQL in `integration/`.
 - `samples/async-elt`, first half: the Extractor of the asynchronous ELT (phase 3 of
   `docs/design-async-elt.md`). It reads a table by key in pages, halves a page that is too big for the
   size it aims at, saves the edges of every batch in a small outbox before publishing it, publishes each

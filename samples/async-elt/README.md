@@ -1,4 +1,4 @@
-# Asynchronous ELT: the Extractor
+# Asynchronous ELT: the Extractor and the Worker
 
 Copy a large table from a **source** database to a **destination** database, in batches, with agents on
 different machines, so that a batch that fails can be tried again, also much later. The design, the failures
@@ -7,15 +7,17 @@ it covers and the decisions are in [`docs/design-async-elt.md`](../../docs/desig
 ```text
  ZONE OF THE SOURCE                 BROKER (JetStream)                 ZONE OF THE DESTINATION
 ┌────────────────────────┐      ┌───────────────────────┐       ┌──────────────────────────────┐
-│ Extractor   (this part)│ ───► │ stream etl.>          │ ───►  │ Worker (the next part)       │
+│ Extractor              │ ───► │ stream etl.>          │ ───►  │ Worker                       │
 │  reads pages by key    │ pub  │  etl.<job>.batch      │ pull  │  lands, transforms, confirms │
 │  outbox (SQLite)       │      │  etl.<job>.control    │       │                              │
 └──────────┬─────────────┘      └───────────────────────┘       └───────────────┬──────────────┘
        source DB                                                          destination DB
 ```
 
-This folder has **the Extractor** (`extractor.ag`), the configuration (`metagente.toml`), and two
-migrations. The Worker, the control tables of the destination and the rest come in the next parts.
+This folder has **the Extractor** (`extractor.ag`) and **the Worker** (`worker.ag`), their configuration
+(`metagente.toml`, and `metagente.postgres.toml` for a Worker with a PostgreSQL destination), and the
+migrations of the databases. The optional step with a language model, its budget and the brake of a whole
+job come in the next part; the sweeper that heals a job after that.
 
 ## What the Extractor does
 
@@ -84,6 +86,68 @@ against a copy is `(job_id, seq)`.
    `trust` shows both databases (the outbox as one that is **changed**), the broker and the subjects it may
    publish to. Run the last command again: it finds everything done and sends nothing new.
 
+## The Worker
+
+Run it with `metagente consume`, one copy for each kind of event (and as many copies of each as you want:
+they share the work by the name of the consumer):
+
+```sh
+metagente trust worker.ag --from main --subject 'etl.*.batch'   --dead etl.dead
+metagente trust worker.ag --from main --subject 'etl.*.control' --dead etl.dead
+metagente consume worker.ag --from main --subject 'etl.*.batch'   --dead etl.dead --message batch   --in-flight 2
+metagente consume worker.ag --from main --subject 'etl.*.control' --dead etl.dead --message control
+metagente run worker.ag purge days=7        # from time to time, from cron or a timer
+```
+
+For **each batch** (`on batch`) it does this, and the state of the batch is changed in the same transaction as
+its data:
+
+1. Checks that the control tables have the version it knows, and that the event is version 1, `json+gzip`,
+   with the columns it lands. Otherwise the event is a final failure: a dead letter.
+2. Looks at `etl_batches`. **`done`**: the event is a copy, and it is only confirmed. **`landed` or `failed`**:
+   the data is in staging already, so it goes straight to step 5 and does not even read the payload.
+3. Not there yet: unpacks the payload, checks the **SHA-256** (a wrong hash is a final failure and nothing
+   lands), and parses the rows.
+4. **Transaction 1, `land_batch`:** opens the job if it is new, puts the rows in the staging table and marks the
+   batch `landed`. All or nothing; a row that is there already is harmless.
+5. **The brake:** if more than 20 percent of the batch would be rejected, the batch is marked `failed` with the
+   code `TOO_MANY_REJECTS` and ends in a dead letter. A high rate is usually a change in the source, not a few
+   bad rows, and it should not be loaded in silence.
+6. **Transaction 2, `transform_batch`:** the rows that break a rule go to `etl_rejects` with their **key and a
+   code, never the content** (`TOTAL_NEGATIVE`, `CUSTOMER_EMPTY`); the others are written to the final table
+   by an **upsert** on the business key; the batch is marked `done` with its counts. All or nothing.
+7. Tries to close the job (below), and replies. The event is confirmed.
+
+For the **control event** (`on control`) it registers the totals the Extractor announced and tries to close
+the job. **A job closes** with one conditional `UPDATE`, so that two Workers that try at once close it once: it
+becomes `done` when every announced batch is done and the rows read are the rows loaded plus the rows
+rejected, and `mismatch` when the batches are done and the rows do not add up. Whichever comes last, the
+last batch or the control event, closes it.
+
+What happens when something goes wrong, with the commands above:
+
+| What fails | What happens |
+|---|---|
+| The destination is down or deadlocked | The failure may pass: the event is asked for again later (10 s, 1, 5, 15 min), and the circuit breaker of `consume` stops taking batches while it lasts |
+| The Worker stops after transaction 1 | The batch stays `landed`; the event comes again and goes straight to transaction 2 |
+| A copy of an event | The batch is `done`: only confirmed |
+| A damaged event (wrong hash) | A dead letter; nothing lands |
+| Too many rejected rows | The batch is `failed`, a dead letter; the rows stay in staging |
+| A bug in the SQL | The batches fail and become dead letters. Fix the statements and send the dead letters again (see below) |
+
+**Sending a dead letter again:** its data is the event, with the reason in the header `Metagente-Dead-Reason` (a
+reason, never content). Publish the data again with a new id to the same subject (`nats pub` or an agent with
+`tool broker`); a batch that is `failed` or `landed` is transformed again from staging, with no need for the
+source. A fix of the data in staging, or of the rules in `metagente.toml`, comes first.
+
+**The staging table** holds the rows as the Extractor masked them, so `purge` deletes the batches that were
+done more than N days ago. Keep it short (the design proposes 7 days after the end of the job).
+
+**A PostgreSQL destination:** make the tables with `migrations/destination.postgres.sql`, put the password in
+the variable `DEST_DB_PASSWORD`, and run the commands above with `--config metagente.postgres.toml`. The file
+has the same statements in the dialect of PostgreSQL, and everything else a machine that only has the Worker
+needs: it never reaches the source.
+
 ## Personal data
 
 The rows may hold personal data, so the sample treats every job as if they did (section 10 of the design):
@@ -91,8 +155,13 @@ The rows may hold personal data, so the sample treats every job as if they did (
 - Only the columns the statement lists leave the source, and the ones that must not travel in clear are
   masked **in the statement itself**. Keep `columns` in `extractor.ag` equal to the list of the statements.
 - The source is read with a user that may only read. The broker should have TLS, a user for each role (the
-  Extractor may only publish on `etl.*.batch` and `etl.*.control`), encrypted storage and a short retention.
-- A problem of the databases or of the broker names the place, never the content of a row.
+  Extractor may only publish on `etl.*.batch` and `etl.*.control`; a Worker may only read those and write
+  `etl.dead`), encrypted storage and a short retention. The dead letters hold data too: give them the same
+  care, and a retention (the design proposes 14 days).
+- The user of the Worker in the destination needs only select, insert, update and delete on the tables of the
+  migration. The control tables hold keys and codes, no personal data; staging and the final table do.
+- A problem of the databases or of the broker names the place, never the content of a row, and what a
+  driver says is cleaned of what is between quotes before it is shown or kept in a dead letter.
 
 ## Changing it
 
@@ -104,7 +173,11 @@ The rows may hold personal data, so the sample treats every job as if they did (
   128, 256 and 512 KiB, and look for the best throughput. The broker takes a message up to `max_broker_bytes`
   (1 MiB) of `[limits]`.
 
-> **How this is tested:** `internal/runtime/sample_async_elt_test.go` runs the files of this folder at every
-> change, with the migrations and a broker in memory: the whole table, a page that is halved, a stop in the
-> middle and a restart, a job started again with another size, and an outbox of another version. The
-> integration tests (`integration/sample_async_elt_test.go`) run it against a real JetStream server.
+> **How this is tested:** `internal/runtime/sample_async_elt_test.go` runs the Extractor and
+> `internal/consume/sample_worker_test.go` runs the Extractor and the Worker at every change, with the files of
+> this folder, the migrations and a broker in memory: the whole table, a page that is halved, a stop in the
+> middle and a restart, bad rows, the brake and a retransform, a copy of an event, a damaged event, a batch
+> that was landed and stopped, a version of the tables that the Worker does not know, the close of a job and
+> the purge. The integration tests (`integration/sample_async_elt_test.go` and `sample_worker_test.go`) run the
+> Extractor against a real JetStream server, and the Extractor and the Worker through real JetStream and
+> PostgreSQL, with the PostgreSQL configuration.

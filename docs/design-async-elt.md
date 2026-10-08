@@ -372,8 +372,9 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
    `mode = "write"`, statements with `INSERT`, `UPDATE` and `DELETE`, a list of rows in one transaction
    (`each`/`columns`) and transactions of several statements, which is what the Worker needs to land and to
    transform. `tool codec` is done too (JSON, gzip, SHA-256, UUID v7 and records), for the batch event of
-   section 5. The Extractor of the sample is done (`samples/async-elt`); the Worker, the control tables, the
-   purge, the closing of a job, the budget of the model step and the brakes are next.
+   section 5. The Extractor and the Worker of the sample are done (`samples/async-elt`: control tables, landing,
+   transformation, rejects, the brake of rejected rows, the closing of a job and the purge, for SQLite and
+   PostgreSQL); the model step with its budget, and the brake of a whole job, are next.
 4. **The sweeper with its alerts and the resend of lost batches,** and more dialects (SQL Server, Oracle).
 
 ## 16. Tests

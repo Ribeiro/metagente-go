@@ -1,0 +1,52 @@
+agent Worker
+  goal "Land the batches of an ETL job in the destination, transform them, and close the job"
+  tool dest from sql "dest"
+  tool codec
+
+  # One batch, as the Extractor publishes it. The fields are all of the event.
+  accepts batch v event_id job_id seq table key after upto read_at columns row_count encoding payload sha256  # land one batch and transform it
+  # The end of a job at the source: how many batches and rows to expect.
+  accepts control v job_id kind batches rows  # register the totals of a job, and close it if everything is done
+  # Staging holds the rows as they came: clean it from time to time.
+  accepts purge days  # delete from staging the batches that were done more than this many days ago
+
+  on batch
+    version = dest.version
+    if version is not 1
+      fail "the destination has version {version} of the control tables, and this Worker works with version 1"
+    if v is not 1
+      fail "the event has version {v}, and this Worker reads version 1"
+    if encoding is not "json+gzip"
+      fail "the event is encoded as {encoding}, and this Worker reads json+gzip"
+    if columns is not ["id", "customer", "document", "total"]
+      fail "the columns of the event are not the ones this Worker lands"
+    state = dest.batch_state job: job_id seq: seq
+    if state is "done"
+      reply "batch {seq} of {job_id} was already done"
+    if state is nothing
+      # Not landed yet: check the event, and land it (transaction 1).
+      body = codec.gunzip text: payload
+      check = codec.sha256 text: body
+      if check is not sha256
+        fail "the hash of batch {seq} of {job_id} does not match: the event is damaged"
+      rows = codec.parse text: body
+      landed = dest.land_batch job: job_id seq: seq row_count: row_count rows: rows
+    # Landed (now, or by a copy of this event before): the brake, and then transaction 2.
+    share = dest.reject_share job: job_id seq: seq
+    if share is more than 20
+      marked = dest.fail_batch job: job_id seq: seq code: "TOO_MANY_REJECTS"
+      fail "more than 20 percent of batch {seq} of {job_id} would be rejected: it is probably a change in the source"
+    transformed = dest.transform_batch job: job_id seq: seq version: "v1"
+    closed = dest.try_close job: job_id
+    counts = dest.batch_counts job: job_id seq: seq
+    reply "batch {seq} of {job_id}: {counts.rows_loaded} loaded, {counts.rows_rejected} rejected"
+
+  on control
+    registered = dest.register_totals job: job_id batches: batches rows: rows
+    closed = dest.try_close job: job_id
+    state = dest.job_state job: job_id
+    reply "job {job_id} is {state}"
+
+  on purge
+    removed = dest.purge days: days
+    reply "removed {removed} rows from staging"
