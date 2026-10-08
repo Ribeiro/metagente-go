@@ -107,19 +107,8 @@ func (c *BrokerConn) check(fail func(string, ...any) *diag.Diagnostic, where str
 	case c.URL == "":
 		return fail("%s needs a url", where).Fix(`write, for example: url = "nats://broker.example.com:4222"`)
 	}
-	u, err := url.Parse(c.URL)
-	switch {
-	case err != nil || u.Host == "" || (u.Scheme != "nats" && u.Scheme != "tls"):
-		return fail("url in %s is not an address of a NATS server", where).
-			Fix(`write it like: nats://broker.example.com:4222 (or tls://...)`)
-	case u.User != nil:
-		return fail("url in %s has a user or a password in it", where).
-			Fix("write the user in `user`, and put the password in [credentials] (a variable that holds it)")
-	case u.Path != "" && u.Path != "/" || u.RawQuery != "":
-		return fail("url in %s has more than the address of the server", where).Fix("write only scheme, host and port")
-	case strings.ContainsAny(c.Stream, " .*>\t") || (c.Stream != "" && !lang.ValidConnectionName(c.Stream)):
-		return fail("stream in %s is not the name of a stream: use letters, digits, `_` and `-`", where).
-			Fix("write the name the stream has on the server")
+	if err := c.checkURL(fail, where); err != nil {
+		return err
 	}
 	switch c.TLS {
 	case "":
@@ -132,6 +121,25 @@ func (c *BrokerConn) check(fail func(string, ...any) *diag.Diagnostic, where str
 	if c.CAFile != "" && c.TLS != TLSVerify {
 		return fail("ca_file in %s only means something with tls = \"%s\"", where, TLSVerify).
 			Fix("remove it, or remove tls")
+	}
+	return nil
+}
+
+// checkURL looks at the address of the server and at the name of the stream.
+func (c *BrokerConn) checkURL(fail func(string, ...any) *diag.Diagnostic, where string) error {
+	u, err := url.Parse(c.URL)
+	switch {
+	case err != nil || u.Host == "" || (u.Scheme != "nats" && u.Scheme != "tls"):
+		return fail("url in %s is not an address of a NATS server", where).
+			Fix(`write it like: nats://broker.example.com:4222 (or tls://...)`)
+	case u.User != nil:
+		return fail("url in %s has a user or a password in it", where).
+			Fix("write the user in `user`, and put the password in [credentials] (a variable that holds it)")
+	case u.Path != "" && u.Path != "/" || u.RawQuery != "":
+		return fail("url in %s has more than the address of the server", where).Fix("write only scheme, host and port")
+	case c.Stream != "" && !lang.ValidConnectionName(c.Stream):
+		return fail("stream in %s is not the name of a stream: use letters, digits, `_` and `-`", where).
+			Fix("write the name the stream has on the server")
 	}
 	return nil
 }
