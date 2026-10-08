@@ -78,6 +78,7 @@ const (
 	ToolClock
 	ToolEnv
 	ToolMCP
+	ToolSQL
 )
 
 // ToolDecl is one `tool` line.
@@ -93,7 +94,8 @@ type ToolDecl struct {
 	HasScope bool
 	// EnvNames are the variables `tool env "A" "B"` may read.
 	EnvNames []string
-	// Command is the command or address of `tool x from mcp "..."`.
+	// Command is the command or address of `tool x from mcp "..."`, or the name of the connection of
+	// `tool x from sql "..."` (see ConnectionName).
 	Command string
 	// MCPEnv are the extra variables passed to the tool server
 	// (`... from mcp "cmd" env "A"`, requirement E1).
@@ -105,6 +107,11 @@ type ToolDecl struct {
 	// AllowPrivate is `tool http allow private`.
 	AllowPrivate bool
 }
+
+// ConnectionName is the name of the connection of a `tool x from sql "name"`: the [sql.name] section of
+// metagente.toml, which holds the database and the statements. It is kept in Command, so that the record
+// of the language, which lists every field of a declaration, does not change for all the other tools.
+func (t *ToolDecl) ConnectionName() string { return t.Command }
 
 // LinkDecl is `link Name [from "path.ag"]`.
 type LinkDecl struct {

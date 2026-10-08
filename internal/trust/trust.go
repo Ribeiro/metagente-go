@@ -39,6 +39,8 @@ const (
 	// KindModel is an address that is sent the key and the questions of a
 	// language model, when it is not the default one of the provider.
 	KindModel Kind = "model"
+	// KindSQL is a database an agent reads, with the statements it may run on it.
+	KindSQL Kind = "sql"
 )
 
 // Item is one thing that needs approval.
@@ -51,6 +53,9 @@ type Item struct {
 	// as a bearer token. The same address with another credential is another
 	// approval, because the token goes there.
 	Credential string `json:"credential,omitempty"`
+	// Detail says more about what is approved, and is part of it: for a database, the connection, the
+	// statements and a fingerprint of their text, so that a change to a statement is asked again.
+	Detail string `json:"detail,omitempty"`
 	// Keyless is true for the address of a model to which no key is sent: none is set, and the address is
 	// of this same computer. It only changes what Describe says. It is not part of the key of the item and
 	// it is not saved, so what was approved before stays approved.
@@ -79,6 +84,16 @@ func (i Item) WithoutKey() Item {
 	return i
 }
 
+// SQLItem is a database an agent reads. The connection, the names of the statements and the fingerprint of
+// their text are part of what is approved: the same database with another statement is not the same thing.
+func SQLItem(driver, target, connection string, statements []string, fingerprint string) Item {
+	return Item{
+		Kind:   KindSQL,
+		Target: strings.TrimSpace(driver + " " + target),
+		Detail: fmt.Sprintf("connection %s, statements %s, fingerprint %s", connection, strings.Join(statements, ", "), fingerprint),
+	}
+}
+
 // RemoteItem is an address an agent connects to.
 func RemoteItem(address string) Item {
 	return Item{Kind: KindRemote, Target: strings.TrimSpace(address)}
@@ -105,6 +120,9 @@ func (i Item) Key() string {
 		// existed keep the same key, and the same hash.
 		key += "\x00" + i.Credential
 	}
+	if i.Detail != "" {
+		key += "\x00" + i.Detail
+	}
 	return key
 }
 
@@ -128,6 +146,8 @@ func (i Item) Describe() string {
 			return "sends what the agent asks the language model to, with no key (none is set): " + i.Target
 		}
 		return "sends your key and what the agent asks the language model to: " + i.Target
+	case KindSQL:
+		return "reads the database: " + i.Target + " (" + i.Detail + ")"
 	default:
 		text := "connects to: " + i.Target
 		if i.Credential != "" {

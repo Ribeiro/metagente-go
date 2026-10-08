@@ -38,6 +38,8 @@ type Runtime struct {
 	MCP *mcp.Pool
 	// Remote reaches the agents that run somewhere else.
 	Remote *remote.Pool
+	// SQL keeps the databases that agents read.
+	SQL *tools.SQLPool
 	// Log keeps the details of failures inside Metagente (requirement P2).
 	Log *applog.Log
 	// Model answers `think`. It is built from the configuration the first time
@@ -58,6 +60,7 @@ func New(cfg *config.Config) *Runtime {
 		Linker: NewLinker(),
 		Trust:  trust.NewRegistry(trust.DefaultDir()),
 		Getenv: os.Getenv,
+		SQL:    tools.NewSQLPool(),
 		states: tools.NewStateStore(cfg.Limits),
 	}
 	rt.Log = applog.Default().With(rt.secretValues)
@@ -78,7 +81,7 @@ func New(cfg *config.Config) *Runtime {
 }
 
 // Close ends the programs the runtime started. Call it when the work is done.
-func (rt *Runtime) Close() error { return rt.MCP.Close() }
+func (rt *Runtime) Close() error { return errors.Join(rt.MCP.Close(), rt.SQL.Close()) }
 
 // Call travels with every call, so cycles can be found and calls can be told
 // apart.
@@ -125,6 +128,14 @@ func NewAgent(rt *Runtime, def *lang.AgentDef, contextID string) (*Agent, error)
 		States:         rt.states,
 		ContextID:      contextID,
 		Proxy:          proxy,
+		SQL: tools.SQLOptions{
+			Conns:       rt.Config.SQL,
+			Credentials: rt.Config.Credentials,
+			Getenv:      func(name string) string { return rt.Getenv(name) },
+			Root:        rt.Config.Root,
+			Pool:        rt.SQL,
+			Allow:       rt.allowSQL,
+		},
 	})
 	if err != nil {
 		return nil, err

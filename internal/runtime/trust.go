@@ -6,6 +6,7 @@ import (
 	"github.com/Ribeiro/metagente-go/internal/llm"
 	"github.com/Ribeiro/metagente-go/internal/mcp"
 	"github.com/Ribeiro/metagente-go/internal/remote"
+	"github.com/Ribeiro/metagente-go/internal/tools"
 	"github.com/Ribeiro/metagente-go/internal/trust"
 )
 
@@ -43,7 +44,7 @@ func (w *needsWalk) visit(list []*lang.AgentDef) {
 		fresh = append(fresh, agent)
 		w.thinks = w.thinks || lang.UsesThink(agent)
 	}
-	w.lists = append(w.lists, trust.NeedsOfWith(fresh, w.rt.Config.Credentials))
+	w.lists = append(w.lists, trust.NeedsOfWith(fresh, w.rt.Config.Credentials), w.rt.sqlNeeds(fresh))
 	for _, agent := range fresh {
 		for _, decl := range agent.Links {
 			target, err := w.rt.Linker.Resolve(w.rt.Config.Root, agent, decl.Name, decl.Path, decl.HasPath)
@@ -135,6 +136,45 @@ func (rt *Runtime) allowServer(spec mcp.Spec) error {
 	return diag.Newf("the tool server `%s` has not been approved for this project", spec.Command).
 		AddRelated(item.Describe()).
 		Fix("read what it does, and approve it with: metagente trust FILE.ag")
+}
+
+// sqlItem is the approval of a database: where it is, the statements that may run on it, and a
+// fingerprint of their text.
+func sqlItem(spec tools.SQLSpec) trust.Item {
+	return trust.SQLItem(spec.Driver, spec.Target, spec.Connection, spec.Statements, spec.Fingerprint).
+		WithCredential(spec.Credential)
+}
+
+// sqlNeeds lists the databases the agents read. A connection that is not in the configuration is left
+// out: the agent says so when it is set up.
+func (rt *Runtime) sqlNeeds(agents []*lang.AgentDef) []trust.Item {
+	var items []trust.Item
+	for _, agent := range agents {
+		for _, decl := range agent.Tools {
+			if decl.Kind != lang.ToolSQL {
+				continue
+			}
+			if spec, err := tools.SQLSpecOf(decl, rt.Config.SQL, rt.Config.Credentials); err == nil {
+				items = append(items, sqlItem(spec))
+			}
+		}
+	}
+	return items
+}
+
+// allowSQL is the check a database makes before it is opened for the first time.
+func (rt *Runtime) allowSQL(spec tools.SQLSpec) error {
+	item := sqlItem(spec)
+	missing, err := rt.Trust.Missing(rt.Config.Root, []trust.Item{item})
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return diag.Newf("the database of `%s` has not been approved for this project", spec.Tool).
+		AddRelated(item.Describe()).
+		Fix("read what it reads, and approve it with: metagente trust FILE.ag")
 }
 
 // allowRemote is the check the pool of remote agents makes before it reaches an

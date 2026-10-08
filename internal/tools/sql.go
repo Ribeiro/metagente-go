@@ -1,0 +1,555 @@
+package tools
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"github.com/Ribeiro/metagente-go/internal/clip"
+	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/secret"
+	"github.com/Ribeiro/metagente-go/internal/value"
+)
+
+// sqlDriver is what a build knows about one database: how to open it so that it can only be read.
+type sqlDriver struct {
+	// name is the name the driver has in database/sql.
+	name string
+	// file is true when the location is a file, which must exist: opening must not create it.
+	file bool
+	// dsn gives the connection string for a location, in a way that allows reading only.
+	dsn func(location string) string
+}
+
+// sqlDrivers are the drivers this build has. The file of each driver adds itself, so a build made with
+// -tags nosqlite has none and says so when a database is used.
+var sqlDrivers = map[string]sqlDriver{}
+
+// placeholders are the signs each driver wants for the parameters of a statement.
+var placeholders = map[string]func(int) string{
+	"sqlite": func(int) string { return "?" },
+}
+
+// SQLOptions is what `tool x from sql` needs from the runtime.
+type SQLOptions struct {
+	// Conns are the [sql.NAME] sections of metagente.toml.
+	Conns map[string]*config.SQLConn
+	// Credentials say, for the name of a tool, the NAME of the variable that holds the connection string.
+	Credentials map[string]string
+	// Getenv reads the variable of a credential when a database is opened.
+	Getenv func(string) string
+	// Root is the folder of the project: a relative path of a database starts there.
+	Root string
+	// Pool keeps the open databases; a server shares one between its agents.
+	Pool *SQLPool
+	// Allow is asked before a database is opened for the first time: it is the approval of
+	// `metagente trust`.
+	Allow func(SQLSpec) error
+}
+
+// SQLSpec says what a `tool x from sql` reaches. It is what the person approves with `metagente trust`.
+type SQLSpec struct {
+	Tool       string
+	Connection string
+	Driver     string
+	// Target is where the database is, for the person to read.
+	Target string
+	// Credential is the NAME of the variable that holds the connection string, if one is set.
+	Credential string
+	// Statements are the names of the statements the agent may call.
+	Statements []string
+	// Fingerprint changes when the database or the text of a statement changes.
+	Fingerprint string
+}
+
+// SQLSpecOf is the spec of a `tool x from sql`. It is a problem when the connection is not in
+// metagente.toml.
+func SQLSpecOf(decl *lang.ToolDecl, conns map[string]*config.SQLConn, credentials map[string]string) (SQLSpec, error) {
+	conn, ok := conns[decl.ConnectionName()]
+	if !ok {
+		return SQLSpec{}, diag.Newf("the tool `%s` uses the connection `%s`, and %s has no section [sql.%s]",
+			decl.Name, decl.ConnectionName(), config.FileName, decl.ConnectionName()).
+			Fixf("add [sql.%s] with a driver, a path and some statements (see docs/LANGUAGE.md)", decl.ConnectionName())
+	}
+	spec := SQLSpec{
+		Tool: decl.Name, Connection: conn.Name, Driver: conn.Driver,
+		Credential: credentials[decl.Name], Statements: conn.Names(),
+	}
+	spec.Target = conn.Path
+	if spec.Credential != "" {
+		spec.Target = "the address held in the variable " + spec.Credential
+	}
+	sum := sha256.New()
+	fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", conn.Driver, conn.Path, spec.Credential)
+	for _, name := range spec.Statements {
+		st := conn.Statements[name]
+		fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", name, st.Result, st.Parsed.Text)
+	}
+	spec.Fingerprint = hex.EncodeToString(sum.Sum(nil))[:12]
+	return spec, nil
+}
+
+// SQLPool keeps the databases that were opened, so a server does not open one for each conversation.
+type SQLPool struct {
+	mu  sync.Mutex
+	dbs map[string]*sql.DB
+}
+
+// NewSQLPool creates an empty pool.
+func NewSQLPool() *SQLPool { return &SQLPool{dbs: map[string]*sql.DB{}} }
+
+func (p *SQLPool) get(key string, open func() (*sql.DB, error)) (*sql.DB, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if db, ok := p.dbs[key]; ok {
+		return db, nil
+	}
+	db, err := open()
+	if err != nil {
+		return nil, err
+	}
+	p.dbs[key] = db
+	return db, nil
+}
+
+// Close closes the databases.
+func (p *SQLPool) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var errs []error
+	for key, db := range p.dbs {
+		errs = append(errs, db.Close())
+		delete(p.dbs, key)
+	}
+	return errors.Join(errs...)
+}
+
+// SQL is `tool x from sql "NAME"`: the statements of a connection, called by their names. The agent
+// never writes SQL, a value is always handed over as a parameter, the database is opened to be read only,
+// and an answer has a ceiling of rows and of bytes.
+type SQL struct {
+	decl   *lang.ToolDecl
+	conn   *config.SQLConn
+	spec   SQLSpec
+	opts   SQLOptions
+	limits config.Limits
+	stmts  map[string]*sqlStatement
+	names  []string
+	owned  bool // the pool is this tool's own
+}
+
+type sqlStatement struct {
+	name        string
+	query       string
+	order       []string // the parameter of each place of the query
+	params      []string // the distinct parameters, in the order of first use
+	result      string
+	description string
+}
+
+// NewSQL creates the tool. It is a problem when the connection is not in metagente.toml.
+func NewSQL(decl *lang.ToolDecl, opts SQLOptions, limits config.Limits) (*SQL, error) {
+	spec, err := SQLSpecOf(decl, opts.Conns, opts.Credentials)
+	if err != nil {
+		return nil, err
+	}
+	conn := opts.Conns[decl.ConnectionName()]
+	place := placeholders[conn.Driver]
+	if place == nil {
+		place = placeholders["sqlite"]
+	}
+	s := &SQL{decl: decl, conn: conn, spec: spec, opts: opts, limits: limits, stmts: map[string]*sqlStatement{}, names: spec.Statements}
+	for _, name := range spec.Statements {
+		st := conn.Statements[name]
+		query, order := st.Parsed.Rewrite(place)
+		s.stmts[name] = &sqlStatement{name: name, query: query, order: order, params: st.Parsed.Params, result: st.Result, description: st.Description}
+	}
+	if s.opts.Pool == nil {
+		s.opts.Pool, s.owned = NewSQLPool(), true
+	}
+	return s, nil
+}
+
+// Close closes the databases that this tool opened on its own; the ones of a shared pool are closed
+// with the pool.
+func (s *SQL) Close() error {
+	if s.owned {
+		return s.opts.Pool.Close()
+	}
+	return nil
+}
+
+func (s *SQL) Name() string { return s.decl.Name }
+
+// Actions are the statements: each one is an action, and its parameters are its values.
+func (s *SQL) Actions(context.Context) ([]lang.ActionInfo, error) {
+	actions := make([]lang.ActionInfo, 0, len(s.names))
+	for _, name := range s.names {
+		st := s.stmts[name]
+		description := st.description
+		if description == "" {
+			description = "Runs the statement " + name + " and gives " + resultWords(st.result)
+		}
+		info := lang.ActionInfo{Name: name, Description: description}
+		for _, p := range st.params {
+			info.Params = append(info.Params, lang.ParamInfo{Name: p, Required: true})
+		}
+		actions = append(actions, info)
+	}
+	return actions, nil
+}
+
+func resultWords(result string) string {
+	switch result {
+	case config.ResultRow:
+		return "its first row, or nothing"
+	case config.ResultValue:
+		return "its value, or nothing"
+	}
+	return "its rows"
+}
+
+func (s *SQL) Call(ctx context.Context, action string, args Args) (value.Value, error) {
+	st, ok := s.stmts[action]
+	if !ok {
+		return value.Nothing, UnknownAction(s.decl.Name, action, s.names)
+	}
+	bound, err := s.bind(st, args)
+	if err != nil {
+		return value.Nothing, err
+	}
+	db, err := s.database(ctx)
+	if err != nil {
+		return value.Nothing, err
+	}
+	rows, err := db.QueryContext(ctx, st.query, bound...)
+	if err != nil {
+		return value.Nothing, s.failure(ctx, st, err)
+	}
+	defer rows.Close()
+	return s.collect(ctx, st, rows)
+}
+
+// bind turns the values of the call into the parameters of the statement, in the order of its places.
+func (s *SQL) bind(st *sqlStatement, args Args) ([]any, error) {
+	for name := range args {
+		if !contains(st.params, name) {
+			return nil, diag.Newf("`%s.%s` takes no value called `%s`", s.decl.Name, st.name, name).
+				Fix(takes(st))
+		}
+	}
+	for _, p := range st.params {
+		if _, ok := args[p]; !ok {
+			return nil, diag.Newf("`%s.%s` needs a value for `%s`", s.decl.Name, st.name, p).
+				Fixf("add it to the call, for example: %s.%s %s: ...", s.decl.Name, st.name, p)
+		}
+	}
+	bound := make([]any, len(st.order))
+	for i, name := range st.order {
+		v, err := parameter(args[name])
+		if err != nil {
+			return nil, diag.Newf("`%s` in `%s.%s` %s", name, s.decl.Name, st.name, err.Error()).
+				Fix("give a text, a number, yes or no, or nothing")
+		}
+		bound[i] = v
+	}
+	return bound, nil
+}
+
+func takes(st *sqlStatement) string {
+	if len(st.params) == 0 {
+		return "this statement takes no values"
+	}
+	return "it takes: " + strings.Join(st.params, ", ")
+}
+
+func contains(list []string, item string) bool {
+	for _, s := range list {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// maxExactInt is the largest whole number that a number of the language holds without losing digits.
+const maxExactInt = 1 << 53
+
+func parameter(v value.Value) (any, error) {
+	switch v.Kind {
+	case value.KindNothing:
+		return nil, nil
+	case value.KindText:
+		return v.Text, nil
+	case value.KindBool:
+		if v.Bool {
+			return int64(1), nil
+		}
+		return int64(0), nil
+	case value.KindNumber:
+		if v.Number == math.Trunc(v.Number) && math.Abs(v.Number) <= maxExactInt {
+			return int64(v.Number), nil
+		}
+		return v.Number, nil
+	}
+	return nil, fmt.Errorf("got %s", v.Describe())
+}
+
+// database opens the connection the first time, after the approval.
+func (s *SQL) database(ctx context.Context) (*sql.DB, error) {
+	if s.opts.Allow != nil {
+		if err := s.opts.Allow(s.spec); err != nil {
+			return nil, err
+		}
+	}
+	driver, ok := sqlDrivers[s.conn.Driver]
+	if !ok {
+		return nil, diag.Newf("this build of Metagente was made without the `%s` driver", s.conn.Driver).
+			Fix("use a build that has it (the releases do), or build without the tag nosqlite")
+	}
+	location, err := s.location(driver)
+	if err != nil {
+		return nil, err
+	}
+	db, err := s.opts.Pool.get(s.conn.Driver+"\x00"+location, func() (*sql.DB, error) {
+		db, err := sql.Open(driver.name, driver.dsn(location))
+		if err != nil {
+			return nil, err
+		}
+		db.SetMaxOpenConns(4)
+		return db, nil
+	})
+	if err != nil {
+		return nil, s.openFailure(err, location)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, s.openFailure(err, location)
+	}
+	return db, nil
+}
+
+// location says where the database is: the variable of a credential if one is set, or the path of the
+// connection, from the folder of the project.
+func (s *SQL) location(driver sqlDriver) (string, error) {
+	location := s.conn.Path
+	if variable := s.spec.Credential; variable != "" {
+		location = strings.TrimSpace(s.opts.Getenv(variable))
+		if location == "" {
+			return "", diag.Newf("the address of the database for `%s` is not set: the variable %s is empty", s.decl.Name, variable).
+				Fixf("set it in the terminal that runs Metagente, for example: export %s=...", variable)
+		}
+	}
+	if location == "" {
+		return "", diag.Newf("[sql.%s] has no path for its database", s.conn.Name).
+			Fix(`write the path in the section, for example: path = "data/orders.db"`)
+	}
+	if driver.file {
+		if !filepath.IsAbs(location) {
+			location = filepath.Join(s.opts.Root, location)
+		}
+		location = filepath.Clean(location)
+		info, err := os.Stat(location)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			return "", diag.Newf("the database file of `%s` does not exist: %s", s.decl.Name, location).
+				Fix("check the path in the section [sql." + s.conn.Name + "]; it starts at the folder of the project")
+		case err != nil:
+			return "", diag.Newf("I could not look at the database file of `%s`: %s", s.decl.Name, s.clean(err))
+		case info.IsDir():
+			return "", diag.Newf("the database of `%s` is a folder, not a file: %s", s.decl.Name, location).
+				Fix("write the path of the file")
+		}
+	}
+	return location, nil
+}
+
+func (s *SQL) secrets() []string {
+	var secrets []string
+	if variable := s.spec.Credential; variable != "" && s.opts.Getenv != nil {
+		secrets = append(secrets, strings.TrimSpace(s.opts.Getenv(variable)))
+	}
+	return secrets
+}
+
+// clean is what an error of the driver says, with no secret in it and short.
+func (s *SQL) clean(err error) string {
+	return clip.Collapse(secret.Redact(err.Error(), s.secrets()...), 300)
+}
+
+func (s *SQL) openFailure(err error, location string) error {
+	return diag.Newf("I could not open the database of `%s`: %s", s.decl.Name,
+		strings.ReplaceAll(s.clean(err), location, "the database")).
+		Fix("check the path, and that the file is a database that you may read")
+}
+
+func (s *SQL) failure(ctx context.Context, st *sqlStatement, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return diag.Newf("the database could not run `%s.%s`: %s", s.decl.Name, st.name, s.clean(err)).
+		Fixf("check the statement `%s` in [sql.%s] of %s", st.name, s.conn.Name, config.FileName)
+}
+
+// collect reads the rows of the answer, within the ceilings, in the shape the statement asks for.
+func (s *SQL) collect(ctx context.Context, st *sqlStatement, rows *sql.Rows) (value.Value, error) {
+	columns, err := rows.Columns()
+	if err != nil {
+		return value.Nothing, s.failure(ctx, st, err)
+	}
+	if err := s.checkColumns(st, columns); err != nil {
+		return value.Nothing, err
+	}
+	maxRows := s.limits.MaxSQLRows
+	if st.result != config.ResultRows {
+		maxRows = 1
+	}
+	var list []value.Value
+	var size int64
+	for rows.Next() {
+		if len(list) >= maxRows {
+			return value.Nothing, s.tooMany(st, maxRows)
+		}
+		cells := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range cells {
+			pointers[i] = &cells[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return value.Nothing, s.failure(ctx, st, err)
+		}
+		fields := make(map[string]value.Value, len(columns))
+		for i, column := range columns {
+			v, bytes, err := cellValue(column, cells[i])
+			if err != nil {
+				return value.Nothing, diag.Newf("`%s.%s`: %s", s.decl.Name, st.name, err.Error()).
+					Fix("turn the column into text or a number in the statement, for example with CAST or hex")
+			}
+			fields[column] = v
+			size += bytes + int64(len(column)) + 8
+		}
+		if size > s.limits.MaxSQLBytes {
+			return value.Nothing, diag.Newf("the answer of `%s.%s` is larger than the %d bytes an answer may have here", s.decl.Name, st.name, s.limits.MaxSQLBytes).
+				Fix("ask for fewer rows or columns, or raise max_sql_bytes in the [limits] section of metagente.toml")
+		}
+		list = append(list, value.Record(fields))
+	}
+	if err := rows.Err(); err != nil {
+		return value.Nothing, s.failure(ctx, st, err)
+	}
+	return shape(st, columns, list), nil
+}
+
+func (s *SQL) checkColumns(st *sqlStatement, columns []string) error {
+	if st.result == config.ResultValue {
+		// The name of the column never reaches the agent: only the value does.
+		if len(columns) != 1 {
+			return diag.Newf("`%s.%s` has result = \"value\", and its statement gives %d columns", s.decl.Name, st.name, len(columns)).
+				Fix("select one column, or use result = \"row\"")
+		}
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, column := range columns {
+		if !validColumn(column) {
+			return diag.Newf("`%s.%s` gives a column called `%s`, and a field of a record is made of letters, digits, `_` and `-`", s.decl.Name, st.name, column).
+				Fixf("give it a name in the statement, for example: %s AS total", column)
+		}
+		if seen[column] {
+			return diag.Newf("`%s.%s` gives two columns called `%s`", s.decl.Name, st.name, column).
+				Fix("give each column its own name with AS")
+		}
+		seen[column] = true
+	}
+	return nil
+}
+
+func (s *SQL) tooMany(st *sqlStatement, limit int) error {
+	if st.result != config.ResultRows {
+		return diag.Newf("`%s.%s` has result = \"%s\", and its statement gives more than one row", s.decl.Name, st.name, st.result).
+			Fix("limit the statement to one row (LIMIT 1), or use result = \"rows\"")
+	}
+	return diag.Newf("`%s.%s` gives more than the %d rows an answer may have here", s.decl.Name, st.name, limit).
+		Fix("add a LIMIT to the statement, or raise max_sql_rows in the [limits] section of metagente.toml")
+}
+
+func shape(st *sqlStatement, columns []string, list []value.Value) value.Value {
+	switch st.result {
+	case config.ResultRow:
+		if len(list) == 0 {
+			return value.Nothing
+		}
+		return list[0]
+	case config.ResultValue:
+		if len(list) == 0 {
+			return value.Nothing
+		}
+		return list[0].Record[columns[0]]
+	}
+	if list == nil {
+		list = []value.Value{}
+	}
+	return value.List(list)
+}
+
+// validColumn says whether the name of a column can be a field of a record.
+func validColumn(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, c := range name {
+		switch {
+		case c == '_', c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= 0x80:
+		case i > 0 && (c == '-' || (c >= '0' && c <= '9')):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// cellValue turns what the driver gave into a value of the language, and says about how many bytes it
+// weighs. A whole number that a number of the language cannot hold without losing digits comes as a
+// text with all its digits, which can be handed back as a parameter.
+func cellValue(column string, cell any) (value.Value, int64, error) {
+	switch x := cell.(type) {
+	case nil:
+		return value.Nothing, 0, nil
+	case int64:
+		if x > maxExactInt || x < -maxExactInt {
+			text := strconv.FormatInt(x, 10)
+			return value.Text(text), int64(len(text)), nil
+		}
+		return value.Number(float64(x)), 8, nil
+	case float64:
+		return value.Number(x), 8, nil
+	case bool:
+		return value.Bool(x), 1, nil
+	case string:
+		return value.Text(strings.ToValidUTF8(x, "�")), int64(len(x)), nil
+	case []byte:
+		if !utf8.Valid(x) {
+			return value.Nothing, 0, fmt.Errorf("the column `%s` holds binary data, which a value of the language cannot hold", column)
+		}
+		return value.Text(string(x)), int64(len(x)), nil
+	case time.Time:
+		text := x.UTC().Format(time.RFC3339Nano)
+		return value.Text(text), int64(len(text)), nil
+	}
+	return value.Nothing, 0, fmt.Errorf("the column `%s` holds a kind of value that I cannot read", column)
+}

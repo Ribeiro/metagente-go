@@ -18,6 +18,14 @@ minor versions.
   a database that each say where the next one is. `up to N times` is a cap that the author chooses; with
   no cap, or one above the setup, a condition that is still true after `max_loop_turns` turns (10000 by
   default, in `[runtime]`) stops the run with a problem.
+- `tool orders from sql "orders-db"`, to read a database in pages (first step of the asynchronous ELT of
+  `docs/design-async-elt.md`). The statements are written by the person who runs the agents in a
+  `[sql.orders-db]` section of `metagente.toml`, with `:name` parameters sent apart from the text, and the
+  agent calls each one by name (`orders.next_page after: 0 size: 1000`). A statement gives `rows`, one
+  `row` or one `value`. Read only, with limits (`limits.max_sql_rows`, `limits.max_sql_bytes`), a
+  connection string only through `[credentials]`, and the database and the statements are approved by
+  `metagente trust`. SQLite (pure Go, no C compiler) is the first driver; a build with `-tags nosqlite`
+  leaves it out. The program grows by about 6 MB with it.
 
 ## [0.5.0] - 2026-10-07
 

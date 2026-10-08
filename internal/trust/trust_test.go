@@ -405,3 +405,18 @@ func symlink(t *testing.T, target, link string) {
 		t.Fatal(err)
 	}
 }
+
+func TestADatabaseIsKeyedByItsStatementsAndTheOldKeysDoNotChange(t *testing.T) {
+	a := SQLItem("sqlite", "orders.db", "orders", []string{"next_page"}, "aaa")
+	b := SQLItem("sqlite", "orders.db", "orders", []string{"next_page"}, "bbb")
+	if a.Key() == b.Key() {
+		t.Error("another statement text must need another approval")
+	}
+	if a.Kind != KindSQL || !strings.Contains(a.Describe(), "reads the database: sqlite orders.db") {
+		t.Errorf("describe = %q", a.Describe())
+	}
+	plain := Item{Kind: KindRemote, Target: "x"}
+	if plain.Key() != "remote\x00x\x00" {
+		t.Errorf("an item without detail changed its key: %q", plain.Key())
+	}
+}
