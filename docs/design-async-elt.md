@@ -380,9 +380,12 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
    *Status:* the sweeper is done (`samples/async-elt/sweeper.ag`: alerts once for each cause with codes and counts, the
    notice to transform a stuck batch again, the ask to the Extractor to send a lost batch again). It does not see the
    circuit breaker of `consume`, which is in that process. The `sql` tool now speaks SQL Server (`sqlserver`) and
-   Oracle (`oracle`), tried against real servers in `integration/`; `MERGE` is not accepted, so the upsert of this table
-   is written as `INSERT … SELECT … WHERE NOT EXISTS`. The sample has the SQL for these two engines too (`metagente.sqlserver.toml`, `metagente.oracle.toml` and their
-   migrations), tried against real servers; the Extractor, which reads the source, is still for SQLite.
+   Oracle (`oracle`), tried against real servers in `integration/`, and accepts `MERGE` where the database has one
+   (the sample does not use it: its upsert is an update and an insert). The sample has the SQL for these two engines too
+   (`metagente.sqlserver.toml`, `metagente.oracle.toml` and their migrations), tried against real servers, and the Extractor
+   reads a PostgreSQL, MySQL, MariaDB, SQL Server or Oracle source as well as SQLite (`samples/async-elt/sources/`).
+   The pilot of section 14 is written (`integration/pilot_test.go`, run by hand from the workflow `Pilot`); its numbers
+   are still to be read and the brakes tuned.
 
 ## 16. Tests
 

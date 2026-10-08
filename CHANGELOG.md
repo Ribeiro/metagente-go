@@ -9,6 +9,11 @@ minor versions.
 
 ### Added
 
+- The pilot of the asynchronous ELT (`integration/pilot_test.go`, workflow `Pilot`): from the Actions tab, with the rows
+  and the number of Workers you choose, it runs the Extractor and the Workers against real PostgreSQL and NATS in
+  containers, kills a Worker, freezes the destination and the broker, sends invalid rows, and writes in the summary of
+  the run the time of each batch, the throughput, whether the books close, and the starting value of each brake beside
+  what it measured.
 - `samples/async-elt`: the Extractor can read from a PostgreSQL, MySQL, MariaDB, SQL Server or Oracle source too:
   `sources/source.<database>.toml` is the section `[sql.source]` with `page` and `range` in the dialect of each (the
   agent does not change), and `migrations/demo-source.<database>.sql` makes the demo orders. Tried against real

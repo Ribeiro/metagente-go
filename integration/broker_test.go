@@ -31,6 +31,7 @@ type natsServer struct {
 	host string
 	port int
 	js   jetstream.JetStream
+	ctr  testcontainers.Container // to pause it (the pilot does)
 }
 
 func startNATS(t *testing.T) natsServer {
@@ -53,7 +54,7 @@ func startNATS(t *testing.T) natsServer {
 	if err != nil {
 		t.Fatalf("starting NATS: %v", err)
 	}
-	s := natsServer{}
+	s := natsServer{ctr: ctr}
 	if s.host, err = ctr.Host(ctx); err != nil {
 		t.Fatal(err)
 	}
