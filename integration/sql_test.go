@@ -155,6 +155,8 @@ func seed(t *testing.T, driver string) string {
 	case "sqlserver":
 		text = "CREATE DATABASE orders;\nGO\nUSE orders;\nGO\n" + text
 	case "oracle":
+		// Oracle has no BIGINT.
+		text = strings.ReplaceAll(text, "BIGINT", "NUMBER(19)")
 		// The script may run as the administrator, so it says who it is: the tables have to be the user's.
 		text = "CONNECT " + dbUser + "/" + dbSecret + "@//localhost:1521/FREEPDB1\n" + text
 	}
