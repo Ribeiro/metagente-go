@@ -382,7 +382,7 @@ func TestOnlySqlServerGetsASemicolonAfterAMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(driver, err)
 		}
-		if got := strings.HasSuffix(tool.stmts["put"].query, ";"); got != (want == ";") {
+		if strings.HasSuffix(tool.stmts["put"].query, ";") != (want == ";") {
 			t.Errorf("%s: query = %q", driver, tool.stmts["put"].query)
 		}
 		_ = tool.Close()
