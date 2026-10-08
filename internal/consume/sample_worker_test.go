@@ -390,6 +390,55 @@ func TestTheWorkerRefusesAControlTablesOfAnotherVersionAndPurgesWhatIsDone(t *te
 	}
 }
 
+func TestPurgeControlCleansOnlyTheJobsThatAreDoneOldAndOutOfStaging(t *testing.T) {
+	p := newPipeline(t)
+	for _, job := range []string{"c1", "c2", "c3"} {
+		p.extract(job, "1000")
+	}
+	p.batches()
+	p.controls()
+	db := "dest/warehouse.db"
+	for _, job := range []string{"c1", "c2", "c3"} {
+		if state := p.text(db, "SELECT state FROM etl_jobs WHERE job_id = '"+job+"'"); state != "done" {
+			t.Fatalf("job %s is %s", job, state)
+		}
+	}
+	// c1 ended long ago, c2 ended long ago but is not done (a person has to look at it), c3 ended just now.
+	p.exec(db, "UPDATE etl_jobs SET finished_at = '2020-01-01 00:00:00' WHERE job_id IN ('c1', 'c2')")
+	p.exec(db, "UPDATE etl_jobs SET state = 'mismatch' WHERE job_id = 'c2'")
+	p.exec(db, "INSERT INTO etl_alerts (job_id, kind, ref) VALUES ('c1', 'BATCH_STUCK', '1'), ('c2', 'BATCH_STUCK', '1')")
+	p.exec(db, "INSERT INTO etl_incidents (job_id, seq, code) VALUES ('c1', 1, 'X'), ('c2', 1, 'X')")
+	p.exec(db, "INSERT INTO etl_resends (job_id, seq, requests) VALUES ('c1', 1, 1), ('c2', 1, 1)")
+	finalRows := p.number(db, "SELECT count(*) FROM orders_final")
+
+	// Staging still has the rows of c1: nothing of it goes while they are there.
+	if got := p.message("purge_control", "days=365"); got != "removed 0 finished jobs from the control tables" {
+		t.Fatalf("with rows in staging: %q", got)
+	}
+	p.exec(db, "UPDATE etl_batches SET done_at = '2020-01-01 00:00:00'")
+	p.message("purge", "days=7")
+	p.exec(db, "DELETE FROM stg_orders WHERE job_id IN ('c2', 'c3')") // the others are not the subject here
+	if got := p.message("purge_control", "days=365"); got != "removed 1 finished jobs from the control tables" {
+		t.Fatalf("purge_control: %q", got)
+	}
+	for table, want := range map[string]int{"etl_jobs": 2, "etl_alerts": 1, "etl_incidents": 1, "etl_resends": 1} {
+		if n := p.number(db, "SELECT count(*) FROM "+table); n != want {
+			t.Errorf("%s has %d rows, and %d were expected", table, n, want)
+		}
+	}
+	for _, table := range []string{"etl_batches", "etl_rejects"} {
+		if n := p.number(db, "SELECT count(*) FROM "+table+" WHERE job_id = 'c1'"); n != 0 {
+			t.Errorf("%s still has %d rows of the job that was cleaned", table, n)
+		}
+	}
+	if p.number(db, "SELECT count(*) FROM etl_batches WHERE job_id = 'c3'") == 0 {
+		t.Error("etl_batches lost the rows of a job that ended just now")
+	}
+	if n := p.number(db, "SELECT count(*) FROM orders_final"); n != finalRows {
+		t.Errorf("the final table changed: %d rows, and %d were expected", n, finalRows)
+	}
+}
+
 // ---------- the model step ----------
 
 // labeler is a language model that labels the notes it is given by a word in them, and keeps what it was asked.

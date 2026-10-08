@@ -227,6 +227,13 @@ func TestTheWorkerLandsTransformsAndClosesAJobInPostgreSQL(t *testing.T) {
 	if out := check(t, dir); !strings.Contains(out, "final 2500; rejected 0; job done; batches done 3; labelled 1500; asked 75; reason none") {
 		t.Errorf("check:\n%s", out)
 	}
+	// Staging first, then the control tables: a job that is done and has nothing in staging is forgotten.
+	if out := send(t, dir, "purge", "days=0"); !strings.Contains(out, "removed 2500 rows from staging") {
+		t.Errorf("purge:\n%s", out)
+	}
+	if out := send(t, dir, "purge_control", "days=0"); !strings.Contains(out, "removed 1 finished jobs from the control tables") {
+		t.Errorf("purge_control:\n%s", out)
+	}
 }
 
 // A budget that is spent pauses the job, with the reason; the events wait; raising the budget and resuming the job

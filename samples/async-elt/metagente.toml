@@ -103,6 +103,16 @@ try_close = "UPDATE etl_jobs SET state = CASE WHEN (SELECT coalesce(sum(rows_loa
 # Staging holds the rows as they came, so it is cleaned: the batches done more than N days ago.
 purge = "DELETE FROM stg_orders WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = stg_orders.job_id AND b.seq = stg_orders.seq AND b.state = 'done' AND b.done_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days'))"
 
+# The control tables are cleaned too: the jobs that are `done`, ended more than N days ago and have nothing left in staging.
+# A job that is paused, mismatched or has a batch that failed is for a person, so it stays. The jobs go last, and all in one
+# transaction, so that a job is never left half cleaned. The final table is never touched.
+old_alerts = "DELETE FROM etl_alerts WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days') AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_incidents = "DELETE FROM etl_incidents WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days') AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_resends = "DELETE FROM etl_resends WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days') AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_rejects = "DELETE FROM etl_rejects WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days') AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_batches = "DELETE FROM etl_batches WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days') AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_jobs = "DELETE FROM etl_jobs WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days') AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+
 # An event the Worker refused for what it is (a code and a place, never the content): the sweeper tells the team.
 record_incident = "INSERT INTO etl_incidents (job_id, seq, code) VALUES (:job, :seq, :code) ON CONFLICT DO NOTHING"
 
@@ -129,6 +139,7 @@ transform_batch = ["reject_negative", "reject_customer", "load_orders", "finish_
 register_totals = ["open_job", "set_totals"]
 open_budget = ["open_job", "set_budget"]
 resume = ["resume_job", "forget_alerts"]
+purge_control = ["old_alerts", "old_incidents", "old_resends", "old_rejects", "old_batches", "old_jobs"]
 
 # ---- the broker: a NATS server with JetStream. ----
 [broker.main]
