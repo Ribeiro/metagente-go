@@ -24,7 +24,7 @@ import (
 
 var defaultSkills = []Skill{
 	{ID: "echo", Description: "repeats the text", Params: []string{"text"}},
-	{ID: "count"}, {ID: "record"}, {ID: "fail"}, {ID: "boom"}, {ID: "slow"}, {ID: "hold"}, {ID: "chain"},
+	{ID: "count"}, {ID: "record"}, {ID: "fail"}, {ID: "busy"}, {ID: "boom"}, {ID: "slow"}, {ID: "hold"}, {ID: "chain"},
 	{ID: "sum", Params: []string{"a", "b"}},
 }
 
@@ -91,6 +91,8 @@ func (c *fakeConversation) Run(ctx context.Context, call Call, skill string, arg
 		return value.Nothing, diag.New("the order is missing").
 			At("/home/secret/agents/bob.ag", 7, 3).WithSource("a secret line of source\n").
 			AddRelated("see /home/secret/other.ag").Fix("add the order")
+	case "busy":
+		return value.Nothing, diag.New("the destination is busy").At("/home/secret/agents/bob.ag", 9, 3).WithRetry(90 * time.Second)
 	case "boom":
 		panic("kaboom")
 	case "slow":
@@ -439,7 +441,7 @@ func TestAMessageThatIsNotUnderstoodIsRefusedWithAReason(t *testing.T) {
 		"data not object": {message(`{"data":[1,2]}`, ""), codeInvalidParams, "has to be an object"},
 		"skill not text":  {message(`{"data":{"skill":5}}`, ""), codeInvalidParams, "`skill` has to be a text"},
 		"args not object": {message(`{"data":{"skill":"echo","arguments":[1]}}`, ""), codeInvalidParams, "`arguments` has to be an object"},
-		"unknown skill":   {message(dataPart("nope", `{}`), ""), codeInvalidParams, "handles: boom, chain, count, echo"},
+		"unknown skill":   {message(dataPart("nope", `{}`), ""), codeInvalidParams, "handles: boom, busy, chain, count, echo"},
 		"many arguments":  {message(dataPart("echo", `{`+strings.Join(manyArgs, ",")+`}`), ""), codeInvalidParams, "too many values"},
 		"bad name":        {message(dataPart("echo", `{"te xt":"x"}`), ""), codeInvalidParams, "name that is not valid"},
 		"a task":          {message(dataPart("echo", `{"text":"x"}`), `"taskId":"task-1"`), codeTaskNotFound, "keeps no tasks"},
@@ -844,5 +846,22 @@ func TestTheTokensOfARunningServerChangeOnlyForTokensThatAreGoodEnough(t *testin
 	}
 	if card(mac) != 200 || card(notebook) != 401 {
 		t.Error("the token taken away still opens the door, or the other does not")
+	}
+}
+
+func TestAFailureThatMayPassIsMarkedInTheTaskForACallerThatIsNotAPerson(t *testing.T) {
+	s := newTestServer(t, nil)
+	a := send(t, s, message(dataPart("busy", `{}`), ""))
+	task := a.Result["task"].(map[string]any)
+	mark, _ := task["metadata"].(map[string]any)["metagente"].(map[string]any)
+	if task["status"].(map[string]any)["state"] != "TASK_STATE_FAILED" || mark["retry"] != true || mark["retryAfterSeconds"] != float64(90) {
+		t.Errorf("task = %v", task)
+	}
+	if !strings.Contains(a.Raw, "the destination is busy") || strings.Contains(a.Raw, "bob.ag") {
+		t.Errorf("answer = %s", a.Raw)
+	}
+	final := send(t, s, message(dataPart("fail", `{}`), "")).Result["task"].(map[string]any)
+	if final["metadata"] != nil {
+		t.Errorf("a final failure has a mark: %v", final["metadata"])
 	}
 }

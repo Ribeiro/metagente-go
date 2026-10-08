@@ -453,7 +453,11 @@ func wrapLinked(target *lang.AgentDef, action string, err error) error {
 	d.AddRelated(target.Name + " could not answer:")
 	text := err.Error()
 	if inner, ok := diag.From(err); ok {
-		text = inner.Render()
+		// A failure that may pass is still one for the caller, and says so once, on the sentence of the caller.
+		plain := *inner
+		plain.Retry = nil
+		text = plain.Render()
+		d.Retry = inner.Retry
 	}
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		d.AddRelated("  " + line)

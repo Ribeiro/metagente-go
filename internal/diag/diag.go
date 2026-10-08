@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Severity tells a blocking problem from advice.
@@ -35,6 +36,44 @@ type Diagnostic struct {
 	Related    []string
 	Source     string // the whole source text, kept to show the offending line
 	Severity   Severity
+	// Retry is set when the one who failed says that this may pass: whoever called may ask again, after
+	// the wait that is suggested (which may be zero). Nil means that the failure is final.
+	Retry *Retry
+}
+
+// Retry says that a failure may pass.
+type Retry struct {
+	// After is the wait that is suggested before asking again; zero when none is.
+	After time.Duration
+}
+
+// RetryOf says whether err is a failure that may pass, and the wait that was suggested.
+func RetryOf(err error) (*Retry, bool) {
+	var d *Diagnostic
+	for errors.As(err, &d) {
+		if d.Retry != nil {
+			return d.Retry, true
+		}
+		err = errors.Unwrap(d)
+		if err == nil {
+			break
+		}
+	}
+	return nil, false
+}
+
+// WithRetry marks the failure as one that may pass, with a suggested wait (zero for none).
+func (d *Diagnostic) WithRetry(after time.Duration) *Diagnostic {
+	d.Retry = &Retry{After: after}
+	return d
+}
+
+// Note is the line that tells a person that a failure may pass.
+func (r *Retry) Note() string {
+	if r.After <= 0 {
+		return "This may pass: it can be tried again."
+	}
+	return fmt.Sprintf("This may pass: it can be tried again in %d seconds.", int(r.After.Round(time.Second)/time.Second))
 }
 
 // New starts a diagnostic with a message.
@@ -118,6 +157,9 @@ func (d *Diagnostic) Render() string {
 	if d.Suggestion != "" {
 		fmt.Fprintf(&b, "Fix: %s\n", d.Suggestion)
 	}
+	if d.Retry != nil {
+		fmt.Fprintf(&b, "%s\n", d.Retry.Note())
+	}
 	return b.String()
 }
 
@@ -130,6 +172,9 @@ func (d *Diagnostic) Public() string {
 	b.WriteString("\n")
 	if d.Suggestion != "" {
 		fmt.Fprintf(&b, "Fix: %s\n", d.Suggestion)
+	}
+	if d.Retry != nil {
+		fmt.Fprintf(&b, "%s\n", d.Retry.Note())
 	}
 	return b.String()
 }

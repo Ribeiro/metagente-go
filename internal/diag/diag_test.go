@@ -1,9 +1,11 @@
 package diag
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderShowsPlaceLineMarkerAndFix(t *testing.T) {
@@ -110,5 +112,30 @@ func TestFromFindsADiagnosticInsideAWrappedError(t *testing.T) {
 	}
 	if _, ok := From(fmt.Errorf("plain")); ok {
 		t.Error("From() found a diagnostic in a plain error")
+	}
+}
+
+func TestAFailureThatMayPassSaysSoOnceAndEveryoneCanFindOut(t *testing.T) {
+	d := New("The destination is busy").WithRetry(60 * time.Second)
+	for name, text := range map[string]string{"render": d.Render(), "public": d.Public()} {
+		if strings.Count(text, "This may pass: it can be tried again in 60 seconds.") != 1 {
+			t.Errorf("%s: %q", name, text)
+		}
+	}
+	if got := New("x").WithRetry(0).Retry.Note(); got != "This may pass: it can be tried again." {
+		t.Errorf("without a wait: %q", got)
+	}
+	wrapped := fmt.Errorf("while running: %w", d)
+	if r, ok := RetryOf(wrapped); !ok || r.After != 60*time.Second {
+		t.Errorf("RetryOf(wrapped) = %v, %v", r, ok)
+	}
+	if _, ok := RetryOf(New("final")); ok {
+		t.Error("a final failure was taken for one that may pass")
+	}
+	if _, ok := RetryOf(errors.New("plain")); ok {
+		t.Error("a plain error was taken for one that may pass")
+	}
+	if strings.Contains(New("final").Render(), "may pass") {
+		t.Error("a final failure says that it may pass")
 	}
 }

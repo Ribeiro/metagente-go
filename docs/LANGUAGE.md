@@ -31,7 +31,8 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `contains` | a text has a piece, or a list has an item | [Conditions](#conditions) |
 | `env` | `tool env "NAME"`, or the variables given to a tool server | [tool](#tool) |
 | `env.get` | reads a variable that `tool env` names | [tool](#tool) |
-| `fail` | ends the section with a failure | [fail](#fail) |
+| `fail` | ends the section with a failure; `fail "..." retry [in N seconds]` says that it may pass | [fail](#fail) |
+| `retry` | `fail "..." retry`: the failure may pass | [fail](#fail) |
 | `file.read`, `file.write` | reads and writes texts | [tool](#tool) |
 | `for` ... `in` | repeats lines for each item of a list | [for](#for) |
 | `from` | `link Name from "file.ag"`, `tool name from mcp "..."`, `tool name from sql "..."` | [link](#link), [tool](#tool) |
@@ -349,7 +350,24 @@ Ends the section and answers with the value. A section that ends without `reply`
 fail "I need a city"
 ```
 
-Ends the section with a failure, whose message is the value. The caller sees it as a problem.
+Ends the section with a failure, whose message is the value. The caller sees it as a problem, and a
+failure like this is **final**: whoever called is not told to try again.
+
+When the failure may pass (the destination is busy, a service is down for a moment), say so with `retry`,
+and, if you know it, how long to wait:
+
+```text
+fail "The destination is busy" retry
+fail "The destination is busy" retry in 60 seconds
+```
+
+The wait is only a suggestion, a number of seconds (`second` is accepted after 1), and no more than 3600 is
+suggested; `check` warns about a wait that is not above 0 or that is longer. `metagente run` prints a note
+under the problem ("This may pass: it can be tried again in 60 seconds."); a linked agent that fails this
+way makes the failure of its caller one that may pass too; over A2A the task that failed carries
+`metadata.metagente.retry` and `retryAfterSeconds`, so a caller that is a program can ask again, and
+`metagente consume` asks the broker to deliver the event again after the wait. `retry` is a word only
+right after the value of a `fail`; anywhere else it is a name like any other.
 
 ### if and otherwise
 
@@ -536,7 +554,8 @@ Words that look like a mistake get a suggestion: `acepts` gets "did you mean `ac
 `private`, `readonly`, `reply`, `fail`, `if`, `otherwise`, `for`, `in`, `repeat`, `while`, `think`, `using`,
 `within`, `seconds`, `is`, `not`, `more`, `less`, `than`, `contains`, `and`, `or`, `yes`, `no`, `nothing`.
 
-`repeat` is a loop only when `while` comes right after it, and `up`, `to`, `times` and `time` have a
+`repeat` is a loop only when `while` comes right after it, `retry` has a meaning only right after the value
+of a `fail`, and `up`, `to`, `times` and `time` have a
 meaning only in `up to N times`; anywhere else they are names like any other.
 
 ## A larger example
@@ -641,7 +660,7 @@ sql_tool      = NAME "from" "sql" TEXT ;                            (* TEXT is a
 block         = INDENT statement { statement } DEDENT ;
 statement     = reply | fail | if | for | repeat | assignment | expression_line ;
 reply         = "reply" expression NEWLINE ;
-fail          = "fail" expression NEWLINE ;
+fail          = "fail" expression [ "retry" [ "in" NUMBER ( "seconds" | "second" ) ] ] NEWLINE ;
 if            = "if" expression NEWLINE block [ "otherwise" NEWLINE [ block ] ] ;
 for           = "for" NAME "in" expression NEWLINE block ;
 repeat        = "repeat" "while" expression [ "up" "to" NUMBER ( "times" | "time" ) ] NEWLINE block ;

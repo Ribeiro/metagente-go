@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/Ribeiro/metagente-go/internal/clip"
@@ -362,7 +363,7 @@ func (s *Server) start(ctx context.Context, agent Agent, call Call) (id string, 
 	case errors.Is(err, ErrTooManyContexts):
 		return "", nil, &rpcError{codeServer, "the server holds as many conversations as it may; try again later"}
 	case err != nil:
-		return "", s.failure("", failureText(ctx, err)), nil
+		return "", s.failure("", failureText(ctx, err), err), nil
 	}
 	return id, nil, nil
 }
@@ -376,13 +377,13 @@ func (s *Server) outcome(parent, ctx context.Context, contextID string, result v
 		case parent.Err() != nil:
 			return nil, nil
 		}
-		return s.failure(contextID, failureText(ctx, err)), nil
+		return s.failure(contextID, failureText(ctx, err), err), nil
 	}
 	if parent.Err() != nil {
 		return nil, nil
 	}
 	if runErr != nil {
-		return s.failure(contextID, failureText(ctx, runErr)), nil
+		return s.failure(contextID, failureText(ctx, runErr), runErr), nil
 	}
 	return map[string]any{"message": map[string]any{
 		"messageId": newToken("msg"),
@@ -645,7 +646,7 @@ func failureText(ctx context.Context, err error) string {
 
 // failure is a task that already ended, as the answer to a request that could be
 // read but whose agent could not answer.
-func (s *Server) failure(contextID, text string) map[string]any {
+func (s *Server) failure(contextID, text string, cause error) map[string]any {
 	task := map[string]any{
 		"id": newToken("task"),
 		"status": map[string]any{
@@ -659,6 +660,12 @@ func (s *Server) failure(contextID, text string) map[string]any {
 	}
 	if contextID != "" {
 		task["contextId"] = contextID
+	}
+	if retry, ok := diag.RetryOf(cause); ok {
+		// A failure that may pass says so in the metadata of the task, for a caller that is not a person.
+		task["metadata"] = map[string]any{"metagente": map[string]any{
+			"retry": true, "retryAfterSeconds": int(retry.After.Round(time.Second) / time.Second),
+		}}
 	}
 	return map[string]any{"task": task}
 }

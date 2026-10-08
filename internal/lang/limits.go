@@ -13,6 +13,8 @@ const (
 	MaxListItems = 10000
 	// MaxNumberDigits is the most digits a number literal may have.
 	MaxNumberDigits = 15
+	// MaxRetryAfter is the longest wait, in seconds, that `fail ... retry in N seconds` may suggest.
+	MaxRetryAfter = 3600
 	// MaxRepeatLimit is the largest N of `up to N times`. The run has its own ceiling (max_loop_turns).
 	MaxRepeatLimit = 1000000000
 )

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -660,6 +661,19 @@ type taskView struct {
 	State   string
 	Message json.RawMessage
 	Parts   []json.RawMessage // the parts of the first artifact
+	// Retry is set when the other side says that the failure may pass, and RetryAfter is its suggested wait.
+	Retry      bool
+	RetryAfter time.Duration
+}
+
+// taskMetadata is the metadata of a task that Metagente writes and reads: the mark of a failure that may pass.
+type taskMetadata struct {
+	Metagente retryMark `json:"metagente"`
+}
+
+type retryMark struct {
+	Retry             bool    `json:"retry"`
+	RetryAfterSeconds float64 `json:"retryAfterSeconds"`
 }
 
 // readTask reads a task. The state is written as TASK_STATE_COMPLETED or, by older
@@ -674,6 +688,7 @@ func readTask(raw json.RawMessage) (taskView, bool) {
 		Artifacts []struct {
 			Parts []json.RawMessage `json:"parts"`
 		} `json:"artifacts"`
+		Metadata taskMetadata `json:"metadata"`
 	}
 	if json.Unmarshal(raw, &task) != nil {
 		return taskView{}, false
@@ -685,6 +700,12 @@ func readTask(raw json.RawMessage) (taskView, bool) {
 	}
 	if len(task.Artifacts) > 0 {
 		view.Parts = task.Artifacts[0].Parts
+	}
+	if mark := task.Metadata.Metagente; mark.Retry {
+		view.Retry = true
+		if mark.RetryAfterSeconds > 0 {
+			view.RetryAfter = time.Duration(math.Min(mark.RetryAfterSeconds, 3600) * float64(time.Second))
+		}
 	}
 	return view, true
 }
@@ -708,8 +729,14 @@ func (a *agent) failedTask(task taskView, action string) error {
 	d := diag.Newf("agent %s could not answer `%s`", a.spec.Name, action)
 	if len(task.Message) > 0 {
 		for _, line := range strings.Split(strings.TrimSpace(textOf(task.Message)), "\n") {
+			if task.Retry && strings.HasPrefix(line, "This may pass:") {
+				continue // the note is said once, on the problem itself
+			}
 			d.AddRelated("  " + a.redact(line))
 		}
+	}
+	if task.Retry {
+		d.WithRetry(task.RetryAfter)
 	}
 	return d
 }

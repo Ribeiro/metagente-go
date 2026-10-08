@@ -15,6 +15,8 @@ func visitStmts(stmts []Stmt, fn func(Expr)) {
 			visitExpr(s.Value, fn)
 		case *FailStmt:
 			visitExpr(s.Value, fn)
+		case *FailRetryStmt:
+			visitExpr(s.Value, fn)
 		case *IfStmt:
 			visitExpr(s.Cond, fn)
 			visitStmts(s.Then, fn)
