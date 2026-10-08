@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -197,11 +198,12 @@ func TestAMissingPasswordIsToldBeforeAnythingIsOpened(t *testing.T) {
 }
 
 func TestAPathOfAFileStartsAtTheProjectUnlessItIsAbsolute(t *testing.T) {
-	if got := absolute("/project", "certs/ca.pem"); got != "/project/certs/ca.pem" && !strings.HasSuffix(got, "ca.pem") {
-		t.Errorf("relative = %s", got)
+	root := t.TempDir()
+	if got, want := absolute(root, filepath.Join("certs", "ca.pem")), filepath.Join(root, "certs", "ca.pem"); got != want {
+		t.Errorf("relative = %s, want %s", got, want)
 	}
-	abs := t.TempDir() + "/ca.pem"
-	if got := absolute("/project", abs); got != abs {
-		t.Errorf("absolute = %s", got)
+	abs := filepath.Join(t.TempDir(), "ca.pem")
+	if got := absolute(root, abs); got != abs {
+		t.Errorf("absolute = %s, want %s", got, abs)
 	}
 }
