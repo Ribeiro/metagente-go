@@ -3,12 +3,15 @@
 package tools
 
 import (
+	"errors"
+
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"github.com/go-sql-driver/mysql"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -80,5 +83,16 @@ func TestTheCertificatesOfAServerAreRegisteredOnceAndUsed(t *testing.T) {
 	other, _ := mysqlDSN(conn, "pw", dir)
 	if other == first {
 		t.Error("the certificates of two hosts got the same name")
+	}
+}
+
+func TestMySQLErrorsThatMayPassAreTold(t *testing.T) {
+	for number, want := range map[uint16]bool{1040: true, 1205: true, 1213: true, 2003: true, 2006: true, 2013: true, 1062: false, 1064: false, 1146: false} {
+		if got := mysqlTransient(&mysql.MySQLError{Number: number}); got != want {
+			t.Errorf("%d: %v", number, got)
+		}
+	}
+	if !mysqlTransient(mysql.ErrInvalidConn) || mysqlTransient(errors.New("plain")) {
+		t.Error("the error of a connection that is gone, or a plain one")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 )
 
 // Message is what is published.
@@ -19,6 +20,9 @@ type Message struct {
 	// ID makes a copy recognizable: the broker drops a message whose id it has accepted lately.
 	ID   string
 	Data []byte
+	// Headers are extra lines of information that travel with the message (the dead letters use them to
+	// say why). Names and values are plain text.
+	Headers map[string]string
 }
 
 // PubAck is the broker saying that it keeps the message.
@@ -36,8 +40,55 @@ type PubAck struct {
 type Broker interface {
 	// Publish sends a message and waits until the broker says that it keeps it.
 	Publish(ctx context.Context, m Message) (PubAck, error)
+	// Consume makes (or finds) a consumer, a place in a stream that remembers which messages were
+	// confirmed, so a message that was not is delivered again.
+	Consume(ctx context.Context, spec ConsumerSpec) (Consumer, error)
 	// Close ends the connection.
 	Close() error
+}
+
+// ConsumerSpec says what a consumer reads and how it is looked after.
+type ConsumerSpec struct {
+	// Stream is the stream to read. When it is empty the broker finds the one that takes Subject.
+	Stream string
+	// Durable is the name of the consumer. A consumer with a name remembers its place when the program
+	// stops, and several programs with the same name share the work.
+	Durable string
+	// Subject is a subject or a pattern: only messages of subjects it allows are delivered.
+	Subject string
+	// AckWait is how long the broker waits for a confirmation before it delivers the message again.
+	AckWait time.Duration
+	// MaxDeliver is the most deliveries of one message. The program decides what happens with a
+	// message that reaches it (it goes to the dead letters), so the broker is given room for one more.
+	MaxDeliver int
+	// MaxInFlight is the most messages delivered and not confirmed yet.
+	MaxInFlight int
+}
+
+// Consumer gives the messages of a ConsumerSpec.
+type Consumer interface {
+	// Fetch waits up to wait for messages and gives up to n of them; it gives none when none came.
+	Fetch(ctx context.Context, n int, wait time.Duration) ([]Delivery, error)
+	// Close ends the use of the consumer. What it remembers stays on the broker.
+	Close() error
+}
+
+// Delivery is one message given to a consumer, to be answered with exactly one of Ack, Nak or Term.
+type Delivery interface {
+	// Message is what was published.
+	Message() Message
+	// Seq is the place of the message in the stream.
+	Seq() uint64
+	// Attempt counts the deliveries of this message, this one included: 1 the first time.
+	Attempt() int
+	// Ack says that the message was dealt with: it is not delivered again.
+	Ack(ctx context.Context) error
+	// Nak says that it was not, and asks for it again after the delay (zero means at once).
+	Nak(ctx context.Context, delay time.Duration) error
+	// Term says that it never will be: it is not delivered again.
+	Term(ctx context.Context, reason string) error
+	// InProgress says that the work goes on, so the broker waits for another AckWait.
+	InProgress(ctx context.Context) error
 }
 
 // What can go wrong when a message is published. A broker wraps one of these with its own words, so the

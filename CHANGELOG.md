@@ -42,6 +42,17 @@ minor versions.
   are approved by `metagente trust`. `limits.max_broker_bytes` (1 MiB) limits a message. JetStream can be
   left out of a build with `-tags nojetstream`; `driver = "memory"` is a broker in the process, for tests.
   Second part of phase 2 of `docs/design-async-elt.md`.
+- `metagente consume FILE.ag --from BROKER --subject SUBJECT --dead SUBJECT`, the other half of `tool broker`:
+  it gives the events of a JetStream stream to an agent, one call for each, and tells the broker what came of
+  it. An agent that replies confirms the event; `fail "…" retry` (or a tool that says the failure may pass: a
+  database or a broker that cannot be reached, a full stream) asks for it again after a wait (10 s, 1 min,
+  5 min, 15 min, or what `retry in N seconds` suggested), up to 5 deliveries; any other failure, an event the
+  agent does not accept, or the last delivery, is a dead letter with the reason in its headers. Several events
+  at a time (`--in-flight`), a heartbeat to the broker while the agent works, a circuit breaker when the
+  failures that may pass come one after the other, and a clean stop that gives back what it holds. What it
+  reaches is approved with `metagente trust FILE.ag --from … --subject … --dead …`. Failures of a database
+  (a connection that dropped, a deadlock, a server that is starting) now carry the mark of `retry` too.
+  This closes phase 2 of `docs/design-async-elt.md`.
 - `tool … from sql` reads PostgreSQL (`driver = "postgres"`), MySQL and MariaDB (`"mysql"`, `"mariadb"`) too.
   A network database is written with `host`, `port`, `database`, `user`, `tls` (`verify`, `require`,
   `disable`) and `ca_file`; the password comes from `[credentials]`. Every statement runs in a read only

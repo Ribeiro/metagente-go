@@ -222,3 +222,15 @@ func TestABrokerThatIsDownIsAFailureThatMayPass(t *testing.T) {
 		}
 	}
 }
+
+// natsMsg builds a message with the id the server uses to drop a copy.
+type natsMsg struct {
+	Subject string
+	Data    []byte
+}
+
+func (m *natsMsg) build(id string) *nats.Msg {
+	msg := &nats.Msg{Subject: m.Subject, Data: m.Data, Header: nats.Header{}}
+	msg.Header.Set(jetstream.MsgIDHeader, id)
+	return msg
+}

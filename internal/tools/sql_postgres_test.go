@@ -3,6 +3,9 @@
 package tools
 
 import (
+	"errors"
+
+	"github.com/jackc/pgx/v5/pgconn"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -44,5 +47,19 @@ func TestPostgresAddressKeepsSpecialSignsOfThePasswordInPlace(t *testing.T) {
 	dsn, _ = postgresDSN(conn, "", "/project")
 	if !strings.HasPrefix(dsn, "postgres://ana%40corp@db.example.com:5432/orders?") {
 		t.Errorf("without a password: %s", dsn)
+	}
+}
+
+func TestPostgresErrorsThatMayPassAreTold(t *testing.T) {
+	for code, want := range map[string]bool{
+		"08006": true, "08001": true, "53300": true, "57P01": true, "57P03": true, "40001": true, "40P01": true,
+		"23505": false, "42601": false, "42P01": false, "25006": false,
+	} {
+		if got := postgresTransient(&pgconn.PgError{Code: code}); got != want {
+			t.Errorf("%s: %v", code, got)
+		}
+	}
+	if postgresTransient(errors.New("plain")) {
+		t.Error("a plain error was taken for one that may pass")
 	}
 }

@@ -224,6 +224,9 @@ metagente run my-agent.ag    # an agent with `tool http`
   program or connects to an address runs before the person approved it, for this
   project. `run` asks when there is a terminal and refuses when there is not.
 - The built in tools: `file`, `http`, `env`, `state`, `clock`.
+- `metagente consume FILE.ag --from main --subject etl.orders.batch --dead etl.orders.dead`: gives the events of
+  a JetStream stream to an agent, confirms the ones it replies to, asks again for the ones that fail with `retry`,
+  and puts the others in the dead letters. See `docs/LANGUAGE.md`.
 - `tool events from broker "main" publish "etl.>"`: publishes messages to a JetStream broker, only to the
   subjects the agent declared, each with an id that lets the broker drop a copy; approved by
   `metagente trust`. See `docs/LANGUAGE.md`.

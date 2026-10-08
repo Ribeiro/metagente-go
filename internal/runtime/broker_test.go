@@ -74,7 +74,7 @@ func TestABrokerNobodyApprovedIsNotReached(t *testing.T) {
 		}
 		return false
 	}})
-	mustContain(t, errText(t, err), "publishes to the broker: memory in the memory of this process", "subjects etl.orders.batch, etl.orders.control", "metagente trust")
+	mustContain(t, errText(t, err), "uses the message broker: memory in the memory of this process", "subjects etl.orders.batch, etl.orders.control", "metagente trust")
 	if n := len(rt.Broker.Memory("main").Messages()); n != 0 {
 		t.Errorf("%d messages were published", n)
 	}

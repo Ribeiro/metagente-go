@@ -74,10 +74,23 @@ func BrokerSpecOf(decl *lang.ToolDecl, conns map[string]*config.BrokerConn, cred
 			decl.Name, decl.ConnectionName(), config.FileName, decl.ConnectionName()).
 			Fixf("add [broker.%s] with a driver and a url (see docs/LANGUAGE.md)", decl.ConnectionName())
 	}
-	spec := BrokerSpec{
-		Tool: decl.Name, Connection: conn.Name, Driver: conn.Driver,
-		Credential: credentials[decl.Name], Subjects: append([]string(nil), decl.Allow...),
+	return newBrokerSpec(decl.Name, conn, credentials[decl.Name], append([]string(nil), decl.Allow...)), nil
+}
+
+// ConsumeSpecOf is the spec of `metagente consume`: reading the events of a subject, and writing the dead
+// letters to another. It is approved like the spec of a tool is, for the connection of that name.
+func ConsumeSpecOf(connection string, conns map[string]*config.BrokerConn, credentials map[string]string, subject, dead string) (BrokerSpec, error) {
+	conn, ok := conns[connection]
+	if !ok {
+		return BrokerSpec{}, diag.Newf("there is no broker called `%s`: %s has no section [broker.%s]", connection, config.FileName, connection).
+			Fixf("add [broker.%s] with a driver and a url (see docs/LANGUAGE.md)", connection)
 	}
+	return newBrokerSpec("consume", conn, credentials[connection], []string{"read " + subject, "write " + dead}), nil
+}
+
+// newBrokerSpec says where the broker is, and fingerprints the settings of the connection and the subjects.
+func newBrokerSpec(tool string, conn *config.BrokerConn, credential string, subjects []string) BrokerSpec {
+	spec := BrokerSpec{Tool: tool, Connection: conn.Name, Driver: conn.Driver, Credential: credential, Subjects: subjects}
 	switch conn.Driver {
 	case "memory":
 		spec.Target = "in the memory of this process"
@@ -97,7 +110,38 @@ func BrokerSpecOf(decl *lang.ToolDecl, conns map[string]*config.BrokerConn, cred
 		fmt.Fprintf(sum, "%s\x00", subject)
 	}
 	spec.Fingerprint = hex.EncodeToString(sum.Sum(nil))[:12]
-	return spec, nil
+	return spec
+}
+
+// OpenBroker connects to a broker of metagente.toml. The credential is the name of the variable that holds
+// the password or the token, if one is set. The connection belongs to the caller, who closes it.
+func OpenBroker(conn *config.BrokerConn, credential string, getenv func(string) string, root string) (broker.Broker, error) {
+	driver, ok := brokerDrivers[conn.Driver]
+	if !ok {
+		return nil, diag.Newf("this build of Metagente cannot reach the broker `%s`", conn.Driver)
+	}
+	password := ""
+	if credential != "" {
+		if password = getenv(credential); password == "" {
+			return nil, diag.Newf("the password of the broker `%s` is not set: the variable %s is empty", conn.Name, credential).
+				Fixf("set it in the terminal that runs Metagente, for example: export %s=...", credential)
+		}
+	}
+	b, err := driver(conn, password, root)
+	if err != nil {
+		text := clip.Collapse(secret.Redact(err.Error(), password), 300)
+		if errors.Is(err, broker.ErrNotInBuild) {
+			return nil, diag.Newf("this build of Metagente was made without the `%s` broker", conn.Driver).
+				Fix("use a build that has it (the releases do), or build without the tag nojetstream")
+		}
+		d := diag.Newf("I could not reach the broker `%s`: %s", conn.Name, text).
+			Fixf("check the url, the user and the password of [broker.%s], and that this computer may reach the broker", conn.Name)
+		if broker.MayPass(err) {
+			d.WithRetry(0)
+		}
+		return nil, d
+	}
+	return b, nil
 }
 
 // BrokerPool keeps the connections that were made, so a server does not make one for each conversation.

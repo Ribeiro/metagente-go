@@ -3,17 +3,39 @@
 package tools
 
 import (
+	"errors"
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // the PostgreSQL driver, written in Go
 
 	"github.com/Ribeiro/metagente-go/internal/config"
 )
 
 func init() {
-	sqlDrivers["postgres"] = sqlDriver{name: "pgx", connect: postgresDSN, readOnlyTx: true}
+	sqlDrivers["postgres"] = sqlDriver{name: "pgx", connect: postgresDSN, readOnlyTx: true, transient: postgresTransient}
+}
+
+// postgresTransient is an error that may pass: a connection exception (class 08), a server that shuts down or
+// starts (57P01 to 57P03), too many connections or no resources (class 53), a serialization failure or a
+// deadlock (40001, 40P01).
+func postgresTransient(err error) bool {
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(pg.Code, "08"), strings.HasPrefix(pg.Code, "53"):
+		return true
+	}
+	switch pg.Code {
+	case "57P01", "57P02", "57P03", "40001", "40P01":
+		return true
+	}
+	return false
 }
 
 // postgresDSN builds the address of the database. The session is told to be read only before anything

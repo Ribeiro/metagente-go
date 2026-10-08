@@ -100,7 +100,13 @@ func (rt *Runtime) modelItem(address string) trust.Item {
 // the person through confirm; without a confirm nothing new is approved, and
 // the way to approve is explained.
 func (rt *Runtime) Authorize(agents []*lang.AgentDef, file string, confirm func([]trust.Item) bool) error {
-	needs := rt.Needs(agents)
+	return rt.AuthorizeWith(agents, nil, file, confirm)
+}
+
+// AuthorizeWith is Authorize for what the command line adds to the agents: the broker that
+// `metagente consume` reads from, for instance.
+func (rt *Runtime) AuthorizeWith(agents []*lang.AgentDef, extra []trust.Item, file string, confirm func([]trust.Item) bool) error {
+	needs := trust.Merge(rt.Needs(agents), extra)
 	missing, err := rt.Trust.Missing(rt.Config.Root, needs)
 	if err != nil {
 		return err
@@ -178,7 +184,10 @@ func (rt *Runtime) allowSQL(spec tools.SQLSpec) error {
 }
 
 // brokerItem is the approval of a message broker: where it is and the subjects that may be published to.
-func brokerItem(spec tools.BrokerSpec) trust.Item {
+func brokerItem(spec tools.BrokerSpec) trust.Item { return BrokerItem(spec) }
+
+// BrokerItem is the approval of a broker, for what the command line reaches too.
+func BrokerItem(spec tools.BrokerSpec) trust.Item {
 	return trust.BrokerItem(spec.Driver, spec.Target, spec.Connection, spec.Subjects, spec.Fingerprint).
 		WithCredential(spec.Credential)
 }
