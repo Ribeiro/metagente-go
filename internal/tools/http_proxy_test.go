@@ -63,12 +63,14 @@ func (p *fakeProxy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	conn, _, err := http.NewResponseController(w).Hijack()
+	conn, buffered, err := http.NewResponseController(w).Hijack()
 	if err != nil {
 		upstream.Close()
 		return
 	}
-	go func() { io.Copy(upstream, conn); upstream.Close() }()
+	// The server may have read the first bytes of the client already (its background read): they are in
+	// the buffer, not in the connection, so the copy has to start from the buffer.
+	go func() { io.Copy(upstream, buffered); upstream.Close() }()
 	go func() { io.Copy(conn, upstream); conn.Close() }()
 }
 
