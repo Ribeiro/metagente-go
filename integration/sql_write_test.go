@@ -84,27 +84,32 @@ func TestAnAgentLandsABatchInOneTransaction(t *testing.T) {
 			run := func(message string) (string, error) {
 				return metagente(t, dir, dbSecret, "run", "lander.ag", message, "start=x")
 			}
-			if out, err := run("land"); err != nil || !strings.Contains(out, "landed 10 marked 1") {
-				t.Fatalf("land (err = %v):\n%s", err, out)
-			}
-			// The same batch again: the mark is a copy, so the rows of this try must not stay, and the
-			// problem says nothing about what the rows hold.
-			out, err = run("again")
-			if err == nil || strings.Contains(out, "this must not happen") {
-				t.Fatalf("a copy was accepted (err = %v):\n%s", err, out)
-			}
-			if strings.Contains(out, "Customer") || strings.Contains(out, dbSecret) {
-				t.Errorf("the problem shows what the rows hold:\n%s", out)
-			}
-			if out, err := run("count"); err != nil || !strings.Contains(out, "landed rows 10") {
-				t.Errorf("count (err = %v):\n%s", err, out)
-			}
-			if out, err := run("finish"); err != nil || !strings.Contains(out, "finished 1: done") {
-				t.Errorf("finish (err = %v):\n%s", err, out)
-			}
-			if out, err := run("purge"); err != nil || !strings.Contains(out, "purged 10") {
-				t.Errorf("purge (err = %v):\n%s", err, out)
-			}
+			expect(t, run, "land", "landed 10 marked 1")
+			refuseACopy(t, run)
+			expect(t, run, "count", "landed rows 10")
+			expect(t, run, "finish", "finished 1: done")
+			expect(t, run, "purge", "purged 10")
 		})
+	}
+}
+
+// expect runs a message and checks that it worked and said what is wanted.
+func expect(t *testing.T, run func(string) (string, error), message, want string) {
+	t.Helper()
+	if out, err := run(message); err != nil || !strings.Contains(out, want) {
+		t.Errorf("%s (err = %v):\n%s", message, err, out)
+	}
+}
+
+// refuseACopy lands the same batch again. The mark is a copy, so the rows of this try must not stay, and
+// the problem says nothing about what the rows hold.
+func refuseACopy(t *testing.T, run func(string) (string, error)) {
+	t.Helper()
+	out, err := run("again")
+	if err == nil || strings.Contains(out, "this must not happen") {
+		t.Fatalf("a copy was accepted (err = %v):\n%s", err, out)
+	}
+	if strings.Contains(out, "Customer") || strings.Contains(out, dbSecret) {
+		t.Errorf("the problem shows what the rows hold:\n%s", out)
 	}
 }

@@ -503,21 +503,7 @@ func readTransaction(conn *SQLConn, name string, value any) (*SQLTransaction, er
 // TransactionParams gives the values that a call of a transaction needs: the scalars, and the lists. A
 // name that two steps share is one value, and it has to mean the same to both.
 func (c *SQLConn) TransactionParams(tx *SQLTransaction) (scalars, lists []string, err error) {
-	role := map[string]string{}
-	use := func(name, as string) error {
-		if before, ok := role[name]; ok && before != as {
-			return fmt.Errorf("the value `%s` is a list in one step and a single value in another", name)
-		}
-		if _, ok := role[name]; !ok {
-			role[name] = as
-			if as == "list" {
-				lists = append(lists, name)
-			} else {
-				scalars = append(scalars, name)
-			}
-		}
-		return nil
-	}
+	roles := paramRoles{role: map[string]string{}}
 	for _, step := range tx.Steps {
 		st := c.Statements[step]
 		if st == nil {
@@ -526,18 +512,47 @@ func (c *SQLConn) TransactionParams(tx *SQLTransaction) (scalars, lists []string
 		if !st.Parsed.Kind.Writes() {
 			return nil, nil, fmt.Errorf("step `%s` only reads, and a transaction is made of statements that change rows", step)
 		}
-		if st.Each != "" {
-			if err := use(st.Each, "list"); err != nil {
-				return nil, nil, err
-			}
-		}
-		for _, p := range st.CallParams() {
-			if err := use(p, "scalar"); err != nil {
-				return nil, nil, err
-			}
+		if err := roles.add(st); err != nil {
+			return nil, nil, err
 		}
 	}
-	return scalars, lists, nil
+	return roles.scalars, roles.lists, nil
+}
+
+// paramRoles collects the values of the steps of a transaction, each as a single value or as a list.
+type paramRoles struct {
+	role           map[string]string
+	scalars, lists []string
+}
+
+func (r *paramRoles) add(st *SQLStatement) error {
+	if st.Each != "" {
+		if err := r.use(st.Each, "list"); err != nil {
+			return err
+		}
+	}
+	for _, p := range st.CallParams() {
+		if err := r.use(p, "scalar"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *paramRoles) use(name, as string) error {
+	if before, ok := r.role[name]; ok {
+		if before != as {
+			return fmt.Errorf("the value `%s` is a list in one step and a single value in another", name)
+		}
+		return nil
+	}
+	r.role[name] = as
+	if as == "list" {
+		r.lists = append(r.lists, name)
+	} else {
+		r.scalars = append(r.scalars, name)
+	}
+	return nil
 }
 
 // CallParams are the parameters that the call gives as single values: all but those that come from each item.
