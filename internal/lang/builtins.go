@@ -60,6 +60,8 @@ var builtinTable = map[ToolKind][]ActionInfo{
 			Params: []ParamInfo{{"value", true}}},
 		{Name: "parse", Description: "Read text in JSON as a value",
 			Params: []ParamInfo{{"text", true}}},
+		{Name: "count", Description: "How many items a list has",
+			Params: []ParamInfo{{"value", true}}},
 		{Name: "size", Description: "How many bytes a value takes when written as JSON",
 			Params: []ParamInfo{{"value", true}}},
 		{Name: "gzip", Description: "Compress a text with gzip and give the result as text in base64",

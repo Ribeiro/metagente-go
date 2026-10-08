@@ -1,0 +1,60 @@
+# The Extractor of the asynchronous ELT (docs/design-async-elt.md). Everything you may want to change is
+# here; the agent file names no database, no broker and no secret.
+
+[runtime]
+timeout_seconds = 60
+max_loop_turns = 1000000          # a big table has many pages: the loop of the Extractor has one turn for each
+
+# ---- the source: read only. The demo is a SQLite file; see the notes at the end for PostgreSQL. ----
+[sql.source]
+driver = "sqlite"
+path = "demo/source.db"           # relative to this folder
+
+[sql.source.statements]
+# One page of the table, by key. `document` is masked here, in the SELECT itself: what the SELECT does
+# not give never leaves the source. Keep the columns in the same order as `columns` in extractor.ag.
+page = "SELECT id, customer, '***' || substr(document, -4) AS document, total FROM orders WHERE id > :after ORDER BY id LIMIT :size"
+# The same rows again, by the edges that the outbox saved: how a batch is built again after a restart.
+range = "SELECT id, customer, '***' || substr(document, -4) AS document, total FROM orders WHERE id > :after AND id <= :upto ORDER BY id"
+
+# ---- the outbox: a small SQLite file on this machine; the Extractor writes it. ----
+[sql.outbox]
+driver = "sqlite"
+path = "state/outbox.db"
+mode = "write"
+
+[sql.outbox.statements]
+version = { sql = "SELECT schema_version FROM outbox_meta", result = "value" }
+# A value that came from the command line is a text: these make it a whole number, and halve it.
+int = { sql = "SELECT CAST(:n AS INTEGER)", result = "value" }
+half = { sql = "SELECT max(1, CAST(:n AS INTEGER) / 2)", result = "value" }
+next_seq = { sql = "SELECT coalesce(max(seq), 0) + 1 FROM outbox WHERE job_id = :job", result = "value" }
+last_upto = { sql = "SELECT coalesce(max(upto_key), 0) FROM outbox WHERE job_id = :job", result = "value" }
+# A batch that was planned and never confirmed by the broker.
+next_planned = { sql = "SELECT seq, after_key, upto_key FROM outbox WHERE job_id = :job AND state = 'planned' ORDER BY seq LIMIT 1", result = "row" }
+plan = "INSERT INTO outbox (job_id, seq, after_key, upto_key, row_count, state) VALUES (:job, :seq, :after_key, :upto_key, :row_count, 'planned')"
+confirm = "UPDATE outbox SET state = 'published', published_at = CURRENT_TIMESTAMP WHERE job_id = :job AND seq = :seq AND state = 'planned'"
+totals = { sql = "SELECT count(*) AS batches, coalesce(sum(row_count), 0) AS rows FROM outbox WHERE job_id = :job", result = "row" }
+
+# ---- the broker: a NATS server with JetStream. ----
+[broker.main]
+driver = "jetstream"
+url = "nats://127.0.0.1:4222"     # for a broker that is not on this computer: "tls://broker.example.com:4222"
+stream = "ETL"                    # a stream that takes etl.> ; it has the limits of age and bytes, and discards new
+
+# A broker with a user and a password: add `user = "extractor"` above and, here, the NAME of the variable
+# that holds the password (the tool is called `events` in extractor.ag):
+#
+# [credentials]
+# events = "BROKER_PASSWORD"
+
+# ---- notes ----
+# For a source that is PostgreSQL, MySQL or MariaDB, change [sql.source] to
+#
+#   driver = "postgres"
+#   host = "db.example.com"
+#   database = "orders"
+#   user = "extractor"            # a user that may only read
+#
+# put the password in [credentials] under the name of the tool (`source = "SOURCE_DB_PASSWORD"`), and
+# write the two statements in the dialect of that database.

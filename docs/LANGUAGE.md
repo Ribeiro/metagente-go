@@ -451,6 +451,7 @@ The actions of the built in tools:
 | `codec.records` | `rows` (a list of lists), `columns` | a list of records, the opposite of `table` |
 | `codec.json` | `value` | the value written as a text in JSON |
 | `codec.parse` | `text` | the JSON in the text, as a value |
+| `codec.count` | `value` (a list) | how many items the list has |
 | `codec.size` | `value` | how many bytes the value takes written as JSON |
 | `codec.gzip` | `text` | the text compressed with gzip, as a text in base64 |
 | `codec.gunzip` | `text` | the text that `gzip` packed, within `max_data_bytes` once unpacked |

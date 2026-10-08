@@ -629,10 +629,12 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    chain of agents over MCP). That review was made by the one who wrote part of it, so **a review by a
    person from outside is still the thing to do before `--public`**.
 7. **`readonly` for tool servers is done**, as the record of the language shows.
-8. **Under study, nothing built:** [an asynchronous ELT between two databases](docs/design-async-elt.md), with
+8. **Being built, in steps:** [an asynchronous ELT between two databases](docs/design-async-elt.md), with
    one agent that extracts and others that load and transform, joined by a broker that keeps the events
-   so a failed batch can be tried again. It needs a `sql` tool with named statements, a `broker` tool and a
-   `consume` command; the page has the design, the failures it covers and the decisions taken.
+   so a failed batch can be tried again. The pieces are done (a `sql` tool that reads and, for the
+   destination, writes; a `broker` tool; `metagente consume`; `fail ... retry`; `tool codec`), and so is the
+   Extractor, the first half of [the sample](samples/async-elt/). The Worker is next; the page has the
+   design, the failures it covers and the decisions taken.
 
 ### Not verified yet
 
