@@ -397,8 +397,8 @@ func (w *walker) call(call *CallExpr, vars map[string]bool) {
 		w.undeclaredTarget(call)
 		return
 	}
-	if tool.Kind == ToolMCP {
-		return // the actions of an MCP tool are only known when its server runs
+	if tool.Kind == ToolMCP || tool.Kind == ToolSQL {
+		return // the actions of these are only known when the server runs, or from metagente.toml
 	}
 
 	available := actionNames(BuiltinActions(tool))

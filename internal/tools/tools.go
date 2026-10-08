@@ -42,6 +42,8 @@ type Options struct {
 	ContextID string
 	// Proxy is the web proxy of [network] for `tool http`, or nil.
 	Proxy *url.URL
+	// SQL is what the tools `from sql` need.
+	SQL SQLOptions
 }
 
 // Build creates the tools an agent declared.
@@ -62,6 +64,12 @@ func Build(def *lang.AgentDef, opts Options) (Registry, error) {
 			registry[decl.Name] = NewClock(decl, opts.MaxWaitSeconds)
 		case lang.ToolEnv:
 			registry[decl.Name] = NewEnv(decl, opts.HiddenEnv)
+		case lang.ToolSQL:
+			tool, err := NewSQL(decl, opts.SQL, opts.Limits)
+			if err != nil {
+				return nil, err
+			}
+			registry[decl.Name] = tool
 		case lang.ToolMCP:
 			registry[decl.Name] = Unavailable(decl.Name, "tool servers (MCP)")
 		}

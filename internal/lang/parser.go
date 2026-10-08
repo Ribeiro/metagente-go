@@ -483,6 +483,9 @@ func (p *parser) envTool(c *cursor, span Span) (*ToolDecl, error) {
 // which may come in any order: a tool that is a separate program, or an address.
 func (p *parser) serverTool(c *cursor, span Span, name string) (*ToolDecl, error) {
 	c.i++ // from
+	if c.peekWord("sql") {
+		return p.sqlTool(c, span, name)
+	}
 	if !c.peekWord("mcp") {
 		return nil, p.missing(c, "after `from` I expected `mcp`",
 			`write: tool weather from mcp "command or address"`)
@@ -517,6 +520,42 @@ func (p *parser) serverTool(c *cursor, span Span, name string) (*ToolDecl, error
 		return nil, err
 	}
 	return decl, nil
+}
+
+// sqlTool reads `tool name from sql "connection"`, with the cursor at `sql`.
+func (p *parser) sqlTool(c *cursor, span Span, name string) (*ToolDecl, error) {
+	c.i++ // sql
+	parts, err := p.text(c, "the name of the connection must be in quotes",
+		`write: tool orders from sql "orders-db"`)
+	if err != nil {
+		return nil, err
+	}
+	connection := strings.TrimSpace(joinLit(parts))
+	if !ValidConnectionName(connection) {
+		return nil, p.err(c.line, c.tokens[c.i-1].Col,
+			"the name of a connection is made of letters, digits, `_` and `-`",
+			`write it like: tool orders from sql "orders-db"`)
+	}
+	if err := p.finish(c); err != nil {
+		return nil, err
+	}
+	return &ToolDecl{Name: name, Kind: ToolSQL, Span: span, Command: connection}, nil
+}
+
+// ValidConnectionName says whether text can name a connection to a database: it is also the name of
+// the [sql.NAME] section of metagente.toml.
+func ValidConnectionName(text string) bool {
+	if text == "" || len(text) > 64 {
+		return false
+	}
+	for _, c := range text {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // unknownTool is the problem of a name that is not a built in tool and has no `from mcp`, with the

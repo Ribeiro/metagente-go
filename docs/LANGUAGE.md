@@ -34,7 +34,7 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `fail` | ends the section with a failure | [fail](#fail) |
 | `file.read`, `file.write` | reads and writes texts | [tool](#tool) |
 | `for` ... `in` | repeats lines for each item of a list | [for](#for) |
-| `from` | `link Name from "file.ag"`, `tool name from mcp "..."` | [link](#link), [tool](#tool) |
+| `from` | `link Name from "file.ag"`, `tool name from mcp "..."`, `tool name from sql "..."` | [link](#link), [tool](#tool) |
 | `goal` | what the agent is for | [goal](#goal) |
 | `http.get`, `http.post` | web requests | [tool](#tool) |
 | `if`, `otherwise` | choose | [if and otherwise](#if-and-otherwise) |
@@ -51,6 +51,7 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `remote` | an agent served somewhere else (A2A) | [remote](#remote) |
 | `repeat while` | repeats lines while a condition is true | [repeat](#repeat) |
 | `reply` | ends the section with the answer | [reply](#reply) |
+| `sql` | a database: `tool name from sql "connection"` | [A database](#a-database-tool-from-sql) |
 | `state.get`, `state.set` | the memory of a conversation | [tool](#tool) |
 | `target.action key: value` | a call to a tool, a `link` or a `remote` | [Calls](#calls) |
 | `think`, `using` | asks a language model | [think](#think) |
@@ -158,6 +159,7 @@ The tools an agent may use. An agent can only call what it declared.
 | `tool search from mcp "https://mcp.example.com/mcp"` | a tool server at that address |
 | `tool weather from mcp "..." env "HTTPS_PROXY"` | give the program these variables too |
 | `tool weather from mcp "..." readonly` | only the actions that the server marks as read only |
+| `tool orders from sql "orders-db"` | read a database, with the statements that `[sql.orders-db]` of `metagente.toml` names (see [A database](#a-database-tool-from-sql)) |
 
 The clauses of `http` (`allow`, `readonly`) and of a tool server (`env`, `readonly`) may come in any
 order and more than once.
@@ -190,6 +192,59 @@ the server, a credential) is refused even when named. `check` warns when the com
 `uvx`, `pipx run` or `bunx` with a package that has no pinned version, and `check --strict` refuses
 it. A tool server is started, or an address reached, only after the person approved it with
 `metagente trust` (see the README).
+
+### A database (`tool from sql`)
+
+`tool orders from sql "orders-db"` lets the agent read a database. The agent never writes SQL: the
+statements are written by the person who runs the agents, in `metagente.toml`, each with a name, and the
+agent calls a statement as an action of the tool, with values for its parameters:
+
+```toml
+[sql.orders-db]
+driver = "sqlite"
+path = "data/orders.db"            # relative to the folder of the project
+
+[sql.orders-db.statements]
+next_page = "SELECT id, customer, total FROM orders WHERE id > :after ORDER BY id LIMIT :size"
+by_id     = { sql = "SELECT id, customer FROM orders WHERE id = :id", result = "row" }
+newest    = { sql = "SELECT max(id) FROM orders", result = "value", description = "the last id" }
+```
+
+```
+agent Pager
+  goal "Read the orders in pages"
+  tool orders from sql "orders-db"
+  accepts go start
+  on go
+    after = 0
+    repeat while after is not nothing
+      page = orders.next_page after: after size: 1000
+      after = nothing
+      for row in page
+        after = row.id
+    reply "done"
+```
+
+- A `:name` in a statement is a parameter. It is sent to the database apart from the text, never pasted
+  into it, so a value cannot change the statement. A call must give every parameter and no other.
+- `result` says what comes back: `rows` (the default) is a list with a record for each row; `row` is the
+  first row as a record, or `nothing` when there is none; `value` is the one value of a statement with one
+  column, or `nothing`. `row` and `value` are a problem when the statement gives more than one row, so a
+  statement that was meant to give one does not silently give the wrong one.
+- Only `SELECT` and `WITH`, one statement at a time. The database is opened read only, and the engine
+  is told so as well (SQLite: `mode=ro` and `query_only`).
+- The columns become the fields of the records, so they need names that are valid fields and are not
+  repeated (`AS` gives one). A number beyond 2^53 comes back as text, so it keeps every digit; a blob
+  must be text in UTF-8; a time comes as text in RFC 3339.
+- A connection string that is a secret does not go in the file: `[credentials]` names the variable that
+  holds it, by the name of the tool (`orders = "ORDERS_DB"`), and the value of the variable replaces
+  `path`. A problem never shows it, nor the values of a call.
+- The database, the connection, and the text of every statement are approved with `metagente trust`
+  before the first connection; changing a statement asks again.
+- The most rows and bytes of an answer are `max_sql_rows` (10000) and `max_sql_bytes` (5 MiB) in
+  `[limits]`; an answer that passes either is a problem, not a cut answer. Use `LIMIT` and a `repeat`.
+- `driver` is `sqlite` for now. A build made with `-tags nosqlite` leaves the driver out (the releases
+  do not).
 
 The actions of the built in tools:
 
@@ -442,12 +497,13 @@ Words that look like a mistake get a suggestion: `acepts` gets "did you mean `ac
 | turns of a `repeat` | `max_loop_turns` (10000) | `[runtime]` |
 | a file read or written | `max_file_bytes` (1 MiB) | `[limits]` |
 | an answer of `http` | `max_http_bytes` (5 MiB) | `[limits]` |
+| an answer of `sql` | `max_sql_rows` (10000), `max_sql_bytes` (5 MiB) | `[limits]` |
 | what `state` keeps in a conversation | `max_state_entries` (1000), `max_state_bytes` (256 KiB) | `[limits]` |
 | what a tool gives to `think` | `max_tool_result_bytes` (32 KiB), cut and marked | `[limits]` |
 
 ## Words the language keeps
 
-`agent`, `goal`, `tool`, `link`, `remote`, `accepts`, `on`, `from`, `mcp`, `env`, `at`, `allow`,
+`agent`, `goal`, `tool`, `link`, `remote`, `accepts`, `on`, `from`, `mcp`, `sql`, `env`, `at`, `allow`,
 `private`, `readonly`, `reply`, `fail`, `if`, `otherwise`, `for`, `in`, `repeat`, `while`, `think`, `using`,
 `within`, `seconds`, `is`, `not`, `more`, `less`, `than`, `contains`, `and`, `or`, `yes`, `no`, `nothing`.
 
@@ -544,11 +600,12 @@ remote        = "remote" NAME "at" TEXT NEWLINE ;
 accepts       = "accepts" NAME { NAME } [ COMMENT ] NEWLINE ;          (* the comment describes it *)
 handler       = "on" NAME NEWLINE block ;                               (* "on start" runs first *)
 
-tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | server_tool ) NEWLINE ;
+tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | server_tool | sql_tool ) NEWLINE ;
 file_tool     = "file" [ TEXT ] { "readonly" } ;
 http_tool     = "http" { "readonly" | "allow" ( "private" | TEXT { TEXT } ) } ;
 env_tool      = "env" TEXT { TEXT } ;
 server_tool   = NAME "from" "mcp" TEXT { "readonly" | "env" TEXT { TEXT } } ;
+sql_tool      = NAME "from" "sql" TEXT ;                            (* TEXT is a name of [sql.NAME] *)
                                                      (* NAME is not file, http, env, state or clock *)
 
 (* The lines of a section *)

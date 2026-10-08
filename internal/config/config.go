@@ -81,6 +81,10 @@ type Limits struct {
 	MaxMCPResultBytes  int64 // what one tool server answer may hold
 	MaxStateEntries    int   // D3
 	MaxStateBytes      int64 // D3
+	// MaxSQLRows and MaxSQLBytes are what one statement may give back. A statement that gives more is a
+	// problem, not a shorter answer.
+	MaxSQLRows  int
+	MaxSQLBytes int64
 }
 
 // Network is the [network] section: how `tool http` reaches the web where it
@@ -102,6 +106,8 @@ type Config struct {
 	Serve   Serve
 	Limits  Limits
 	Network Network
+	// SQL are the connections to databases, by the name that `tool x from sql "NAME"` uses.
+	SQL map[string]*SQLConn
 	// Root is the project folder: where metagente.toml was found, or where
 	// Metagente was started.
 	Root string
@@ -153,7 +159,10 @@ func Default() *Config {
 			MaxMCPResultBytes:  5 << 20,
 			MaxStateEntries:    1000,
 			MaxStateBytes:      256 << 10, // with 1000 conversations, about 250 MiB at most
+			MaxSQLRows:         10000,
+			MaxSQLBytes:        5 << 20,
 		},
+		SQL: map[string]*SQLConn{},
 	}
 }
 
@@ -272,12 +281,14 @@ var settings = map[string]setter{
 	"limits.max_mcp_result_bytes":  setInt64(func(c *Config) *int64 { return &c.Limits.MaxMCPResultBytes }, 1),
 	"limits.max_state_entries":     setInt(func(c *Config) *int { return &c.Limits.MaxStateEntries }, 1),
 	"limits.max_state_bytes":       setInt64(func(c *Config) *int64 { return &c.Limits.MaxStateBytes }, 1),
+	"limits.max_sql_rows":          setInt(func(c *Config) *int { return &c.Limits.MaxSQLRows }, 1),
+	"limits.max_sql_bytes":         setInt64(func(c *Config) *int64 { return &c.Limits.MaxSQLBytes }, 1),
 
 	"network.http_proxy":          setProxy,
 	"network.http_proxy_auth_env": setEnvName(func(c *Config) *string { return &c.Network.HTTPProxyAuthEnv }),
 }
 
-var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "network": true, "credentials": true}
+var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "network": true, "credentials": true, "sql": true}
 
 // Load reads the configuration for a project started in the folder start.
 // When explicit is not empty, that file is read and nothing is searched.
@@ -393,6 +404,12 @@ func (cfg *Config) apply(name, text string) error {
 					Fix("put the token in the variable (export BOB_TOKEN=...) and write only its name here")
 			}
 			cfg.Credentials[e.key] = variable
+			continue
+		case e.section == "sql":
+			// The key is the name of a connection, and the value is the table under [sql.NAME].
+			if err := cfg.addSQL(name, text, e); err != nil {
+				return err
+			}
 			continue
 		case !knownSections[e.section]:
 			if !warnedSection[e.section] {

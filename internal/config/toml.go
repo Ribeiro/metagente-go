@@ -154,6 +154,12 @@ func keyLines(data []byte) map[string]int {
 			if _, seen := lines["\x00"+section]; !seen {
 				lines["\x00"+section] = lineOf(&p, node.Key())
 			}
+			if len(path) > 1 {
+				// A table under a section, such as [sql.orders]: its header is the line of that name.
+				if key := section + "\x00" + path[1]; lines[key] == 0 {
+					lines[key] = lineOf(&p, node.Key())
+				}
+			}
 		case unstable.KeyValue:
 			recordKey(lines, section, path, lineOf(&p, node.Key()))
 		}

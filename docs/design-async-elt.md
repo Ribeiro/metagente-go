@@ -358,6 +358,9 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
 
 1. **`tool sql` and the bounded loop.** Useful alone: it answers the question of reading a large
    database in pages, with an agent.
+   *Status:* `repeat while` is done. `tool sql` is done for SQLite, read only (named statements in
+   `[sql.NAME]`, results `rows`/`row`/`value`); PostgreSQL, MySQL/MariaDB and the `integration/` module
+   with Testcontainers come next.
 2. **`tool broker` and `metagente consume`,** with JetStream and the rules of section 8.
 3. **The sample `samples/async-elt`:** the Extractor, the Worker, the SQL files of one or two dialects,
    the control tables, the purge, the closing of a job, the budget of the model step and the brakes.
