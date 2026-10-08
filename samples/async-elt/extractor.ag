@@ -50,13 +50,13 @@ agent Extractor
         batch_rows = source.range after: batch_after upto: upto
       if upto is not nothing
         count = codec.count value: batch_rows
-        table = codec.table rows: batch_rows columns: ["id", "customer", "document", "total"]
+        table = codec.table rows: batch_rows columns: ["id", "customer", "document", "total", "note"]
         body = codec.json value: table
         hash = codec.sha256 text: body
         payload = codec.gzip text: body
         event_id = codec.uuid
         read_at = clock.now
-        event = codec.record v: 1 event_id: event_id job_id: job seq: batch_seq table: "orders" key: "id" after: batch_after upto: upto read_at: read_at.text columns: ["id", "customer", "document", "total"] row_count: count encoding: "json+gzip" payload: payload sha256: hash
+        event = codec.record v: 1 event_id: event_id job_id: job seq: batch_seq table: "orders" key: "id" after: batch_after upto: upto read_at: read_at.text columns: ["id", "customer", "document", "total", "note"] row_count: count encoding: "json+gzip" payload: payload sha256: hash
         events.publish subject: "etl.{job}.batch" id: "{job}:{batch_seq}" data: event
         confirmed = outbox.confirm job: job seq: batch_seq
     totals = outbox.totals job: job

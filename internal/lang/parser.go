@@ -379,7 +379,7 @@ func (p *parser) toolDecl(c *cursor, span Span) (*ToolDecl, error) {
 		return p.fileTool(c, span)
 	case "http":
 		return p.httpTool(c, span)
-	case "state", "clock", "codec":
+	case "state", "clock", "codec", "meter":
 		return p.plainTool(c, span, name)
 	case "env":
 		return p.envTool(c, span)
@@ -456,7 +456,7 @@ func (p *parser) allowClause(c *cursor, decl *ToolDecl) error {
 	return nil
 }
 
-// plainTool reads `tool state`, `tool clock` and `tool codec`, which take nothing.
+// plainTool reads `tool state`, `tool clock`, `tool codec` and `tool meter`, which take nothing.
 func (p *parser) plainTool(c *cursor, span Span, name string) (*ToolDecl, error) {
 	kind := ToolState
 	switch name {
@@ -464,6 +464,8 @@ func (p *parser) plainTool(c *cursor, span Span, name string) (*ToolDecl, error)
 		kind = ToolClock
 	case "codec":
 		kind = ToolCodec
+	case "meter":
+		kind = ToolMeter
 	}
 	if err := p.finish(c); err != nil {
 		return nil, err

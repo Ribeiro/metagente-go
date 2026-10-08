@@ -5,6 +5,12 @@
 [runtime]
 timeout_seconds = 60
 
+# The model of the optional step (enricher.ag); only a job that has a budget uses it.
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-5-5"
+api_key_env = "ANTHROPIC_API_KEY"
+
 [credentials]
 dest = "DEST_DB_PASSWORD"         # the NAME of the variable that holds the password of the database
 # events = "BROKER_PASSWORD"      # and of the broker, if it has a user (add `user = "worker"` to [broker.main])
@@ -21,19 +27,31 @@ version = { sql = "SELECT schema_version FROM etl_meta", result = "value" }
 batch_state = { sql = "SELECT state FROM etl_batches WHERE job_id = :job AND seq = :seq", result = "value" }
 batch_counts = { sql = "SELECT rows_read, rows_loaded, rows_rejected FROM etl_batches WHERE job_id = :job AND seq = :seq", result = "row" }
 job_state = { sql = "SELECT state FROM etl_jobs WHERE job_id = :job", result = "value" }
+job_status = { sql = "SELECT state, coalesce(pause_reason, '') AS reason FROM etl_jobs WHERE job_id = :job", result = "row" }
 
 open_job = "INSERT INTO etl_jobs (job_id) VALUES (:job) ON CONFLICT (job_id) DO NOTHING"
-land = { sql = "INSERT INTO stg_orders (job_id, seq, source_key, customer, document, total) VALUES (:job, :seq, :id, :customer, :document, :total) ON CONFLICT (job_id, seq, source_key) DO NOTHING", each = "rows", columns = ["id", "customer", "document", "total"] }
+land = { sql = "INSERT INTO stg_orders (job_id, seq, source_key, customer, document, total, note) VALUES (:job, :seq, :id, :customer, :document, :total, :note) ON CONFLICT (job_id, seq, source_key) DO NOTHING", each = "rows", columns = ["id", "customer", "document", "total", "note"] }
 mark_landed = "INSERT INTO etl_batches (job_id, seq, state, rows_read) VALUES (:job, :seq, 'landed', :row_count) ON CONFLICT (job_id, seq) DO NOTHING"
 
-reject_share = { sql = "SELECT coalesce(100.0 * sum(CASE WHEN total < 0 OR trim(customer) = '' THEN 1 ELSE 0 END) / count(*), 0) FROM stg_orders WHERE job_id = :job AND seq = :seq", result = "value" }
+pending_enrich = "SELECT source_key AS id, substr(note, 1, 200) AS note FROM stg_orders WHERE job_id = :job AND seq = :seq AND note IS NOT NULL AND trim(note) <> '' AND enrich_version IS NULL AND enrich_tries < 2 ORDER BY source_key LIMIT :group"
+answer_rows = { sql = "UPDATE stg_orders SET note_category = CASE WHEN CAST(:category AS text) IN ('gift', 'delivery', 'complaint', 'other') THEN CAST(:category AS text) ELSE 'other' END, enrich_version = CAST(:version AS text) WHERE job_id = :job AND seq = :seq AND source_key = :id AND note IS NOT NULL AND enrich_version IS NULL", each = "answers", columns = ["id", "category"] }
+bump_tries = { sql = "UPDATE stg_orders SET enrich_tries = enrich_tries + 1 WHERE job_id = :job AND seq = :seq AND source_key = :id", each = "group", columns = ["id"] }
+count_model = "UPDATE etl_batches SET model_calls = model_calls + (CAST(:after_calls AS BIGINT) - CAST(:before_calls AS BIGINT)), model_tokens = model_tokens + (CAST(:after_tokens AS BIGINT) - CAST(:before_tokens AS BIGINT)), enrich_version = CAST(:version AS text) WHERE job_id = :job AND seq = :seq"
+model_room = { sql = "SELECT CASE WHEN j.max_model_calls IS NULL OR j.max_model_tokens IS NULL THEN 0 ELSE 1 END AS enabled, j.max_model_calls - (SELECT CAST(coalesce(sum(b.model_calls), 0) AS BIGINT) FROM etl_batches b WHERE b.job_id = j.job_id) AS calls_left, j.max_model_tokens - (SELECT CAST(coalesce(sum(b.model_tokens), 0) AS BIGINT) FROM etl_batches b WHERE b.job_id = j.job_id) AS tokens_left, CAST(CASE WHEN coalesce(j.max_model_calls, 0) = 0 OR coalesce(j.max_model_tokens, 0) = 0 THEN 0 ELSE greatest(100.0 * (SELECT coalesce(sum(b.model_calls), 0) FROM etl_batches b WHERE b.job_id = j.job_id) / j.max_model_calls, 100.0 * (SELECT coalesce(sum(b.model_tokens), 0) FROM etl_batches b WHERE b.job_id = j.job_id) / j.max_model_tokens) END AS DOUBLE PRECISION) AS percent FROM etl_jobs j WHERE j.job_id = :job", result = "row" }
+warn_budget = "UPDATE etl_jobs SET budget_warned = 1 WHERE job_id = :job AND budget_warned = 0"
+set_budget = "UPDATE etl_jobs SET max_model_calls = :max_calls, max_model_tokens = :max_tokens WHERE job_id = :job"
+
+reject_share = { sql = "SELECT CAST(coalesce(100.0 * sum(CASE WHEN total < 0 OR trim(customer) = '' THEN 1 ELSE 0 END) / count(*), 0) AS DOUBLE PRECISION) FROM stg_orders WHERE job_id = :job AND seq = :seq", result = "value" }
 
 reject_negative = "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, source_key, 'TOTAL_NEGATIVE' FROM stg_orders WHERE job_id = :job AND seq = :seq AND total < 0 ON CONFLICT DO NOTHING"
 reject_customer = "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, source_key, 'CUSTOMER_EMPTY' FROM stg_orders WHERE job_id = :job AND seq = :seq AND trim(customer) = '' ON CONFLICT DO NOTHING"
-load_orders = "INSERT INTO orders_final (id, customer, document_tail, total_cents, loaded_job) SELECT source_key, trim(customer), right(document, 4), CAST(round(CAST(total * 100 AS numeric)) AS BIGINT), job_id FROM stg_orders WHERE job_id = :job AND seq = :seq AND total >= 0 AND trim(customer) <> '' ON CONFLICT (id) DO UPDATE SET customer = EXCLUDED.customer, document_tail = EXCLUDED.document_tail, total_cents = EXCLUDED.total_cents, loaded_job = EXCLUDED.loaded_job, loaded_at = now()"
+load_orders = "INSERT INTO orders_final (id, customer, document_tail, total_cents, note_category, loaded_job) SELECT source_key, trim(customer), right(document, 4), CAST(round(CAST(total * 100 AS numeric)) AS BIGINT), note_category, job_id FROM stg_orders WHERE job_id = :job AND seq = :seq AND total >= 0 AND trim(customer) <> '' ON CONFLICT (id) DO UPDATE SET customer = EXCLUDED.customer, document_tail = EXCLUDED.document_tail, total_cents = EXCLUDED.total_cents, note_category = EXCLUDED.note_category, loaded_job = EXCLUDED.loaded_job, loaded_at = now()"
 finish_batch = "UPDATE etl_batches SET state = 'done', rows_rejected = (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), rows_loaded = rows_read - (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), done_at = now(), transform_version = CAST(:version AS text), last_error_code = NULL WHERE job_id = :job AND seq = :seq"
 
 fail_batch = "UPDATE etl_batches SET state = 'failed', attempts = attempts + 1, last_error_code = CAST(:code AS text) WHERE job_id = :job AND seq = :seq AND state <> 'done'"
+pause_if_failing = "UPDATE etl_jobs SET state = 'paused', pause_reason = 'QUALITY' WHERE job_id = :job AND state = 'running' AND (SELECT count(*) FROM (SELECT state FROM etl_batches WHERE job_id = :job ORDER BY seq DESC LIMIT 3) last_three WHERE state = 'failed') = 3"
+pause_job = "UPDATE etl_jobs SET state = 'paused', pause_reason = CAST(:reason AS text) WHERE job_id = :job AND state = 'running'"
+resume_job = "UPDATE etl_jobs SET state = 'running', pause_reason = NULL WHERE job_id = :job AND state = 'paused'"
 
 set_totals = "UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows WHERE job_id = :job"
 try_close = "UPDATE etl_jobs SET state = CASE WHEN (SELECT coalesce(sum(rows_loaded + rows_rejected), 0) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_rows THEN 'done' ELSE 'mismatch' END, finished_at = now() WHERE job_id = :job AND state = 'running' AND total_batches IS NOT NULL AND (SELECT count(*) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_batches"
@@ -42,8 +60,10 @@ purge = "DELETE FROM stg_orders s WHERE EXISTS (SELECT 1 FROM etl_batches b WHER
 
 [sql.dest.transactions]
 land_batch = ["open_job", "land", "mark_landed"]
+save_enrichment = ["answer_rows", "bump_tries", "count_model"]
 transform_batch = ["reject_negative", "reject_customer", "load_orders", "finish_batch"]
 register_totals = ["open_job", "set_totals"]
+open_budget = ["open_job", "set_budget"]
 
 [broker.main]
 driver = "jetstream"

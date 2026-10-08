@@ -81,6 +81,7 @@ const (
 	ToolSQL
 	ToolBroker
 	ToolCodec
+	ToolMeter
 )
 
 // ToolDecl is one `tool` line.

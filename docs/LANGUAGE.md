@@ -160,6 +160,7 @@ The tools an agent may use. An agent can only call what it declared.
 | `tool state` | remember values within a conversation |
 | `tool clock` | the time, and waiting |
 | `tool codec` | JSON, gzip, SHA-256, UUIDs, and records made from values (see [Moving rows](#moving-rows-tool-codec)) |
+| `tool meter` | how much of the language model this conversation has used (see [think](#think)) |
 | `tool weather from mcp "npx -y weather-mcp@1.2.0"` | a tool server (MCP) started by that command |
 | `tool search from mcp "https://mcp.example.com/mcp"` | a tool server at that address |
 | `tool weather from mcp "..." env "HTTPS_PROXY"` | give the program these variables too |
@@ -375,6 +376,9 @@ agent Courier
 - Every text that `codec` reads or writes is limited to `max_data_bytes` (8 MiB) in `[limits]`. `gunzip`
   counts the bytes once unpacked, because a small packed text can hide a huge one.
 - A problem names the row and the field, never what the rows hold: they may hold personal data.
+- What a language model writes is a text that nobody checked: `try_parse` gives `nothing` when it is not JSON,
+  and `pick` keeps only the records that have the fields wanted, with scalar values. What is left is safe to hand
+  to a statement of `tool sql`, which still decides what it accepts.
 - The name of the tool is `codec`, and `data` stays free to be the name of a value, as many agents have it.
 
 ### A message broker (`tool from broker`)
@@ -446,12 +450,15 @@ The actions of the built in tools:
 | `state.get` | `key` | the value, or `nothing` if it was never set |
 | `clock.now` | none | a record: `text` (the time in UTC, RFC 3339) and `unix` (seconds) |
 | `clock.wait` | `seconds` | waits, up to `max_wait_seconds` |
+| `meter.model` | none | a record: `calls` (the requests this conversation made to the language model) and `tokens` (what they cost) |
 | `codec.record` | any `name: value` pairs | a record with those fields |
 | `codec.table` | `rows` (a list of records), `columns` (a list of names) | a list of lists of values, in the order of the columns |
 | `codec.records` | `rows` (a list of lists), `columns` | a list of records, the opposite of `table` |
 | `codec.json` | `value` | the value written as a text in JSON |
 | `codec.parse` | `text` | the JSON in the text, as a value |
 | `codec.count` | `value` (a list) | how many items the list has |
+| `codec.try_parse` | `text` | the JSON in the text, or `nothing` when it is not JSON (for what a model wrote) |
+| `codec.pick` | `rows`, `fields` | from a list of records, those that have all the fields named (as texts, numbers or yes and no), with only those fields; anything else gives an empty list |
 | `codec.size` | `value` | how many bytes the value takes written as JSON |
 | `codec.gzip` | `text` | the text compressed with gzip, as a text in base64 |
 | `codec.gunzip` | `text` | the text that `gzip` packed, within `max_data_bytes` once unpacked |
@@ -670,6 +677,13 @@ agent, and what a tool returns is given to it as data, never as orders.
 The model is chosen in `[llm]` of `metagente.toml` (Anthropic, or any server that speaks the chat
 format of OpenAI); the agent file never names it. A question is limited in steps, tokens and time
 (`think_max_steps`, `think_max_total_tokens`, `think_timeout_seconds`).
+
+A failure of the model that may pass (the provider limits the rate, is busy, or the connection dropped, or the
+model took too long) is marked as one that may pass, so that `consume` asks for the event again later.
+
+`tool meter` tells how much of the model a conversation has used: `meter.model` is a record with `calls` and
+`tokens`. An agent that has a budget for the model reads it before and after a `think` and keeps the difference,
+as the sample of the [asynchronous ELT](../samples/async-elt/) does.
 
 `check` warns about a `think` without `using` in an agent that has `file` without `readonly`, or
 `http`: a model that reads something hostile could be led to write files or send data. Name only the

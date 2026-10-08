@@ -120,6 +120,10 @@ func (b *jetStream) Publish(ctx context.Context, m Message) (PubAck, error) {
 	return PubAck{Stream: ack.Stream, Seq: ack.Sequence, Duplicate: ack.Duplicate}, nil
 }
 
+// maxWaitingEvents is the most events that a consumer may have given out and not yet had confirmed or ended,
+// among them the ones that wait for a new delivery.
+const maxWaitingEvents = 1000
+
 // Consume makes the consumer on the server, or finds the one of that name, and gives its messages.
 func (b *jetStream) Consume(ctx context.Context, spec ConsumerSpec) (Consumer, error) {
 	if spec.Durable == "" {
@@ -139,7 +143,11 @@ func (b *jetStream) Consume(ctx context.Context, spec ConsumerSpec) (Consumer, e
 		AckPolicy:     jetstream.AckExplicitPolicy,
 		DeliverPolicy: jetstream.DeliverAllPolicy,
 		AckWait:       spec.AckWait,
-		MaxAckPending: spec.MaxInFlight,
+		// An event that was asked for again later (NakWithDelay) counts as waiting for its confirmation until the
+		// wait ends, so this limit must not be the number of events worked on at once: with it, one event that
+		// waits would keep every other event from being taken. How many are worked on at once is the program's own
+		// limit (it only fetches as many as it has free places); this one only bounds what can be waiting.
+		MaxAckPending: max(maxWaitingEvents, spec.MaxInFlight*100),
 	}
 	if spec.MaxDeliver > 0 {
 		// One more than the program uses, so that the delivery in which the program gives up still happens.

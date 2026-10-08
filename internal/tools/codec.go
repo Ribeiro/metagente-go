@@ -63,6 +63,17 @@ func (d *Codec) Call(_ context.Context, action string, args Args) (value.Value, 
 		return value.Number(float64(len(text))), err
 	case "parse":
 		return d.parse(args)
+	case "pick":
+		return d.pick(args)
+	case "try_parse":
+		got, err := d.parse(args)
+		if err != nil {
+			if _, isText := args["text"]; isText && args["text"].Kind == value.KindText && int64(len(args["text"].Text)) <= d.limit {
+				return value.Nothing, nil // not JSON: nothing, and the author decides
+			}
+			return value.Nothing, err
+		}
+		return got, nil
 	case "gzip":
 		return d.gzip(args)
 	case "gunzip":
@@ -74,7 +85,7 @@ func (d *Codec) Call(_ context.Context, action string, args Args) (value.Value, 
 	case "uuid":
 		return newUUIDv7()
 	}
-	return value.Nothing, UnknownAction(d.decl.Name, action, []string{"record", "table", "records", "json", "parse", "count", "size", "gzip", "gunzip", "sha256", "uuid"})
+	return value.Nothing, UnknownAction(d.decl.Name, action, []string{"record", "table", "records", "json", "parse", "try_parse", "pick", "count", "size", "gzip", "gunzip", "sha256", "uuid"})
 }
 
 // text reads the text value of an action, within the limit.
@@ -289,4 +300,46 @@ func newUUIDv7() (value.Value, error) {
 	b[8] = 0x80 | b[8]&0x3f
 	h := hex.EncodeToString(b[:])
 	return value.Text(h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]), nil
+}
+
+// maxPicked is the most records that pick gives, so that an answer of a model cannot be a list without an end.
+const maxPicked = 10000
+
+// pick keeps from a list the records that have every field named, with only those fields and only when their
+// values are texts, numbers or yes and no. It is how an agent reads what a language model wrote: the answer is
+// a text that nobody checked, and what is not in the shape wanted is left out, with no problem.
+func (d *Codec) pick(args Args) (value.Value, error) {
+	fields, err := d.names("pick", args["fields"])
+	if err != nil {
+		return value.Nothing, err
+	}
+	kept := []value.Value{}
+	rows := args["rows"]
+	if rows.Kind != value.KindList {
+		return value.List(kept), nil
+	}
+	for _, row := range rows.List {
+		if len(kept) >= maxPicked {
+			break
+		}
+		if record, ok := pickRecord(row, fields); ok {
+			kept = append(kept, record)
+		}
+	}
+	return value.List(kept), nil
+}
+
+func pickRecord(row value.Value, fields []string) (value.Value, bool) {
+	if row.Kind != value.KindRecord {
+		return value.Nothing, false
+	}
+	picked := make(map[string]value.Value, len(fields))
+	for _, field := range fields {
+		v, ok := row.Record[field]
+		if !ok || (v.Kind != value.KindText && v.Kind != value.KindNumber && v.Kind != value.KindBool) {
+			return value.Nothing, false
+		}
+		picked[field] = v
+	}
+	return value.Record(picked), true
 }

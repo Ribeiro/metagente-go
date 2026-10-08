@@ -13,14 +13,20 @@ CREATE TABLE etl_meta (
 INSERT INTO etl_meta (schema_version) VALUES (1);
 
 -- A job is `running` until every batch it announced is done; then `done`, or `mismatch` when the counts
--- of rows do not add up. `paused` and `failed` are for the next part (the brakes of a whole job).
+-- of rows do not add up. It is `paused` when a brake stopped it (too many batches in a row with too many
+-- rejected rows, or the budget of the model step spent); `pause_reason` says which. A job has the model step
+-- only when it has a budget: `max_model_calls` and `max_model_tokens` are set with the message `budget`.
 CREATE TABLE etl_jobs (
-  job_id        TEXT PRIMARY KEY,
-  state         TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'paused', 'done', 'failed', 'mismatch')),
-  total_batches INTEGER,
-  total_rows    INTEGER,
-  started_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  finished_at   TEXT
+  job_id           TEXT PRIMARY KEY,
+  state            TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'paused', 'done', 'failed', 'mismatch')),
+  pause_reason     TEXT,
+  total_batches    INTEGER,
+  total_rows       INTEGER,
+  max_model_calls  INTEGER,
+  max_model_tokens INTEGER,
+  budget_warned    INTEGER NOT NULL DEFAULT 0,
+  started_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finished_at      TEXT
 );
 
 -- The state of a batch is changed in the same transaction as its data: landed, then done. A batch that
@@ -37,6 +43,9 @@ CREATE TABLE etl_batches (
   done_at           TEXT,
   transform_version TEXT,
   last_error_code   TEXT,
+  enrich_version    TEXT,
+  model_calls       INTEGER NOT NULL DEFAULT 0,
+  model_tokens      INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (job_id, seq)
 );
 
@@ -57,6 +66,11 @@ CREATE TABLE stg_orders (
   customer   TEXT,
   document   TEXT,
   total      REAL,
+  note       TEXT,
+  -- The answer of the model step for `note`, and which version of the question gave it.
+  note_category  TEXT,
+  enrich_version TEXT,
+  enrich_tries   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (job_id, seq, source_key)
 );
 
@@ -66,6 +80,7 @@ CREATE TABLE orders_final (
   customer     TEXT    NOT NULL,
   document_tail TEXT   NOT NULL,
   total_cents  INTEGER NOT NULL,
+  note_category TEXT,
   loaded_job   TEXT    NOT NULL,
   loaded_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

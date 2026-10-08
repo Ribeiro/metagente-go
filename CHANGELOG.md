@@ -9,6 +9,28 @@ minor versions.
 
 ### Added
 
+- `samples/async-elt`, the end of phase 3: the model step of the Worker, with its budget, and the brake of a whole
+  job. A job that has a budget (the message `budget`: a number of requests and of tokens) has its notes labelled by
+  a language model, in small groups, by an agent of its own (`enricher.ag`) that has no tool but the counting of
+  its own use, so that what a note says cannot make the model do anything else. Only the key and the note leave
+  the destination for the model, and only what has no answer yet, so a new try never pays twice; the answer is one
+  of four words whatever the model writes. When the budget is spent the job is **paused** (not failed) with the
+  reason `MODEL_BUDGET` and its events wait to be asked for again; `budget` raises the limit and `resume` lets it
+  go on. 80 percent of the budget is recorded as a warning. Three batches in a row stopped by the brake of rejected
+  rows pause the job with the reason `QUALITY`. The sample brings the columns, the tables and the statements for
+  SQLite and PostgreSQL, and the tests of all this, also against a real PostgreSQL.
+- `tool meter` (`meter.model`: the requests this conversation made to the language model, and their tokens), and
+  `codec.try_parse` (`nothing` for text that is not JSON) and `codec.pick` (the records of a list that have the
+  fields wanted), for an agent that reads what a model wrote and keeps the account of its cost.
+- A failure of the language model that may pass (rate limit, busy server, dropped connection, too long to answer) is
+  now marked as one that may pass, so `consume` asks for the event again later and `run` says so.
+
+### Fixed
+
+- `metagente consume` no longer stops taking events while one waits for its new delivery. The server counted the
+  event that was asked for again later as still in progress, and with the limit of the server equal to the number of
+  events worked on at once (one, by default) no other event came for the whole wait. The limit of the server is now
+  only a bound on what can be waiting (1000), and the number worked on at once is still `--in-flight`.
 - `samples/async-elt`, second half: the Worker of the asynchronous ELT (phase 3 of
   `docs/design-async-elt.md`), run with `metagente consume`. For each batch it checks the version, the encoding
   and the SHA-256, lands the rows in a staging table together with the mark of the batch (transaction 1),
