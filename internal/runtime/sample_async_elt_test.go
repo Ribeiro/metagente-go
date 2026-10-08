@@ -131,37 +131,44 @@ func covers(t *testing.T, batches []broker.Message, total int) (rows int) {
 	t.Helper()
 	next := 1
 	for i, msg := range batches {
-		e, table, body := unpack(t, msg)
-		if e.Seq != i+1 || msg.ID != fmt.Sprintf("%s:%d", e.JobID, e.Seq) || e.V != 1 || e.Encoding != "json+gzip" || e.RowCount != len(table) {
-			t.Fatalf("batch %d: %+v (id %s)", i+1, e, msg.ID)
-		}
-		if strings.Join(e.Columns, ",") != "id,customer,document,total" {
-			t.Errorf("columns = %v", e.Columns)
-		}
-		if e.After != next-1 {
-			t.Errorf("batch %d starts after %d, and %d was expected: a gap or a copy", e.Seq, e.After, next-1)
-		}
-		for _, row := range table {
-			if int(row[0].(float64)) != next {
-				t.Fatalf("batch %d: key %v where %d was expected", e.Seq, row[0], next)
-			}
-			next++
-			if doc := row[2].(string); !strings.HasPrefix(doc, "***") || len(doc) != 7 {
-				t.Errorf("the document was not masked at the source: %q", doc)
-			}
-		}
-		if e.Upto != next-1 {
-			t.Errorf("batch %d says it ends at %d, and it ends at %d", e.Seq, e.Upto, next-1)
-		}
-		if matched, _ := regexp.MatchString(`\d{11}`, body); matched {
-			t.Errorf("batch %d carries a whole document number", e.Seq)
-		}
-		rows += len(table)
+		n := checkBatch(t, i, msg, next)
+		next += n
+		rows += n
 	}
 	if next-1 != total {
 		t.Errorf("the batches end at key %d, and the table has %d", next-1, total)
 	}
 	return rows
+}
+
+// checkBatch checks one batch, which has to begin at the key first, and gives how many rows it holds.
+func checkBatch(t *testing.T, i int, msg broker.Message, first int) int {
+	t.Helper()
+	e, table, body := unpack(t, msg)
+	if e.Seq != i+1 || msg.ID != fmt.Sprintf("%s:%d", e.JobID, e.Seq) || e.V != 1 || e.Encoding != "json+gzip" || e.RowCount != len(table) {
+		t.Fatalf("batch %d: %+v (id %s)", i+1, e, msg.ID)
+	}
+	if strings.Join(e.Columns, ",") != "id,customer,document,total" {
+		t.Errorf("columns = %v", e.Columns)
+	}
+	if e.After != first-1 {
+		t.Errorf("batch %d starts after %d, and %d was expected: a gap or a copy", e.Seq, e.After, first-1)
+	}
+	for k, row := range table {
+		if int(row[0].(float64)) != first+k {
+			t.Fatalf("batch %d: key %v where %d was expected", e.Seq, row[0], first+k)
+		}
+		if doc := row[2].(string); !strings.HasPrefix(doc, "***") || len(doc) != 7 {
+			t.Errorf("the document was not masked at the source: %q", doc)
+		}
+	}
+	if e.Upto != first+len(table)-1 {
+		t.Errorf("batch %d says it ends at %d, and it ends at %d", e.Seq, e.Upto, first+len(table)-1)
+	}
+	if matched, _ := regexp.MatchString(`\d{11}`, body); matched {
+		t.Errorf("batch %d carries a whole document number", e.Seq)
+	}
+	return len(table)
 }
 
 func TestTheExtractorSendsTheWholeTableInBatchesThatCarryNoWholeDocument(t *testing.T) {
