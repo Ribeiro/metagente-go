@@ -9,6 +9,11 @@ minor versions.
 
 ### Added
 
+- `samples/async-elt`: the Worker and the sweeper also work with a SQL Server or an Oracle destination
+  (`metagente.sqlserver.toml`, `metagente.oracle.toml`, and the tables in `migrations/destination.sqlserver.sql` and
+  `destination.oracle.sql`). The statements have the same names and values as in PostgreSQL, so the agents do not
+  change; without `MERGE`, an upsert is an update followed by an insert of what is not there. All three destinations
+  are tried against real servers in `integration/`, and a test makes sure they offer the same statements.
 - `samples/async-elt`: the message `purge_control days=N` of the Worker cleans the control tables (SQLite and PostgreSQL):
   the jobs that are `done`, ended more than N days ago and have nothing left in staging are deleted from all of them,
   in one transaction; a job that needs a person stays, and the final table is never touched. With it, every retention

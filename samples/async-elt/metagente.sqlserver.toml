@@ -1,0 +1,102 @@
+# The Worker of the asynchronous ELT with a SQL Server destination. It is the whole configuration of the machine
+# of the Worker, which does not reach the source: use it with `--config metagente.sqlserver.toml`. The
+# statements are the ones of metagente.toml in the dialect of SQL Server (migrations/destination.sqlserver.sql).
+#
+# SQL Server 2022 or later (the statements use GREATEST). The sql tool does not accept MERGE, so "insert if it is not
+# there" is written as INSERT ... SELECT ... WHERE NOT EXISTS, and an upsert is an UPDATE followed by such an INSERT.
+# Two Workers that land the same row at the same time make one of them fail on the key; the event is then a dead letter that can be sent again.
+
+[runtime]
+timeout_seconds = 60
+
+# The model of the optional step (enricher.ag); only a job that has a budget uses it.
+[llm]
+provider = "anthropic"
+model = "claude-sonnet-5-5"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[credentials]
+dest = "DEST_DB_PASSWORD"         # the NAME of the variable that holds the password of the database
+# events = "BROKER_PASSWORD"      # and of the broker, if it has a user (add `user = "worker"` to [broker.main])
+
+[sql.dest]
+driver = "sqlserver"
+host = "db.example.com"
+database = "warehouse"
+user = "worker"
+mode = "write"                    # tls is "verify" unless you say otherwise; ca_file names the certificates of a company
+
+[sql.dest.statements]
+version = { sql = "SELECT schema_version FROM etl_meta", result = "value" }
+batch_state = { sql = "SELECT state FROM etl_batches WHERE job_id = :job AND seq = :seq", result = "value" }
+batch_counts = { sql = "SELECT rows_read, rows_loaded, rows_rejected FROM etl_batches WHERE job_id = :job AND seq = :seq", result = "row" }
+job_state = { sql = "SELECT state FROM etl_jobs WHERE job_id = :job", result = "value" }
+job_status = { sql = "SELECT state, coalesce(pause_reason, '') AS reason FROM etl_jobs WHERE job_id = :job", result = "row" }
+
+open_job = "INSERT INTO etl_jobs (job_id) SELECT :job WHERE NOT EXISTS (SELECT 1 FROM etl_jobs WHERE job_id = :job)"
+land = { sql = "INSERT INTO stg_orders (job_id, seq, source_key, customer, document, total, note) SELECT :job, :seq, :id, :customer, :document, :total, :note WHERE NOT EXISTS (SELECT 1 FROM stg_orders WHERE job_id = :job AND seq = :seq AND source_key = :id)", each = "rows", columns = ["id", "customer", "document", "total", "note"] }
+mark_landed = "INSERT INTO etl_batches (job_id, seq, state, rows_read) SELECT :job, :seq, 'landed', :row_count WHERE NOT EXISTS (SELECT 1 FROM etl_batches WHERE job_id = :job AND seq = :seq)"
+
+pending_enrich = "SELECT TOP (:group) source_key AS id, SUBSTRING(note, 1, 200) AS note FROM stg_orders WHERE job_id = :job AND seq = :seq AND note IS NOT NULL AND TRIM(note) <> '' AND enrich_version IS NULL AND enrich_tries < 2 ORDER BY source_key"
+answer_rows = { sql = "UPDATE stg_orders SET note_category = CASE WHEN :category IN ('gift', 'delivery', 'complaint', 'other') THEN :category ELSE 'other' END, enrich_version = :version WHERE job_id = :job AND seq = :seq AND source_key = :id AND note IS NOT NULL AND enrich_version IS NULL", each = "answers", columns = ["id", "category"] }
+bump_tries = { sql = "UPDATE stg_orders SET enrich_tries = enrich_tries + 1 WHERE job_id = :job AND seq = :seq AND source_key = :id", each = "group", columns = ["id"] }
+count_model = "UPDATE etl_batches SET model_calls = model_calls + (:after_calls - :before_calls), model_tokens = model_tokens + (:after_tokens - :before_tokens), enrich_version = :version WHERE job_id = :job AND seq = :seq"
+model_room = { sql = "SELECT CASE WHEN j.max_model_calls IS NULL OR j.max_model_tokens IS NULL THEN 0 ELSE 1 END AS enabled, j.max_model_calls - (SELECT coalesce(sum(b.model_calls), 0) FROM etl_batches b WHERE b.job_id = j.job_id) AS calls_left, j.max_model_tokens - (SELECT coalesce(sum(b.model_tokens), 0) FROM etl_batches b WHERE b.job_id = j.job_id) AS tokens_left, CASE WHEN coalesce(j.max_model_calls, 0) = 0 OR coalesce(j.max_model_tokens, 0) = 0 THEN 0 ELSE GREATEST(100.0 * (SELECT coalesce(sum(b.model_calls), 0) FROM etl_batches b WHERE b.job_id = j.job_id) / j.max_model_calls, 100.0 * (SELECT coalesce(sum(b.model_tokens), 0) FROM etl_batches b WHERE b.job_id = j.job_id) / j.max_model_tokens) END AS [percent] FROM etl_jobs j WHERE j.job_id = :job", result = "row" }
+warn_budget = "UPDATE etl_jobs SET budget_warned = 1 WHERE job_id = :job AND budget_warned = 0"
+set_budget = "UPDATE etl_jobs SET max_model_calls = :max_calls, max_model_tokens = :max_tokens WHERE job_id = :job"
+
+reject_share = { sql = "SELECT coalesce(100.0 * sum(CASE WHEN total < 0 OR TRIM(customer) = '' THEN 1 ELSE 0 END) / NULLIF(count(*), 0), 0) FROM stg_orders WHERE job_id = :job AND seq = :seq", result = "value" }
+
+reject_negative = "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT s.job_id, s.seq, s.source_key, 'TOTAL_NEGATIVE' FROM stg_orders s WHERE s.job_id = :job AND s.seq = :seq AND s.total < 0 AND NOT EXISTS (SELECT 1 FROM etl_rejects r WHERE r.job_id = s.job_id AND r.seq = s.seq AND r.source_key = s.source_key AND r.reason_code = 'TOTAL_NEGATIVE')"
+reject_customer = "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT s.job_id, s.seq, s.source_key, 'CUSTOMER_EMPTY' FROM stg_orders s WHERE s.job_id = :job AND s.seq = :seq AND TRIM(s.customer) = '' AND NOT EXISTS (SELECT 1 FROM etl_rejects r WHERE r.job_id = s.job_id AND r.seq = s.seq AND r.source_key = s.source_key AND r.reason_code = 'CUSTOMER_EMPTY')"
+update_orders = "UPDATE f SET customer = TRIM(s.customer), document_tail = RIGHT(s.document, 4), total_cents = CAST(ROUND(s.total * 100, 0) AS BIGINT), note_category = s.note_category, loaded_job = s.job_id, loaded_at = SYSUTCDATETIME() FROM orders_final f JOIN stg_orders s ON s.source_key = f.id WHERE s.job_id = :job AND s.seq = :seq AND s.total >= 0 AND TRIM(s.customer) <> ''"
+load_orders = "INSERT INTO orders_final (id, customer, document_tail, total_cents, note_category, loaded_job) SELECT s.source_key, TRIM(s.customer), RIGHT(s.document, 4), CAST(ROUND(s.total * 100, 0) AS BIGINT), s.note_category, s.job_id FROM stg_orders s WHERE s.job_id = :job AND s.seq = :seq AND s.total >= 0 AND TRIM(s.customer) <> '' AND NOT EXISTS (SELECT 1 FROM orders_final f WHERE f.id = s.source_key)"
+finish_batch = "UPDATE etl_batches SET state = 'done', rows_rejected = (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), rows_loaded = rows_read - (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), done_at = SYSUTCDATETIME(), transform_version = :version, last_error_code = NULL WHERE job_id = :job AND seq = :seq"
+
+fail_batch = "UPDATE etl_batches SET state = 'failed', failed_at = SYSUTCDATETIME(), attempts = attempts + 1, last_error_code = :code WHERE job_id = :job AND seq = :seq AND state <> 'done'"
+pause_if_failing = "UPDATE etl_jobs SET state = 'paused', pause_reason = 'QUALITY' WHERE job_id = :job AND state = 'running' AND (SELECT count(*) FROM (SELECT TOP 3 state FROM etl_batches WHERE job_id = :job ORDER BY seq DESC) last_three WHERE state = 'failed') = 3"
+pause_job = "UPDATE etl_jobs SET state = 'paused', pause_reason = :reason WHERE job_id = :job AND state = 'running'"
+resume_job = "UPDATE etl_jobs SET state = 'running', pause_reason = NULL WHERE job_id = :job AND state = 'paused'"
+
+set_totals = "UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows, totals_at = SYSUTCDATETIME() WHERE job_id = :job"
+try_close = "UPDATE etl_jobs SET state = CASE WHEN (SELECT coalesce(sum(rows_loaded + rows_rejected), 0) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_rows THEN 'done' ELSE 'mismatch' END, finished_at = SYSUTCDATETIME() WHERE job_id = :job AND state = 'running' AND total_batches IS NOT NULL AND (SELECT count(*) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_batches"
+
+purge = "DELETE FROM stg_orders WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = stg_orders.job_id AND b.seq = stg_orders.seq AND b.state = 'done' AND b.done_at < DATEADD(day, -CAST(:days AS INT), SYSUTCDATETIME()))"
+
+# The control tables are cleaned too: the jobs that are `done`, ended more than N days ago and have nothing left in staging.
+# A job that is paused, mismatched or has a batch that failed is for a person, so it stays. The jobs go last, and all in one
+# transaction, so that a job is never left half cleaned. The final table is never touched.
+old_alerts = "DELETE FROM etl_alerts WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < DATEADD(day, -CAST(:days AS INT), SYSUTCDATETIME()) AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_incidents = "DELETE FROM etl_incidents WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < DATEADD(day, -CAST(:days AS INT), SYSUTCDATETIME()) AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_resends = "DELETE FROM etl_resends WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < DATEADD(day, -CAST(:days AS INT), SYSUTCDATETIME()) AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_rejects = "DELETE FROM etl_rejects WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < DATEADD(day, -CAST(:days AS INT), SYSUTCDATETIME()) AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_batches = "DELETE FROM etl_batches WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < DATEADD(day, -CAST(:days AS INT), SYSUTCDATETIME()) AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+old_jobs = "DELETE FROM etl_jobs WHERE job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < DATEADD(day, -CAST(:days AS INT), SYSUTCDATETIME()) AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id))"
+
+record_incident = "INSERT INTO etl_incidents (job_id, seq, code) SELECT :job, :seq, :code WHERE NOT EXISTS (SELECT 1 FROM etl_incidents WHERE job_id = :job AND seq = :seq AND code = :code)"
+
+# ---- for the sweeper (sweeper.ag) ----
+alert_candidates = "SELECT TOP 200 job, kind, ref FROM (SELECT job_id AS job, 'JOB_PAUSED' AS kind, coalesce(pause_reason, '') AS ref FROM etl_jobs WHERE state = 'paused' UNION ALL SELECT job_id, 'JOB_MISMATCH', '' FROM etl_jobs WHERE state = 'mismatch' UNION ALL SELECT job_id, 'BUDGET_80_PERCENT', '' FROM etl_jobs WHERE budget_warned = 1 UNION ALL SELECT job_id, 'BATCH_FAILED', CAST(seq AS NVARCHAR(20)) FROM etl_batches WHERE state = 'failed' UNION ALL SELECT job_id, 'EVENT_REFUSED', CAST(seq AS NVARCHAR(20)) + ' ' + code FROM etl_incidents UNION ALL SELECT job_id, 'BATCH_STUCK', CAST(seq AS NVARCHAR(20)) FROM etl_batches WHERE state = 'landed' AND landed_at < DATEADD(minute, -CAST(:minutes AS INT), SYSUTCDATETIME())) c ORDER BY job, kind, ref"
+remember_alert = "INSERT INTO etl_alerts (job_id, kind, ref) SELECT :job, :kind, :ref WHERE NOT EXISTS (SELECT 1 FROM etl_alerts WHERE job_id = :job AND kind = :kind AND ref = :ref)"
+forget_alerts = "DELETE FROM etl_alerts WHERE job_id = :job AND kind IN ('JOB_PAUSED', 'BATCH_FAILED', 'BATCH_STUCK')"
+stuck_batches = "SELECT TOP 50 b.job_id AS job, b.seq AS seq, b.attempts AS attempts FROM etl_batches b JOIN etl_jobs j ON j.job_id = b.job_id WHERE j.state = 'running' AND b.attempts < 3 AND ((b.state = 'landed' AND b.landed_at < DATEADD(minute, -CAST(:minutes AS INT), SYSUTCDATETIME())) OR (b.state = 'failed' AND b.failed_at < DATEADD(minute, -CAST(:minutes AS INT), SYSUTCDATETIME()))) ORDER BY b.job_id, b.seq"
+bump_attempts = "UPDATE etl_batches SET attempts = attempts + 1 WHERE job_id = :job AND seq = :seq AND state IN ('landed', 'failed')"
+lost_jobs = "SELECT TOP 50 j.job_id AS job FROM etl_jobs j WHERE j.state = 'running' AND j.total_batches IS NOT NULL AND j.totals_at < DATEADD(minute, -CAST(:minutes AS INT), SYSUTCDATETIME()) AND (SELECT count(*) FROM etl_batches b WHERE b.job_id = j.job_id) < j.total_batches ORDER BY j.job_id"
+missing_batches = "WITH n AS (SELECT 1 AS s WHERE (SELECT total_batches FROM etl_jobs WHERE job_id = :job) >= 1 UNION ALL SELECT s + 1 FROM n WHERE s < (SELECT total_batches FROM etl_jobs WHERE job_id = :job)) SELECT TOP 50 s AS seq FROM n WHERE s NOT IN (SELECT seq FROM etl_batches WHERE job_id = :job) ORDER BY s OPTION (MAXRECURSION 0)"
+# Each request is a row of its own (the number of the request is in the key), so that "ask again, five times at most" is one INSERT.
+request_resend = "INSERT INTO etl_resends (job_id, seq, requests) SELECT :job, :seq, coalesce(max(requests), 0) + 1 FROM etl_resends WHERE job_id = :job AND seq = :seq HAVING coalesce(max(requests), 0) < 5"
+resend_number = { sql = "SELECT max(requests) FROM etl_resends WHERE job_id = :job AND seq = :seq", result = "value" }
+
+[sql.dest.transactions]
+land_batch = ["open_job", "land", "mark_landed"]
+save_enrichment = ["answer_rows", "bump_tries", "count_model"]
+transform_batch = ["reject_negative", "reject_customer", "update_orders", "load_orders", "finish_batch"]
+register_totals = ["open_job", "set_totals"]
+open_budget = ["open_job", "set_budget"]
+resume = ["resume_job", "forget_alerts"]
+purge_control = ["old_alerts", "old_incidents", "old_resends", "old_rejects", "old_batches", "old_jobs"]
+
+[broker.main]
+driver = "jetstream"
+url = "nats://127.0.0.1:4222"     # for a broker that is not on this computer: "tls://broker.example.com:4222"
+stream = "ETL"

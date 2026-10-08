@@ -381,7 +381,8 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
    notice to transform a stuck batch again, the ask to the Extractor to send a lost batch again). It does not see the
    circuit breaker of `consume`, which is in that process. The `sql` tool now speaks SQL Server (`sqlserver`) and
    Oracle (`oracle`), tried against real servers in `integration/`; `MERGE` is not accepted, so the upsert of this table
-   is written as `INSERT … SELECT … WHERE NOT EXISTS`. The SQL files of the sample for these two engines are not written.
+   is written as `INSERT … SELECT … WHERE NOT EXISTS`. The sample has the SQL for these two engines too (`metagente.sqlserver.toml`, `metagente.oracle.toml` and their
+   migrations), tried against real servers; the Extractor, which reads the source, is still for SQLite.
 
 ## 16. Tests
 

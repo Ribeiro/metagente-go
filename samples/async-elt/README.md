@@ -246,6 +246,15 @@ the variable `DEST_DB_PASSWORD`, and run the commands above with `--config metag
 has the same statements in the dialect of PostgreSQL, and everything else a machine that only has the Worker
 needs: it never reaches the source.
 
+**A SQL Server or Oracle destination:** the same, with `migrations/destination.sqlserver.sql` or
+`migrations/destination.oracle.sql` and `--config metagente.sqlserver.toml` or `--config metagente.oracle.toml` (SQL Server 2022
+or later; Oracle 19c or later). The statements have the same names and values as the others, so the agents are
+the same. What changes comes from the databases, and is said at the top of each file: the `sql` tool does not accept
+`MERGE`, so an upsert is an `UPDATE` followed by an `INSERT … WHERE NOT EXISTS` (the transaction that transforms a batch
+has one step more); the key of two Workers that land the same row at the same time makes one of them fail, and its event
+is a dead letter to send again; in Oracle an empty text is nothing, so an empty customer is stored as nothing and is
+rejected all the same, and the names that an agent reads are quoted aliases (`AS "job"`).
+
 ## Personal data
 
 The rows may hold personal data, so the sample treats every job as if they did (section 10 of the design):
