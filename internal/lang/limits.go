@@ -13,4 +13,6 @@ const (
 	MaxListItems = 10000
 	// MaxNumberDigits is the most digits a number literal may have.
 	MaxNumberDigits = 15
+	// MaxRepeatLimit is the largest N of `up to N times`. The run has its own ceiling (max_loop_turns).
+	MaxRepeatLimit = 1000000000
 )

@@ -14,6 +14,10 @@ minor versions.
 - `docs/LANGUAGE.md` has an index of every word of the language, a table of the commands, and the
   grammar of a `.ag` file (EBNF), taken from the lexer and the parser. A test now checks that every
   whole agent of `LANGUAGE.md` and of the tutorial passes `metagente check`.
+- `repeat while condition`, a loop for what has no list to go through, such as the pages of an API or of
+  a database that each say where the next one is. `up to N times` is a cap that the author chooses; with
+  no cap, or one above the setup, a condition that is still true after `max_loop_turns` turns (10000 by
+  default, in `[runtime]`) stops the run with a problem.
 
 ## [0.5.0] - 2026-10-07
 

@@ -2,6 +2,7 @@ package lang
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/Ribeiro/metagente-go/internal/diag"
@@ -10,7 +11,7 @@ import (
 var (
 	agentWords     = []string{"goal", "tool", "link", "remote", "accepts", "on"}
 	builtinTools   = []string{"file", "http", "env", "state", "clock"}
-	statementWords = []string{"reply", "fail", "if", "otherwise", "for", "think"}
+	statementWords = []string{"reply", "fail", "if", "otherwise", "for", "repeat", "think"}
 )
 
 // reservedAfterUsing are the words that end the tool list of `using`.
@@ -570,6 +571,11 @@ func (p *parser) statement(line Line) (Stmt, error) {
 			"move it directly under the `if` it belongs to")
 	case "for":
 		return p.forStatement(c, line, span)
+	case "repeat":
+		// Only `repeat while` is a loop; a value may still be called `repeat`.
+		if next := c.at(1); next != nil && next.Kind == TokWord && next.Word == "while" {
+			return p.repeatStatement(c, line, span)
+		}
 	}
 	return p.simpleStatement(c, line, span)
 }
@@ -673,6 +679,58 @@ func (p *parser) forStatement(c *cursor, line Line, span Span) (Stmt, error) {
 	return &ForStmt{Span: span, Var: variable, Iter: iter, Body: body}, nil
 }
 
+// repeatStatement reads `repeat while condition [up to N times]` and the lines to repeat.
+func (p *parser) repeatStatement(c *cursor, line Line, span Span) (Stmt, error) {
+	c.i += 2 // repeat while
+	cond, err := p.expr(c)
+	if err != nil {
+		return nil, err
+	}
+	stmt := &RepeatStmt{Span: span, Cond: cond}
+	if c.peekWord("up") {
+		if stmt.Limit, err = p.upToTimes(c); err != nil {
+			return nil, err
+		}
+		stmt.HasLimit = true
+	}
+	if err := p.finish(c); err != nil {
+		return nil, err
+	}
+	if stmt.Body, err = p.block(line.Indent); err != nil {
+		return nil, err
+	}
+	if len(stmt.Body) == 0 {
+		return nil, p.err(line.Number, span.Col, "this `repeat` has nothing under it",
+			"indent the lines to repeat")
+	}
+	return stmt, nil
+}
+
+// upToTimes reads `up to N times`, where N is a whole number of at least 1.
+func (p *parser) upToTimes(c *cursor) (int, error) {
+	c.i++ // up
+	if !c.peekWord("to") {
+		return 0, p.missing(c, "after `up` I expected `to`", "write: repeat while ... up to 100 times")
+	}
+	c.i++
+	t := c.peek()
+	if t == nil || t.Kind != TokNumber {
+		return 0, p.missing(c, "`up to` needs a number of times", "write: up to 100 times")
+	}
+	n := t.Number
+	if n < 1 || n != math.Trunc(n) || n > MaxRepeatLimit {
+		return 0, p.err(c.line, t.Col,
+			fmt.Sprintf("`up to` needs a whole number of times, from 1 to %d", MaxRepeatLimit),
+			"write it like: up to 100 times")
+	}
+	c.i++
+	if !(c.peekWord("times") || c.peekWord("time")) {
+		return 0, p.missing(c, "after the number I expected `times`", "write: up to 100 times")
+	}
+	c.i++
+	return int(n), nil
+}
+
 // simpleStatement reads the lines that begin with a name: `name = value`, `target.action ...` and
 // `think ...`. Anything else is a word that is not understood.
 func (p *parser) simpleStatement(c *cursor, line Line, span Span) (Stmt, error) {
@@ -686,6 +744,9 @@ func (p *parser) simpleStatement(c *cursor, line Line, span Span) (Stmt, error) 
 	hint := "a line can be: name = value, target.action key: value, reply, think, if, for, or fail"
 	if s := ClosestName(word, statementWords); s != "" {
 		hint = fmt.Sprintf("did you mean `%s`?", s)
+	}
+	if word == "repeat" {
+		hint = "a loop is written: repeat while condition"
 	}
 	return nil, p.err(line.Number, span.Col,
 		fmt.Sprintf("I do not understand the line starting with `%s`", word), hint)

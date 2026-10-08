@@ -22,6 +22,9 @@ func visitStmts(stmts []Stmt, fn func(Expr)) {
 		case *ForStmt:
 			visitExpr(s.Iter, fn)
 			visitStmts(s.Body, fn)
+		case *RepeatStmt:
+			visitExpr(s.Cond, fn)
+			visitStmts(s.Body, fn)
 		}
 	}
 }
