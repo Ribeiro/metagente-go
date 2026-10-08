@@ -146,23 +146,32 @@ func TestEveryStatementRunsInAReadOnlyTransactionWhenTheDriverHasThem(t *testing
 		if got.List[0].Record["id"].Number != 7 {
 			t.Errorf("%s: got %s", name, got.Display())
 		}
-		fake.mu.Lock()
-		begun, prepared, queried := len(fake.begun), len(fake.prepared), len(fake.queried)
-		readOnly := len(fake.begun) == 1 && fake.begun[0]
-		fake.mu.Unlock()
-		if c.readOnlyTx && (!readOnly || begun != 1) {
-			t.Errorf("%s: transactions = %d, read only = %v", name, begun, readOnly)
+		begun, readOnly, prepared, queried := fake.counts()
+		want := map[string]int{"transactions": 0, "prepared": 0, "queried": 1}
+		if c.readOnlyTx {
+			want["transactions"] = 1
 		}
-		if !c.readOnlyTx && begun != 0 {
-			t.Errorf("%s: a transaction was begun", name)
+		if c.prepare {
+			want["prepared"], want["queried"] = 1, 0
 		}
-		if c.prepare && prepared != 1 || !c.prepare && prepared != 0 {
-			t.Errorf("%s: prepared = %d", name, prepared)
+		have := map[string]int{"transactions": begun, "prepared": prepared, "queried": queried}
+		for what, n := range want {
+			if have[what] != n {
+				t.Errorf("%s: %s = %d, want %d", name, what, have[what], n)
+			}
 		}
-		if !c.prepare && queried != 1 {
-			t.Errorf("%s: queried = %d", name, queried)
+		if c.readOnlyTx && !readOnly {
+			t.Errorf("%s: the transaction was not read only", name)
 		}
 	}
+}
+
+// counts says how many transactions were begun, whether the first was read only, and how many statements
+// were prepared and queried directly.
+func (f *fakeDriver) counts() (begun int, readOnly bool, prepared, queried int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.begun), len(f.begun) > 0 && f.begun[0], len(f.prepared), len(f.queried)
 }
 
 func TestThePasswordGoesToTheConnectionAndNeverIntoAProblem(t *testing.T) {
