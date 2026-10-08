@@ -85,9 +85,7 @@ func TestTheTokenFileIsReadAgainOnlyWhenItChangesAndAProblemIsToldOnce(t *testin
 
 	write("mac " + mac + "\nnotebook short\n")
 	w.wait(t, "the problem", func(_ int, said string) bool { return strings.Contains(said, "line 2 (notebook)") })
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
+	removeWhenFree(t, path)
 	w.wait(t, "the missing file", func(_ int, said string) bool { return strings.Contains(said, "could not open the token file") })
 	time.Sleep(30 * time.Millisecond)
 	if _, said := w.state(); strings.Count(said, "Problem:") != 2 {
@@ -170,5 +168,22 @@ func TestATokenFileGoneForAMomentIsNotAProblem(t *testing.T) {
 	time.Sleep(minSettle + 100*time.Millisecond)
 	if _, said := w.state(); strings.Contains(said, "Problem:") {
 		t.Errorf("a file gone for a moment was told as a problem:\n%s", said)
+	}
+}
+
+// removeWhenFree removes a file that the watcher may have open at this very moment: Windows refuses to remove a file
+// that is open, so the removal is tried again for a short while.
+func removeWhenFree(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := os.Remove(path)
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
