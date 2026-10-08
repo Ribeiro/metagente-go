@@ -2,7 +2,8 @@
 
 **Status:** draft. Nothing in this page exists yet; it describes what could be built. The questions that
 were open in the first draft have a decision in [section 17](#17-decisions); two of them (personal data
-in the model step, and retention) are proposals until the owner of data protection confirms them.
+in the model step, and retention) are proposals until the owner of data protection confirms them. That confirmation is needed before the
+first run with real data, not before the code (see [when each thing is needed](#when-each-thing-is-needed)).
 **Date:** 2026-10-08.
 
 ## 1. What we want
@@ -291,11 +292,21 @@ The pipeline is made of **generic pieces**, with their safety rules, and of an e
 - Confirms after a good result, asks again later (`nak` with a wait) after a failure that can pass, ends
   an event with `term` and sends it to the dead letters after a failure that cannot. The failures are
   classified by where they come from (section 17, item 1); a `fail` of the agent is final, unless it
-  carries the optional mark that asks for a new try.
+  carries `retry` (see below).
 - Pulls batches (a limit in flight), tells the broker that a long batch is still in progress, and has
   the circuit breaker of section 8.
 
 **A bounded loop** (`repeat while … `, with a maximum number of turns) for paging.
+
+**`fail … retry`** (a change to the language)
+- `fail "The destination is busy" retry in 60 seconds`. The time is optional and is only a suggestion,
+  with a maximum. A `fail` without `retry` keeps the meaning it has today: final.
+- Only `retry` is a new reserved word (`in` and `seconds` already are). No example or document uses it
+  as a name.
+- The caller sees it according to what it is: `metagente run` prints a note that it may pass; A2A marks
+  the task as one that can be tried again and gives the suggested wait; `consume` asks the broker for a
+  new delivery after the wait.
+- `check` warns about a time that is not a positive number, or that is longer than the maximum.
 
 **Not in Metagente:** the ETL itself. The two agents, the SQL files and the control tables are a sample
 (`samples/async-elt`), so the core stays small and each user changes the pipeline without changing the
@@ -318,6 +329,30 @@ Then: total time ≈ batches × time of a batch ÷ Workers. The disk of the brok
 (for example, 20 million rows of 200 bytes are about 4 GB before compression) for as long as the
 retention says.
 
+### Pilot and starting values of the brakes
+
+The pilot runs after the sample of phase 3 exists, and before the job goes to production.
+
+- **Data:** 100 to 500 thousand rows, synthetic or masked, in a database of the same kind as the
+  destination.
+- **Runs:** with 1, 2 and 4 Workers. Measure reading, publishing, landing and transforming; in the model
+  step, calls, tokens, latency and errors.
+- **Failures to inject:** kill a Worker between transaction 1 and 2, stop the destination, stop the
+  broker, and rows that are invalid in 1%, 5% and 25% of the batches.
+- **To approve:** the reconciliation closes (read = loaded + rejected), there is no duplicate after a
+  kill, and each failure is fixed as the table of section 8 says.
+
+| Brake | Starting value | How to tune it |
+|---|---|---|
+| Rejected rows in a batch | 20% | 5 to 10 times the normal rate measured, never below 5% |
+| Pause the job | 3 batches in a row above the limit | review with the real rate |
+| Destination down | opens after 3 failures in a row; tries again every 30 s, waiting up to 5 min | the real time of recovery |
+| Time to confirm a batch | 3 times the p99 of the time of a batch | the times of the pilot |
+| Maximum deliveries | 5, waiting 10 s, 1, 5 and 15 min | the failures injected |
+| Batches in flight | 2 times the number of Workers | raise it until the latency of the destination gets worse |
+| Size of a batch | try 64, 128, 256 and 512 KiB | the best throughput with a p95 under a third of the time to confirm |
+| Budget of the model | tokens per row × rows × 1.3 | pause at 100%, warn at 80% |
+
 ## 15. Phases
 
 1. **`tool sql` and the bounded loop.** Useful alone: it answers the question of reading a large
@@ -331,10 +366,24 @@ retention says.
 
 - **Unit:** the batch cut by size, the hash, the limit of decompression, the state machine of a batch
   (a table of states and events), the outbox after a restart.
-- **With a database:** SQLite in every run; PostgreSQL and MySQL as services in the CI. The tests of
-  failure kill the Worker between transaction 1 and 2 and check that the result is the same.
-- **With a broker:** a fake in memory for the unit tests, and a real server (a single binary) for a few
-  tests of redelivery, discard new, the circuit breaker and the replay.
+- **With a database:** SQLite in every run, with no container. PostgreSQL and MySQL/MariaDB through
+  Testcontainers (below).
+- **With a broker:** a fake in memory for the unit tests. The integration tests use a real JetStream
+  server through Testcontainers, for redelivery, discard new, the circuit breaker and the replay.
+- **The integration tests use Testcontainers** (`testcontainers-go`). This is a rule of the project:
+  - PostgreSQL, MySQL/MariaDB and NATS with JetStream run in containers, with the images pinned by
+    digest, like the versions pinned for tool servers.
+  - They live in a module of their own (`integration/`, with its own `go.mod`), so the product, `go
+    install`, `govulncheck` and Sonar do not take the dependencies of the tests. The module has its own
+    `govulncheck` step.
+  - They run the compiled binary as a black box, like `internal/acceptance`, with the build tag
+    `integration` and a target of their own in the `Makefile`.
+  - In the CI they run in the Linux job only (the runners of macOS and Windows do not run Linux
+    containers). Without a container runtime they are skipped, not failed.
+  - The tests of failure stop or pause the container of the database or of the broker in the middle of a
+    job, and kill the Worker between transaction 1 and 2, then check that the result is the same.
+  - Podman works through its compatible socket, with settings that depend on the version; it is checked
+    when the tests are written.
 - **Safety:** statements that are not named are refused, the DSN and the content of rows never appear in
   an error or a log, the `trust` list.
 
@@ -348,8 +397,9 @@ are proposals until the owner of data protection of the organization confirms th
    limit of rate of the provider, a deadlock) can pass: it is tried again with a growing wait. A problem
    in the event (an unknown version, a wrong hash, a message too large once decompressed) is final and
    goes to the dead letters. A `fail` of the agent is final by default, because it is a rule of the
-   business that stopped the batch; an optional mark on the `fail` asks for a new try. Every new try has
-   a maximum number of deliveries, so none goes on forever.
+   business that stopped the batch; the optional mark `retry` asks for a new try: `fail "message" retry`, or
+   `fail "message" retry in 60 seconds` to suggest the wait (section 13). Every new try has a maximum
+   number of deliveries, so none goes on forever.
 2. **Personal data in the model step.** *Decided as a proposal, to confirm.* Nothing goes to the model
    unless it is allowed, column by column: the job lists the columns, already masked. If they still
    hold personal data, a provider with a suitable contract, or a server of your own. Each batch records,
@@ -374,5 +424,25 @@ are proposals until the owner of data protection of the organization confirms th
    Worker, every 5 or 10 minutes, idempotent. The alerts go through `tool http` to the channel of the
    team, with codes and counts only.
 
-What is still to be done before any code: confirm items 2 and 3 with the owner of data protection, choose
-the syntax of the optional mark of `fail` (item 1), and fix the first values of the brakes with the pilot.
+### When each thing is needed
+
+| What | Blocks |
+|---|---|
+| Confirm items 2 and 3 with the owner of data protection | the first run with real data (not the code; phases 1 and 2 and the pilot with synthetic or masked data go on) |
+| The syntax of `fail … retry` (item 1, decided) | phase 2 (`consume`) |
+| The values of the brakes (section 14) | going to production: they can only be measured when the sample of phase 3 exists |
+
+## Appendix A. Questions for the owner of data protection
+
+1. Which columns hold personal data, and is any of it sensitive?
+2. What is the legal basis to treat it, and to send part of it to a provider of a model?
+3. Which provider is allowed, and with which contract: no training with the data, no retention, region,
+   sub-processors?
+4. Is masking or pseudonymizing enough for the columns that go to the model, and which technique is
+   accepted?
+5. Do the proposed retentions (broker 7 days, dead letters 14, staging 7 after the job) serve, and in how
+   many days must a request to erase data be answered?
+6. Is it acceptable to delete by key in staging and in the final table, and to let the events of the
+   broker expire?
+7. Who may reach staging, the broker and the dead letters, and is an audit trail required?
+8. Are there demands on encryption and on where the data may be kept?
