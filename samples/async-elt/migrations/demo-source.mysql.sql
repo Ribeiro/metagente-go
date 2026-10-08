@@ -9,10 +9,10 @@
 
 CREATE TABLE orders (
   id       BIGINT PRIMARY KEY,
-  customer VARCHAR(100) NOT NULL,
-  document VARCHAR(20) NOT NULL,
+  customer TEXT NOT NULL,
+  document TEXT NOT NULL,
   total    DECIMAL(12,2) NOT NULL,
-  note     VARCHAR(500)      -- what the customer wrote on the order: free text, and it may hold personal data
+  note     TEXT      -- what the customer wrote on the order: free text, and it may hold personal data
 );
 
 -- The numbers 1 to 2500 come from four digits, so that no limit of recursion gets in the way.
