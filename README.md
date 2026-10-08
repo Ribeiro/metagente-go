@@ -232,7 +232,9 @@ metagente run my-agent.ag    # an agent with `tool http`
   `metagente trust`. See `docs/LANGUAGE.md`.
 - `tool orders from sql "orders-db"`: reads a database (SQLite, PostgreSQL, MySQL, MariaDB) with named, parameterized
   `SELECT` statements written in `[sql.orders-db]` of `metagente.toml`; read only, with limits, approved
-  by `metagente trust`. See `docs/LANGUAGE.md`.
+  by `metagente trust`. A connection with `mode = "write"` may also run named `INSERT`, `UPDATE` and
+  `DELETE` statements, a list of rows in one transaction, and transactions of several statements (never
+  DDL), approved as a database that is changed. See `docs/LANGUAGE.md`.
 - Configuration: `metagente.toml`, `--config`, and the environment overrides.
 - `think "..." [using a b]`: the agent asks a language model, which may use the tools it
   declared. The provider is chosen only in `metagente.toml`: `anthropic`, or

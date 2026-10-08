@@ -39,12 +39,14 @@ func postgresTransient(err error) bool {
 }
 
 // postgresDSN builds the address of the database. The session is told to be read only before anything
-// runs, and each statement runs in a read only transaction as well.
+// runs (unless the connection writes), and each statement that reads runs in a read only transaction.
 func postgresDSN(conn *config.SQLConn, password, root string) (string, error) {
 	mode := map[string]string{config.TLSVerify: "verify-full", config.TLSRequire: "require", config.TLSDisable: "disable"}[conn.TLS]
 	query := url.Values{}
 	query.Set("sslmode", mode)
-	query.Set("default_transaction_read_only", "on")
+	if !conn.Writes() {
+		query.Set("default_transaction_read_only", "on")
+	}
 	query.Set("application_name", "metagente")
 	query.Set("connect_timeout", "10")
 	if conn.CAFile != "" {

@@ -435,3 +435,21 @@ func TestABrokerIsKeyedByItsSubjectsAndSaysWhereItPublishes(t *testing.T) {
 		t.Error("the variable of the password is part of what is approved")
 	}
 }
+
+func TestADatabaseThatIsChangedIsAnotherApprovalAndSaysSo(t *testing.T) {
+	read := SQLItem("postgres", "etl@db:5432/dest (tls verify)", "dest", []string{"land"}, "aaa")
+	write := SQLWriteItem("postgres", "etl@db:5432/dest (tls verify)", "dest", []string{"land"}, []string{"land_batch"}, "aaa")
+	if read.Key() == write.Key() {
+		t.Error("reading and changing the same database must be two approvals")
+	}
+	shown := write.Describe()
+	for _, want := range []string{"reads and CHANGES the database: postgres etl@db:5432/dest", "may change rows", "transactions land_batch"} {
+		if !strings.Contains(shown, want) {
+			t.Errorf("describe = %q, missing %q", shown, want)
+		}
+	}
+	noTx := SQLWriteItem("sqlite", "w.db", "w", []string{"a"}, nil, "bbb")
+	if strings.Contains(noTx.Describe(), "transactions") {
+		t.Errorf("describe = %q", noTx.Describe())
+	}
+}

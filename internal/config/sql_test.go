@@ -269,3 +269,110 @@ func TestAProblemInABrokerIsTold(t *testing.T) {
 		}
 	}
 }
+
+const writingSQL = `
+[sql.warehouse]
+driver = "sqlite"
+path = "warehouse.db"
+mode = "write"
+
+[sql.warehouse.statements]
+mark = "INSERT INTO batches (job, seq, state) VALUES (:job, :seq, 'landed')"
+land = { sql = "INSERT INTO stg (job, seq, id, name) VALUES (:job, :seq, :id, :name)", each = "rows", columns = ["id", "name"], description = "Put the rows in staging" }
+finish = "UPDATE batches SET state = 'done' WHERE job = :job AND seq = :seq"
+purge = "DELETE FROM stg WHERE job = :job"
+total = { sql = "SELECT count(*) FROM stg WHERE job = :job", result = "value" }
+
+[sql.warehouse.transactions]
+land_batch = ["land", "mark"]
+close = { steps = ["finish", "purge"], description = "Close a batch" }
+`
+
+func TestAConnectionThatWritesHasStatementsThatChangeRowsAndTransactions(t *testing.T) {
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", writingSQL); err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	conn := cfg.SQL["warehouse"]
+	if !conn.Writes() || conn.Mode != ModeWrite {
+		t.Fatalf("mode = %q", conn.Mode)
+	}
+	if conn.Statements["mark"].Result != ResultCount || conn.Statements["total"].Result != ResultValue {
+		t.Errorf("results = %s, %s", conn.Statements["mark"].Result, conn.Statements["total"].Result)
+	}
+	land := conn.Statements["land"]
+	if land.Each != "rows" || strings.Join(land.Columns, " ") != "id name" || strings.Join(land.CallParams(), " ") != "job seq" {
+		t.Errorf("land = %+v, call params %v", land, land.CallParams())
+	}
+	if strings.Join(conn.TransactionNames(), " ") != "close land_batch" {
+		t.Errorf("transactions = %v", conn.TransactionNames())
+	}
+	scalars, lists, err := conn.TransactionParams(conn.Transactions["land_batch"])
+	if err != nil || strings.Join(scalars, " ") != "job seq" || strings.Join(lists, " ") != "rows" {
+		t.Errorf("params = %v %v %v", scalars, lists, err)
+	}
+	if conn.Transactions["close"].Description != "Close a batch" {
+		t.Errorf("description = %q", conn.Transactions["close"].Description)
+	}
+}
+
+func TestAConnectionReadsUnlessItSaysItWrites(t *testing.T) {
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", goodSQL); err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	if cfg.SQL["orders-db"].Writes() || cfg.SQL["orders-db"].Mode != ModeRead {
+		t.Errorf("mode = %q", cfg.SQL["orders-db"].Mode)
+	}
+}
+
+func TestAProblemInAWritingConnectionIsTold(t *testing.T) {
+	head := "[sql.w]\ndriver = \"sqlite\"\npath = \"w.db\"\nmode = \"write\"\n"
+	read := "[sql.w]\ndriver = \"sqlite\"\npath = \"w.db\"\n"
+	statements := "[sql.w.statements]\nmark = \"INSERT INTO t (a) VALUES (:a)\"\nland = { sql = \"INSERT INTO t (a, b) VALUES (:a, :b)\", each = \"rows\", columns = [\"b\"] }\nlook = \"SELECT 1\"\n"
+	for name, c := range map[string]struct{ text, want string }{
+		"a bad mode":         {"[sql.w]\ndriver = \"sqlite\"\npath = \"w.db\"\nmode = \"both\"\n" + statements, "`mode` in [sql.w] has to be \"read\" or \"write\""},
+		"mode not text":      {"[sql.w]\ndriver = \"sqlite\"\npath = \"w.db\"\nmode = 1\n" + statements, "`mode` in [sql.w] must be a text in quotes"},
+		"a write on a read":  {read + "[sql.w.statements]\nmark = \"INSERT INTO t (a) VALUES (:a)\"\n", "needs a connection with mode = \"write\""},
+		"no where":           {head + "[sql.w.statements]\nwipe = \"DELETE FROM t\"\n", "DELETE with no WHERE"},
+		"a bad result":       {head + "[sql.w.statements]\nmark = { sql = \"INSERT INTO t (a) VALUES (:a)\", result = \"rows\" }\n", "only gives count"},
+		"count of a read":    {head + "[sql.w.statements]\nlook = { sql = \"SELECT 1\", result = \"count\" }\n", "it has to be rows, row or value"},
+		"each alone":         {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a) VALUES (:a)\", each = \"rows\" }\n", "`each` and `columns` go together"},
+		"each of a read":     {head + "[sql.w.statements]\nland = { sql = \"SELECT :a\", each = \"rows\", columns = [\"a\"] }\n", "are for a statement that changes rows"},
+		"unknown column":     {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a) VALUES (:a)\", each = \"rows\", columns = [\"z\"] }\n", "has no parameter :z"},
+		"column twice":       {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a) VALUES (:a)\", each = \"rows\", columns = [\"a\", \"a\"] }\n", "names `a` twice"},
+		"each is a param":    {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a, b) VALUES (:a, :b)\", each = \"a\", columns = [\"b\"] }\n", "also a parameter of the statement"},
+		"a bad each":         {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a) VALUES (:a)\", each = \"two words\", columns = [\"a\"] }\n", "`each` is `two words`"},
+		"columns not a list": {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a) VALUES (:a)\", each = \"rows\", columns = \"a\" }\n", "must be a list of texts"},
+		"a text in columns":  {head + "[sql.w.statements]\nland = { sql = \"INSERT INTO t (a) VALUES (:a)\", each = \"rows\", columns = [1] }\n", "must be a text in quotes"},
+		"transactions read":  {read + "[sql.w.statements]\nlook = \"SELECT 1\"\n[sql.w.transactions]\nt = [\"look\"]\n", "is for a connection with mode = \"write\""},
+		"tx unknown step":    {head + statements + "[sql.w.transactions]\nt = [\"nope\"]\n", "step `nope` is not a statement"},
+		"tx reading step":    {head + statements + "[sql.w.transactions]\nt = [\"look\"]\n", "step `look` only reads"},
+		"tx same name":       {head + statements + "[sql.w.transactions]\nmark = [\"mark\"]\n", "both called `mark`"},
+		"tx empty":           {head + statements + "[sql.w.transactions]\nt = []\n", "must be a list of texts"},
+		"tx bad name":        {head + statements + "[sql.w.transactions]\n\"a b\" = [\"mark\"]\n", "a transaction called `a b`"},
+		"tx bad setting":     {head + statements + "[sql.w.transactions]\nt = { steps = [\"mark\"], when = 1 }\n", "I do not know the setting `when`"},
+		"tx a number":        {head + statements + "[sql.w.transactions]\nt = 5\n", "must be a list of the names"},
+		"tx list and scalar": {head + "[sql.w.statements]\na = { sql = \"INSERT INTO t (x) VALUES (:x)\", each = \"xs\", columns = [\"x\"] }\nb = \"INSERT INTO u (xs) VALUES (:xs)\"\n[sql.w.transactions]\nt = [\"a\", \"b\"]\n", "is a list in one step"},
+		"tx too long":        {head + statements + "[sql.w.transactions]\nt = [" + strings.Repeat("\"mark\",", MaxTransactionSteps+1) + "]\n", "needs from 1 to"},
+	} {
+		err := Default().apply("metagente.toml", c.text)
+		if err == nil {
+			t.Errorf("%s: no problem", name)
+			continue
+		}
+		if shown := problemText(t, err); !strings.Contains(shown, c.want) {
+			t.Errorf("%s: missing %q in:\n%s", name, c.want, shown)
+		}
+	}
+}
+
+func TestTheCeilingOfAListIsASetting(t *testing.T) {
+	if Default().Limits.MaxSQLWriteRows != 10000 {
+		t.Errorf("default = %d", Default().Limits.MaxSQLWriteRows)
+	}
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", "[limits]\nmax_sql_write_rows = 500\n"); err != nil || cfg.Limits.MaxSQLWriteRows != 500 {
+		t.Errorf("limit = %d, %v", cfg.Limits.MaxSQLWriteRows, err)
+	}
+}

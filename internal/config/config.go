@@ -83,8 +83,10 @@ type Limits struct {
 	MaxStateBytes      int64 // D3
 	// MaxSQLRows and MaxSQLBytes are what one statement may give back. A statement that gives more is a
 	// problem, not a shorter answer.
-	MaxSQLRows  int
-	MaxSQLBytes int64
+	MaxSQLRows int
+	// MaxSQLWriteRows is the most items a statement that runs once for each item of a list may be given.
+	MaxSQLWriteRows int
+	MaxSQLBytes     int64
 	// MaxBrokerBytes is the most a message to a broker may hold. A larger one is a problem, not a cut message.
 	MaxBrokerBytes int64
 }
@@ -164,6 +166,7 @@ func Default() *Config {
 			MaxStateEntries:    1000,
 			MaxStateBytes:      256 << 10, // with 1000 conversations, about 250 MiB at most
 			MaxSQLRows:         10000,
+			MaxSQLWriteRows:    10000,
 			MaxSQLBytes:        5 << 20,
 			MaxBrokerBytes:     1 << 20,
 		},
@@ -288,6 +291,7 @@ var settings = map[string]setter{
 	"limits.max_state_entries":     setInt(func(c *Config) *int { return &c.Limits.MaxStateEntries }, 1),
 	"limits.max_state_bytes":       setInt64(func(c *Config) *int64 { return &c.Limits.MaxStateBytes }, 1),
 	"limits.max_sql_rows":          setInt(func(c *Config) *int { return &c.Limits.MaxSQLRows }, 1),
+	"limits.max_sql_write_rows":    setInt(func(c *Config) *int { return &c.Limits.MaxSQLWriteRows }, 1),
 	"limits.max_sql_bytes":         setInt64(func(c *Config) *int64 { return &c.Limits.MaxSQLBytes }, 1),
 	"limits.max_broker_bytes":      setInt64(func(c *Config) *int64 { return &c.Limits.MaxBrokerBytes }, 1),
 

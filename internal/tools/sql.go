@@ -34,11 +34,12 @@ type sqlDriver struct {
 	name string
 	// file is true when the location is a file, which must exist: opening must not create it.
 	file bool
-	// dsn gives the connection string for a location, in a way that allows reading only.
-	dsn func(location string) string
+	// dsn gives the connection string for a location, in a way that allows reading only, or that allows
+	// writing when write is true.
+	dsn func(location string, write bool) string
 	// connect gives the connection string of a network database: it is given the connection, the
 	// password (which may be empty) and the folder of the project, and builds the string so that the
-	// session can only read.
+	// session can only read, unless the connection is one that writes.
 	connect func(conn *config.SQLConn, password, root string) (string, error)
 	// readOnlyTx makes each statement run in a transaction that the database knows to be read only.
 	readOnlyTx bool
@@ -87,8 +88,12 @@ type SQLSpec struct {
 	Target string
 	// Credential is the NAME of the variable that holds the connection string, if one is set.
 	Credential string
-	// Statements are the names of the statements the agent may call.
-	Statements []string
+	// Writes is true when the connection may change rows.
+	Writes bool
+	// Statements are the names of the statements the agent may call, and Transactions the groups of them
+	// that run as one.
+	Statements   []string
+	Transactions []string
 	// Fingerprint changes when the database or the text of a statement changes.
 	Fingerprint string
 }
@@ -104,7 +109,7 @@ func SQLSpecOf(decl *lang.ToolDecl, conns map[string]*config.SQLConn, credential
 	}
 	spec := SQLSpec{
 		Tool: decl.Name, Connection: conn.Name, Driver: conn.Driver,
-		Credential: credentials[decl.Name], Statements: conn.Names(),
+		Credential: credentials[decl.Name], Writes: conn.Writes(), Statements: conn.Names(), Transactions: conn.TransactionNames(),
 	}
 	spec.Target = conn.Path
 	if config.IsNetworkDriver(conn.Driver) {
@@ -120,6 +125,15 @@ func SQLSpecOf(decl *lang.ToolDecl, conns map[string]*config.SQLConn, credential
 	for _, name := range spec.Statements {
 		st := conn.Statements[name]
 		fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", name, st.Result, st.Parsed.Text)
+		if conn.Writes() { // what a connection that only reads never had stays as it was, and stays approved
+			fmt.Fprintf(sum, "%s\x00%s\x00", st.Each, strings.Join(st.Columns, ","))
+		}
+	}
+	if conn.Writes() {
+		fmt.Fprintf(sum, "%s\x00", conn.Mode)
+		for _, name := range spec.Transactions {
+			fmt.Fprintf(sum, "tx\x00%s\x00%s\x00", name, strings.Join(conn.Transactions[name].Steps, ","))
+		}
 	}
 	spec.Fingerprint = hex.EncodeToString(sum.Sum(nil))[:12]
 	return spec, nil
@@ -170,8 +184,9 @@ type SQL struct {
 	opts   SQLOptions
 	limits config.Limits
 	stmts  map[string]*sqlStatement
-	names  []string
-	owned  bool // the pool is this tool's own
+	txs    map[string]*sqlTransaction
+	names  []string // statements, then transactions
+	owned  bool     // the pool is this tool's own
 }
 
 type sqlStatement struct {
@@ -180,6 +195,18 @@ type sqlStatement struct {
 	order       []string // the parameter of each place of the query
 	params      []string // the distinct parameters, in the order of first use
 	result      string
+	description string
+	writes      bool
+	each        string   // the list of the call that the statement runs for, or ""
+	columns     []string // the parameters that come from each item
+}
+
+// sqlTransaction is a group of statements that change rows and run as one.
+type sqlTransaction struct {
+	name        string
+	steps       []*sqlStatement
+	scalars     []string // the single values of the call
+	lists       []string // the lists of the call
 	description string
 }
 
@@ -194,12 +221,28 @@ func NewSQL(decl *lang.ToolDecl, opts SQLOptions, limits config.Limits) (*SQL, e
 	if place == nil {
 		place = placeholders["sqlite"]
 	}
-	s := &SQL{decl: decl, conn: conn, spec: spec, opts: opts, limits: limits, stmts: map[string]*sqlStatement{}, names: spec.Statements}
+	s := &SQL{decl: decl, conn: conn, spec: spec, opts: opts, limits: limits, stmts: map[string]*sqlStatement{}, txs: map[string]*sqlTransaction{}}
 	for _, name := range spec.Statements {
 		st := conn.Statements[name]
 		query, order := st.Parsed.Rewrite(place)
-		s.stmts[name] = &sqlStatement{name: name, query: query, order: order, params: st.Parsed.Params, result: st.Result, description: st.Description}
+		s.stmts[name] = &sqlStatement{
+			name: name, query: query, order: order, params: st.Parsed.Params, result: st.Result, description: st.Description,
+			writes: st.Parsed.Kind.Writes(), each: st.Each, columns: st.Columns,
+		}
 	}
+	for _, name := range spec.Transactions {
+		tx := conn.Transactions[name]
+		scalars, lists, err := conn.TransactionParams(tx)
+		if err != nil {
+			return nil, err
+		}
+		t := &sqlTransaction{name: name, scalars: scalars, lists: lists, description: tx.Description}
+		for _, step := range tx.Steps {
+			t.steps = append(t.steps, s.stmts[step])
+		}
+		s.txs[name] = t
+	}
+	s.names = append(append([]string{}, spec.Statements...), spec.Transactions...)
 	if s.opts.Pool == nil {
 		s.opts.Pool, s.owned = NewSQLPool(), true
 	}
@@ -217,22 +260,43 @@ func (s *SQL) Close() error {
 
 func (s *SQL) Name() string { return s.decl.Name }
 
-// Actions are the statements: each one is an action, and its parameters are its values.
+// Actions are the statements and the transactions: each one is an action, and its parameters are its values.
 func (s *SQL) Actions(context.Context) ([]lang.ActionInfo, error) {
 	actions := make([]lang.ActionInfo, 0, len(s.names))
 	for _, name := range s.names {
-		st := s.stmts[name]
-		description := st.description
-		if description == "" {
-			description = "Runs the statement " + name + " and gives " + resultWords(st.result)
-		}
-		info := lang.ActionInfo{Name: name, Description: description}
-		for _, p := range st.params {
-			info.Params = append(info.Params, lang.ParamInfo{Name: p, Required: true})
+		var info lang.ActionInfo
+		if tx, ok := s.txs[name]; ok {
+			info = tx.info()
+		} else {
+			info = s.stmts[name].info()
 		}
 		actions = append(actions, info)
 	}
 	return actions, nil
+}
+
+func (st *sqlStatement) info() lang.ActionInfo {
+	description := st.description
+	if description == "" {
+		description = "Runs the statement " + st.name + " and gives " + resultWords(st.result)
+	}
+	info := lang.ActionInfo{Name: st.name, Description: description}
+	for _, p := range st.callParams() {
+		info.Params = append(info.Params, lang.ParamInfo{Name: p, Required: true})
+	}
+	return info
+}
+
+func (t *sqlTransaction) info() lang.ActionInfo {
+	description := t.description
+	if description == "" {
+		description = "Runs the statements " + t.name + " as one, all or none, and gives how many rows each changed"
+	}
+	info := lang.ActionInfo{Name: t.name, Description: description}
+	for _, p := range t.params() {
+		info.Params = append(info.Params, lang.ParamInfo{Name: p, Required: true})
+	}
+	return info
 }
 
 func resultWords(result string) string {
@@ -241,14 +305,22 @@ func resultWords(result string) string {
 		return "its first row, or nothing"
 	case config.ResultValue:
 		return "its value, or nothing"
+	case config.ResultCount:
+		return "how many rows it changed"
 	}
 	return "its rows"
 }
 
 func (s *SQL) Call(ctx context.Context, action string, args Args) (value.Value, error) {
+	if tx, ok := s.txs[action]; ok {
+		return s.callTransaction(ctx, tx, args)
+	}
 	st, ok := s.stmts[action]
 	if !ok {
 		return value.Nothing, UnknownAction(s.decl.Name, action, s.names)
+	}
+	if st.writes {
+		return s.callWrite(ctx, st, args)
 	}
 	bound, err := s.bind(st, args)
 	if err != nil {
@@ -307,21 +379,34 @@ func (p preparedQuery) QueryContext(ctx context.Context, _ string, args ...any) 
 
 // bind turns the values of the call into the parameters of the statement, in the order of its places.
 func (s *SQL) bind(st *sqlStatement, args Args) ([]any, error) {
+	if err := s.checkArgs(st.name, st.callParams(), args); err != nil {
+		return nil, err
+	}
+	return s.place(st, func(name string) value.Value { return args[name] })
+}
+
+// checkArgs refuses a call that gives a value the action does not take, or leaves one out.
+func (s *SQL) checkArgs(action string, takes []string, args Args) error {
 	for name := range args {
-		if !contains(st.params, name) {
-			return nil, diag.Newf("`%s.%s` takes no value called `%s`", s.decl.Name, st.name, name).
-				Fix(takes(st))
+		if !contains(takes, name) {
+			return diag.Newf("`%s.%s` takes no value called `%s`", s.decl.Name, action, name).
+				Fix(takesText(takes))
 		}
 	}
-	for _, p := range st.params {
+	for _, p := range takes {
 		if _, ok := args[p]; !ok {
-			return nil, diag.Newf("`%s.%s` needs a value for `%s`", s.decl.Name, st.name, p).
-				Fixf("add it to the call, for example: %s.%s %s: ...", s.decl.Name, st.name, p)
+			return diag.Newf("`%s.%s` needs a value for `%s`", s.decl.Name, action, p).
+				Fixf("add it to the call, for example: %s.%s %s: ...", s.decl.Name, action, p)
 		}
 	}
+	return nil
+}
+
+// place gives the parameters of the statement in the order of its places, each from get.
+func (s *SQL) place(st *sqlStatement, get func(name string) value.Value) ([]any, error) {
 	bound := make([]any, len(st.order))
 	for i, name := range st.order {
-		v, err := parameter(args[name])
+		v, err := parameter(get(name))
 		if err != nil {
 			return nil, diag.Newf("`%s` in `%s.%s` %s", name, s.decl.Name, st.name, err.Error()).
 				Fix("give a text, a number, yes or no, or nothing")
@@ -331,11 +416,11 @@ func (s *SQL) bind(st *sqlStatement, args Args) ([]any, error) {
 	return bound, nil
 }
 
-func takes(st *sqlStatement) string {
-	if len(st.params) == 0 {
+func takesText(takes []string) string {
+	if len(takes) == 0 {
 		return "this statement takes no values"
 	}
-	return "it takes: " + strings.Join(st.params, ", ")
+	return "it takes: " + strings.Join(takes, ", ")
 }
 
 func contains(list []string, item string) bool {
@@ -436,7 +521,7 @@ func (s *SQL) where(driver sqlDriver) (location, dsn string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	return location, driver.dsn(location), nil
+	return location, driver.dsn(location, s.conn.Writes()), nil
 }
 
 // location says where the database is: the variable of a credential if one is set, or the path of the
@@ -521,7 +606,7 @@ func (s *SQL) failure(ctx context.Context, st *sqlStatement, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	d := diag.Newf("the database could not run `%s.%s`: %s", s.decl.Name, st.name, s.clean(err)).
+	d := diag.Newf("the database could not run `%s.%s`: %s", s.decl.Name, st.name, scrubValues(s.clean(err))).
 		Fixf("check the statement `%s` in [sql.%s] of %s", st.name, s.conn.Name, config.FileName)
 	return s.markIfItMayPass(d, err)
 }

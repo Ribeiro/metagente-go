@@ -173,3 +173,76 @@ func TestAStatementThatHasNoSuchActionIsExplainedWithTheOnesThereAre(t *testing.
 	_, err := RunFile(t.Context(), rt, Options{File: file, Message: "go", Confirm: approveAll})
 	mustContain(t, errText(t, err), "`orders` has no action called `nextpage`", "did you mean `orders.next_page`?")
 }
+
+const landingToml = `
+[sql.dest]
+driver = "sqlite"
+path = "orders.db"
+mode = "write"
+
+[sql.dest.statements]
+land = { sql = "INSERT INTO landing (job, id, customer) VALUES (:job, :id, :customer)", each = "rows", columns = ["id", "customer"] }
+mark = "INSERT INTO marks (job, state) VALUES (:job, :state)"
+done = "UPDATE marks SET state = 'done' WHERE job = :job"
+total = { sql = "SELECT count(*) FROM landing WHERE job = :job", result = "value" }
+first = "SELECT id, customer FROM orders ORDER BY id LIMIT 2"
+
+[sql.dest.transactions]
+land_batch = ["land", "mark"]
+`
+
+const landerSource = `agent Lander
+  goal "Land a batch"
+  tool dest from sql "dest"
+  accepts land job
+  on land
+    rows = dest.first
+    done = dest.land_batch job: job rows: rows state: "landed"
+    dest.done job: job
+    n = dest.total job: job
+    reply "landed {n} rows, {done.land} by the transaction"
+`
+
+func TestAnAgentChangesADatabaseThatWasApprovedAsOneThatIsChanged(t *testing.T) {
+	rt, dir, _ := sqlProject(t, landingToml)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "orders.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"create table landing(job integer, id integer, customer text, primary key (job, id))",
+		"create table marks(job integer primary key, state text)",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	file := filepath.Join(dir, "lander.ag")
+	if err := os.WriteFile(file, []byte(landerSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asked := false
+	got, err := RunFile(t.Context(), rt, Options{File: file, Message: "land", Params: []string{"job=7"}, Confirm: func(missing []trust.Item) bool {
+		asked = true
+		if len(missing) != 1 || !missing[0].Writes {
+			t.Errorf("the person must be told that the database is changed: %v", missing)
+		}
+		return true
+	}})
+	if err != nil || got.Text != "landed 2 rows, 2 by the transaction" {
+		t.Fatalf("got %q, %v", got.Display(), err)
+	}
+	if !asked {
+		t.Error("nobody was asked")
+	}
+	check, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dir, "orders.db"))+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	var state string
+	if err := check.QueryRow("select state from marks where job = 7").Scan(&state); err != nil || state != "done" {
+		t.Errorf("state = %q, %v", state, err)
+	}
+}

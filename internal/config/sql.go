@@ -38,6 +38,19 @@ const (
 	ResultRow = "row"
 	// ResultValue is the one value of a statement that gives one row of one column, or nothing.
 	ResultValue = "value"
+	// ResultCount is how many rows a statement that changes things changed. It is the only answer of
+	// INSERT, UPDATE and DELETE.
+	ResultCount = "count"
+)
+
+// Modes of a connection.
+const (
+	// ModeRead only reads: the database is opened to be read, and a statement is a SELECT or a WITH. It is
+	// the default.
+	ModeRead = "read"
+	// ModeWrite may also change rows with INSERT, UPDATE and DELETE statements. It never changes the shape
+	// of the database: the tables are made by the migrations of the user.
+	ModeWrite = "write"
 )
 
 // SQLConn is a [sql.NAME] section: a database and the statements that an agent may run on it with
@@ -55,10 +68,18 @@ type SQLConn struct {
 	User     string
 	// TLS is one of the TLS modes, and CAFile the certificates to trust with TLSVerify, relative to the
 	// folder of the project.
-	TLS        string
-	CAFile     string
+	TLS    string
+	CAFile string
+	// Mode is ModeRead or ModeWrite.
+	Mode       string
 	Statements map[string]*SQLStatement
+	// Transactions are the groups of statements that run as one, all or none. Only a connection that
+	// writes has them.
+	Transactions map[string]*SQLTransaction
 }
+
+// Writes says whether the connection may change rows.
+func (c *SQLConn) Writes() bool { return c.Mode == ModeWrite }
 
 // SQLStatement is one named statement of a connection.
 type SQLStatement struct {
@@ -66,6 +87,30 @@ type SQLStatement struct {
 	Result      string
 	Description string
 	Parsed      *sqlscan.Statement
+	// Each, for a statement that changes rows, is the name of a value of the call that holds a list: the
+	// statement runs once for each item, all in one transaction. Columns say which parameters of the
+	// statement come from the item; the other parameters come from the call, and are the same for every
+	// item. An item is a record with those names as fields, or a list with the values in that order.
+	Each    string
+	Columns []string
+}
+
+// SQLTransaction is a group of statements that change rows and run as one, in order: if one fails, none
+// of them changed anything.
+type SQLTransaction struct {
+	Name        string
+	Steps       []string
+	Description string
+}
+
+// TransactionNames lists the names of the transactions, sorted.
+func (c *SQLConn) TransactionNames() []string {
+	names := make([]string, 0, len(c.Transactions))
+	for name := range c.Transactions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Names lists the names of the statements, sorted.
@@ -94,7 +139,17 @@ func (cfg *Config) addSQL(file, text string, e entry) error {
 		return fail("`%s` in [sql] must be a section of its own", e.key).
 			Fix("write one section for each connection, for example [sql.orders-db], and put driver, path and the statements under it")
 	}
-	conn := &SQLConn{Name: e.key, Statements: map[string]*SQLStatement{}}
+	conn := &SQLConn{Name: e.key, Mode: ModeRead, Statements: map[string]*SQLStatement{}, Transactions: map[string]*SQLTransaction{}}
+	if mode, ok := table["mode"]; ok {
+		text, err := sqlText(mode)
+		if err == nil && text != ModeRead && text != ModeWrite {
+			err = fmt.Errorf("has to be %q or %q", ModeRead, ModeWrite)
+		}
+		if err != nil {
+			return fail("`mode` in [sql.%s] %s", e.key, err.Error()).Fix("remove it to only read, or write: mode = \"write\"")
+		}
+		conn.Mode = text
+	}
 	where := "[sql." + e.key + "]"
 	keys := make([]string, 0, len(table))
 	for key := range table {
@@ -121,11 +176,15 @@ func (cfg *Config) addSQL(file, text string, e entry) error {
 			conn.CAFile, err = sqlText(value)
 		case "port":
 			conn.Port, err = sqlPort(value)
+		case "mode":
+			// read before the loop, because the statements depend on it
 		case "statements":
 			err = addStatements(conn, value)
+		case "transactions":
+			err = addTransactions(conn, value)
 		default:
 			return fail("I do not know the setting `%s` in %s", key, where).
-				Fix("a connection has: driver, statements, and path (SQLite) or host, port, database, user, tls and ca_file")
+				Fix("a connection has: driver, mode, statements, transactions, and path (SQLite) or host, port, database, user, tls and ca_file")
 		}
 		if err != nil {
 			return fail("`%s` in %s %s", key, where, err.Error()).Fix("change it in " + FileName)
@@ -142,6 +201,9 @@ func (cfg *Config) addSQL(file, text string, e entry) error {
 		return err
 	}
 	switch {
+	case len(conn.Transactions) > 0 && !conn.Writes():
+		return fail("%s has transactions, and a connection that only reads has no use for them", where).
+			Fix(`add mode = "write" to the section, or remove the transactions`)
 	case len(conn.Statements) == 0:
 		return fail("%s has no statements", where).
 			Fixf("add some under [sql.%s.statements], for example: next_page = \"SELECT id FROM orders WHERE id > :after ORDER BY id LIMIT :size\"", e.key)
@@ -225,7 +287,7 @@ func sqlText(value any) (string, error) {
 }
 
 // addStatements reads the statements of a connection: each is a text (a statement that gives rows), or
-// a table with sql, result and description.
+// a table with sql, result, description and, for a statement that changes rows, each and columns.
 func addStatements(conn *SQLConn, value any) error {
 	table, ok := value.(map[string]any)
 	if !ok {
@@ -240,7 +302,7 @@ func addStatements(conn *SQLConn, value any) error {
 		if !statementName.MatchString(name) {
 			return fmt.Errorf("has a statement called `%s`, and a name here is made of letters, digits, `_` and `-`, and begins with a letter or `_`", name)
 		}
-		statement, err := readStatement(name, table[name])
+		statement, err := readStatement(name, table[name], conn.Writes())
 		if err != nil {
 			return fmt.Errorf("has a problem in the statement `%s`: %s", name, err.Error())
 		}
@@ -249,41 +311,264 @@ func addStatements(conn *SQLConn, value any) error {
 	return nil
 }
 
-func readStatement(name string, value any) (*SQLStatement, error) {
-	statement := &SQLStatement{Name: name, Result: ResultRows}
+func readStatement(name string, value any, write bool) (*SQLStatement, error) {
+	statement := &SQLStatement{Name: name}
 	var text string
 	switch v := value.(type) {
 	case string:
 		text = v
 	case map[string]any:
+		var err error
+		if text, err = readStatementTable(statement, v); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("must be the text of the statement, or a table with sql, result and description")
+	}
+	parse := sqlscan.Parse
+	if write {
+		parse = sqlscan.ParseWrite
+	}
+	parsed, err := parse(text)
+	if err != nil {
+		if _, again := sqlscan.ParseWrite(text); !write && again == nil {
+			return nil, fmt.Errorf("%s; a statement that changes rows needs a connection with mode = \"write\"", err.Error())
+		}
+		return nil, err
+	}
+	statement.Parsed = parsed
+	if err := statement.checkShape(); err != nil {
+		return nil, err
+	}
+	return statement, nil
+}
+
+// readStatementTable reads the settings of a statement written as a table, and gives its text.
+func readStatementTable(statement *SQLStatement, table map[string]any) (string, error) {
+	var text string
+	for key, field := range table {
+		var err error
+		switch key {
+		case "sql":
+			text, err = sqlText(field)
+		case "result":
+			statement.Result, err = sqlText(field)
+		case "description":
+			statement.Description, err = sqlText(field)
+		case "each":
+			statement.Each, err = sqlText(field)
+		case "columns":
+			statement.Columns, err = sqlTexts(field)
+		default:
+			return "", fmt.Errorf("I do not know the setting `%s`; a statement has: sql, result, description, each and columns", key)
+		}
+		if err != nil {
+			return "", fmt.Errorf("`%s` %s", key, err.Error())
+		}
+	}
+	return text, nil
+}
+
+// checkShape looks at what the statement answers and at how it is repeated, and fills in the answer that
+// was left out.
+func (st *SQLStatement) checkShape() error {
+	writes := st.Parsed.Kind.Writes()
+	switch {
+	case st.Result == "" && writes:
+		st.Result = ResultCount
+	case st.Result == "":
+		st.Result = ResultRows
+	case writes && st.Result != ResultCount:
+		return fmt.Errorf("`result` is `%s`, and a statement that changes rows only gives %s", st.Result, ResultCount)
+	case !writes && st.Result != ResultRows && st.Result != ResultRow && st.Result != ResultValue:
+		return fmt.Errorf("`result` is `%s`, and it has to be %s, %s or %s", st.Result, ResultRows, ResultRow, ResultValue)
+	}
+	if st.Each == "" && len(st.Columns) == 0 {
+		return nil
+	}
+	if !writes {
+		return fmt.Errorf("`each` and `columns` are for a statement that changes rows")
+	}
+	if st.Each == "" || len(st.Columns) == 0 {
+		return fmt.Errorf("`each` and `columns` go together: the first names the list of the call, the second the parameters that come from each item")
+	}
+	if !statementName.MatchString(st.Each) {
+		return fmt.Errorf("`each` is `%s`, and a name here is made of letters, digits, `_` and `-`", st.Each)
+	}
+	params := map[string]bool{}
+	for _, p := range st.Parsed.Params {
+		params[p] = true
+	}
+	if params[st.Each] {
+		return fmt.Errorf("`each` is `%s`, which is also a parameter of the statement; give the list another name", st.Each)
+	}
+	seen := map[string]bool{}
+	for _, column := range st.Columns {
+		switch {
+		case !params[column]:
+			return fmt.Errorf("`columns` names `%s`, and the statement has no parameter :%s", column, column)
+		case seen[column]:
+			return fmt.Errorf("`columns` names `%s` twice", column)
+		}
+		seen[column] = true
+	}
+	return nil
+}
+
+func sqlTexts(value any) ([]string, error) {
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 {
+		return nil, fmt.Errorf("must be a list of texts in quotes, for example [\"a\", \"b\"]")
+	}
+	texts := make([]string, len(list))
+	for i, item := range list {
+		text, err := sqlText(item)
+		if err != nil {
+			return nil, err
+		}
+		texts[i] = text
+	}
+	return texts, nil
+}
+
+// MaxTransactionSteps is the most statements a transaction may have.
+const MaxTransactionSteps = 32
+
+// addTransactions reads the transactions of a connection: each is a list of the names of statements that
+// change rows, or a table with steps and description.
+func addTransactions(conn *SQLConn, value any) error {
+	table, ok := value.(map[string]any)
+	if !ok {
+		return fmt.Errorf("must be a section, written as [sql.%s.transactions]", conn.Name)
+	}
+	if !conn.Writes() {
+		return fmt.Errorf("is for a connection with mode = \"write\"")
+	}
+	names := make([]string, 0, len(table))
+	for name := range table {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		switch {
+		case !statementName.MatchString(name):
+			return fmt.Errorf("has a transaction called `%s`, and a name here is made of letters, digits, `_` and `-`, and begins with a letter or `_`", name)
+		case conn.Statements[name] != nil:
+			return fmt.Errorf("has a transaction and a statement that are both called `%s`", name)
+		}
+		tx, err := readTransaction(conn, name, table[name])
+		if err != nil {
+			return fmt.Errorf("has a problem in the transaction `%s`: %s", name, err.Error())
+		}
+		conn.Transactions[name] = tx
+	}
+	return nil
+}
+
+func readTransaction(conn *SQLConn, name string, value any) (*SQLTransaction, error) {
+	tx := &SQLTransaction{Name: name}
+	var err error
+	switch v := value.(type) {
+	case []any:
+		tx.Steps, err = sqlTexts(v)
+	case map[string]any:
 		for key, field := range v {
-			var err error
 			switch key {
-			case "sql":
-				text, err = sqlText(field)
-			case "result":
-				statement.Result, err = sqlText(field)
+			case "steps":
+				tx.Steps, err = sqlTexts(field)
 			case "description":
-				statement.Description, err = sqlText(field)
+				tx.Description, err = sqlText(field)
 			default:
-				return nil, fmt.Errorf("I do not know the setting `%s`; a statement has: sql, result and description", key)
+				return nil, fmt.Errorf("I do not know the setting `%s`; a transaction has: steps and description", key)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("`%s` %s", key, err.Error())
 			}
 		}
 	default:
-		return nil, fmt.Errorf("must be the text of the statement, or a table with sql, result and description")
+		return nil, fmt.Errorf("must be a list of the names of statements, or a table with steps and description")
 	}
-	switch statement.Result {
-	case ResultRows, ResultRow, ResultValue:
-	default:
-		return nil, fmt.Errorf("`result` is `%s`, and it has to be %s, %s or %s", statement.Result, ResultRows, ResultRow, ResultValue)
-	}
-	parsed, err := sqlscan.Parse(text)
 	if err != nil {
 		return nil, err
 	}
-	statement.Parsed = parsed
-	return statement, nil
+	if len(tx.Steps) == 0 || len(tx.Steps) > MaxTransactionSteps {
+		return nil, fmt.Errorf("needs from 1 to %d steps", MaxTransactionSteps)
+	}
+	if _, _, err := conn.TransactionParams(tx); err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
+// TransactionParams gives the values that a call of a transaction needs: the scalars, and the lists. A
+// name that two steps share is one value, and it has to mean the same to both.
+func (c *SQLConn) TransactionParams(tx *SQLTransaction) (scalars, lists []string, err error) {
+	roles := paramRoles{role: map[string]string{}}
+	for _, step := range tx.Steps {
+		st := c.Statements[step]
+		if st == nil {
+			return nil, nil, fmt.Errorf("step `%s` is not a statement of this connection", step)
+		}
+		if !st.Parsed.Kind.Writes() {
+			return nil, nil, fmt.Errorf("step `%s` only reads, and a transaction is made of statements that change rows", step)
+		}
+		if err := roles.add(st); err != nil {
+			return nil, nil, err
+		}
+	}
+	return roles.scalars, roles.lists, nil
+}
+
+// paramRoles collects the values of the steps of a transaction, each as a single value or as a list.
+type paramRoles struct {
+	role           map[string]string
+	scalars, lists []string
+}
+
+func (r *paramRoles) add(st *SQLStatement) error {
+	if st.Each != "" {
+		if err := r.use(st.Each, "list"); err != nil {
+			return err
+		}
+	}
+	for _, p := range st.CallParams() {
+		if err := r.use(p, "scalar"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *paramRoles) use(name, as string) error {
+	if before, ok := r.role[name]; ok {
+		if before != as {
+			return fmt.Errorf("the value `%s` is a list in one step and a single value in another", name)
+		}
+		return nil
+	}
+	r.role[name] = as
+	if as == "list" {
+		r.lists = append(r.lists, name)
+	} else {
+		r.scalars = append(r.scalars, name)
+	}
+	return nil
+}
+
+// CallParams are the parameters that the call gives as single values: all but those that come from each item.
+func (st *SQLStatement) CallParams() []string {
+	if st.Each == "" {
+		return st.Parsed.Params
+	}
+	var params []string
+	for _, p := range st.Parsed.Params {
+		fromItem := false
+		for _, c := range st.Columns {
+			fromItem = fromItem || c == p
+		}
+		if !fromItem {
+			params = append(params, p)
+		}
+	}
+	return params
 }

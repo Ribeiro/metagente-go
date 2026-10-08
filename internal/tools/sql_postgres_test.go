@@ -63,3 +63,20 @@ func TestPostgresErrorsThatMayPassAreTold(t *testing.T) {
 		t.Error("a plain error was taken for one that may pass")
 	}
 }
+
+func TestPostgresOnlyOpensASessionThatChangesRowsWhenTheConnectionWrites(t *testing.T) {
+	conn := networkConn("postgres")
+	conn.Mode = config.ModeWrite
+	dsn, err := postgresDSN(conn, "", "/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(dsn, "default_transaction_read_only") {
+		t.Errorf("a connection that writes was told to be read only: %s", dsn)
+	}
+	conn.Mode = config.ModeRead
+	dsn, _ = postgresDSN(conn, "", "/project")
+	if !strings.Contains(dsn, "default_transaction_read_only=on") {
+		t.Errorf("a connection that reads must be told to be read only: %s", dsn)
+	}
+}
