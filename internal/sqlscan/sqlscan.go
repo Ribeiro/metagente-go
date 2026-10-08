@@ -94,30 +94,15 @@ func (sc *scanner) run() error {
 
 // step reads what begins at i and returns where the next thing begins.
 func (sc *scanner) step(i int) (int, error) {
-	t := sc.text
-	c := t[i]
-	switch {
-	case c == '-' && i+1 < len(t) && t[i+1] == '-':
-		return skipLine(t, i), nil
-	case c == '/' && i+1 < len(t) && t[i+1] == '*':
-		end := strings.Index(t[i+2:], "*/")
-		if end < 0 {
-			return 0, errors.New("a comment is never closed")
-		}
-		return i + 2 + end + 2, nil
-	case c == ';':
-		if sc.semicolon >= 0 {
-			return 0, errors.New("it has more than one statement")
-		}
-		sc.semicolon = i
-		return i + 1, nil
-	case c == ' ' || c == '\t' || c == '\r' || c == '\n':
-		return i + 1, nil
+	if next, done, err := sc.trivia(i); done {
+		return next, err
 	}
 	// Everything else is code, and none may follow the final semicolon.
 	if err := sc.noMoreAfterEnd(i); err != nil {
 		return 0, err
 	}
+	t := sc.text
+	c := t[i]
 	switch {
 	case c == '\'' || c == '"' || c == '`':
 		end, ok := skipQuoted(t, i)
@@ -138,6 +123,32 @@ func (sc *scanner) step(i int) (int, error) {
 		return end, nil
 	}
 	return i + 1, nil
+}
+
+// trivia reads what is not code: spaces, comments and the semicolon that ends the statement. done says
+// whether that is what begins at i.
+func (sc *scanner) trivia(i int) (next int, done bool, err error) {
+	t := sc.text
+	c := t[i]
+	switch {
+	case c == '-' && i+1 < len(t) && t[i+1] == '-':
+		return skipLine(t, i), true, nil
+	case c == '/' && i+1 < len(t) && t[i+1] == '*':
+		end := strings.Index(t[i+2:], "*/")
+		if end < 0 {
+			return 0, true, errors.New("a comment is never closed")
+		}
+		return i + 2 + end + 2, true, nil
+	case c == ';':
+		if sc.semicolon >= 0 {
+			return 0, true, errors.New("it has more than one statement")
+		}
+		sc.semicolon = i
+		return i + 1, true, nil
+	case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+		return i + 1, true, nil
+	}
+	return 0, false, nil
 }
 
 // noMoreAfterEnd refuses code after the final semicolon: only spaces and comments may follow it.
