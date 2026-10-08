@@ -71,6 +71,8 @@ func seed(t *testing.T, driver string) string {
 	var sb strings.Builder
 	sb.WriteString("CREATE TABLE orders (id BIGINT PRIMARY KEY, customer VARCHAR(50), total DECIMAL(10,2), big BIGINT);\n")
 	sb.WriteString("CREATE TABLE journal (note VARCHAR(50));\n")
+	sb.WriteString("CREATE TABLE landing (job BIGINT, id BIGINT, customer VARCHAR(50), PRIMARY KEY (job, id));\n")
+	sb.WriteString("CREATE TABLE marks (job BIGINT PRIMARY KEY, state VARCHAR(20));\n")
 	if driver == "postgres" {
 		sb.WriteString("CREATE FUNCTION write_note() RETURNS int LANGUAGE plpgsql AS $$ BEGIN INSERT INTO journal VALUES ('written'); RETURN 1; END $$;\n")
 	} else {

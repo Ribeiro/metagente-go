@@ -279,6 +279,68 @@ next_page = "SELECT id, customer FROM orders WHERE id > :after ORDER BY id LIMIT
 - `result = "value"` and the like work the same in every database. What the server sends as a decimal
   (`numeric`, `DECIMAL`), as a UUID or as JSON comes as text; a `datetime` as text in RFC 3339 in UTC.
 
+### Changing a database (`mode = "write"`)
+
+A connection only reads, unless its section says `mode = "write"`. Then its statements may also begin
+with `INSERT`, `UPDATE` or `DELETE`, and they give how many rows they changed (`result = "count"`, the
+only answer they have). It is meant for the side of a pipeline that lands data in a database that the
+person who runs the agents owns. The agent still never writes SQL, and the file never holds a secret.
+
+```toml
+[sql.warehouse]
+driver   = "postgres"
+host     = "db.example.com"
+database = "warehouse"
+user     = "loader"
+mode     = "write"
+
+[sql.warehouse.statements]
+# runs once for each item of the list "rows", all in one transaction; an item gives id and name
+land   = { sql = "INSERT INTO stg (job, seq, id, name) VALUES (:job, :seq, :id, :name)", each = "rows", columns = ["id", "name"] }
+mark   = "INSERT INTO batches (job, seq, state) VALUES (:job, :seq, 'landed')"
+finish = "UPDATE batches SET state = 'done' WHERE job = :job AND seq = :seq"
+purge  = "DELETE FROM stg WHERE job = :job"
+seen   = { sql = "SELECT state FROM batches WHERE job = :job AND seq = :seq", result = "value" }
+
+# statements that run as one: if one fails, none of them changed anything
+[sql.warehouse.transactions]
+land_batch = ["land", "mark"]
+```
+
+```
+agent Lander
+  goal "Land a batch"
+  tool warehouse from sql "warehouse"
+  accepts land job seq rows
+  on land
+    state = warehouse.seen job: job seq: seq
+    if state is "done"
+      reply "already done"
+    done = warehouse.land_batch job: job seq: seq rows: rows
+    warehouse.finish job: job seq: seq
+    reply "landed {done.land} rows"
+```
+
+- `each` and `columns` go together. `each` names a value of the call that holds a list; the statement runs
+  once for every item, inside one transaction. `columns` are the parameters that come from the item (a
+  record with those names as fields, or a list with the values in that order); the other parameters are
+  given once and are the same for every item. A list has at most `max_sql_write_rows` items (10000).
+- A call of a statement that changes rows is a transaction of its own: if the list stops halfway, nothing
+  stays. `[sql.NAME.transactions]` groups several of them so that they stand or fall together; a call of
+  one gives a record with how many rows each statement changed. A name that two steps share is one value.
+- An `UPDATE` or a `DELETE` without a `WHERE` is refused, so that a slip cannot change every row of a
+  table. `CREATE`, `DROP`, `ALTER` and the like are refused too: Metagente does not change the shape of a
+  database, the tables are made by the migrations of the user. Give the user of the connection only the
+  rights that the statements need: that is the protection that does not depend on this program.
+- A statement that only reads still runs in a read only transaction, on a connection that writes.
+- What the driver says is cleaned of what is between quotes before a problem shows it (a key that
+  already exists, a text that is not a number), and a problem in a list says the place of the item,
+  never its content: the rows may hold personal data. A failure that may pass (a connection that
+  dropped, a deadlock) is marked, as for a read.
+- `metagente trust` shows a connection that writes as one that **changes** the database, with the names
+  of the statements and of the transactions; it is another approval than the one for reading the same
+  database.
+
 ### A message broker (`tool from broker`)
 
 `tool events from broker "main" publish "etl.orders.batch"` lets the agent publish messages to a message
@@ -605,6 +667,7 @@ Words that look like a mistake get a suggestion: `acepts` gets "did you mean `ac
 | an answer of `http` | `max_http_bytes` (5 MiB) | `[limits]` |
 | a message to a broker | `max_broker_bytes` (1 MiB) | `[limits]` |
 | an answer of `sql` | `max_sql_rows` (10000), `max_sql_bytes` (5 MiB) | `[limits]` |
+| a list given to a statement that changes rows | `max_sql_write_rows` (10000) | `[limits]` |
 | what `state` keeps in a conversation | `max_state_entries` (1000), `max_state_bytes` (256 KiB) | `[limits]` |
 | what a tool gives to `think` | `max_tool_result_bytes` (32 KiB), cut and marked | `[limits]` |
 

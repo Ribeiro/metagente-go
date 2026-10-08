@@ -62,6 +62,9 @@ type Item struct {
 	// of this same computer. It only changes what Describe says. It is not part of the key of the item and
 	// it is not saved, so what was approved before stays approved.
 	Keyless bool `json:"-"`
+	// Writes is true for a database that the agent may change. It only changes what Describe says; what
+	// the agent may run is in Detail.
+	Writes bool `json:"-"`
 }
 
 // CommandItem is a program started with a command line. The variables passed
@@ -93,6 +96,21 @@ func SQLItem(driver, target, connection string, statements []string, fingerprint
 		Kind:   KindSQL,
 		Target: strings.TrimSpace(driver + " " + target),
 		Detail: fmt.Sprintf("connection %s, statements %s, fingerprint %s", connection, strings.Join(statements, ", "), fingerprint),
+	}
+}
+
+// SQLWriteItem is a database an agent may change. It is told apart from one that is only read: the same
+// database that is read and that is written are two approvals, because the second can do much more.
+func SQLWriteItem(driver, target, connection string, statements, transactions []string, fingerprint string) Item {
+	detail := fmt.Sprintf("connection %s, may change rows, statements %s", connection, strings.Join(statements, ", "))
+	if len(transactions) > 0 {
+		detail += ", transactions " + strings.Join(transactions, ", ")
+	}
+	return Item{
+		Kind:   KindSQL,
+		Target: strings.TrimSpace(driver + " " + target),
+		Detail: detail + ", fingerprint " + fingerprint,
+		Writes: true,
 	}
 }
 
@@ -159,6 +177,9 @@ func (i Item) Describe() string {
 		}
 		return "sends your key and what the agent asks the language model to: " + i.Target
 	case KindSQL:
+		if i.Writes {
+			return "reads and CHANGES the database: " + i.Target + " (" + i.Detail + ")"
+		}
 		return "reads the database: " + i.Target + " (" + i.Detail + ")"
 	case KindBroker:
 		return "uses the message broker: " + i.Target + " (" + i.Detail + ")"

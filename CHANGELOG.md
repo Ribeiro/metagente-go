@@ -9,6 +9,15 @@ minor versions.
 
 ### Added
 
+- `mode = "write"` in a `[sql.NAME]` section, for the side of the asynchronous ELT that lands data
+  (phase 3 of `docs/design-async-elt.md`). Its named statements may begin with `INSERT`, `UPDATE` or
+  `DELETE` and give how many rows they changed; `each` and `columns` run a statement once for each item of
+  a list, in one transaction; `[sql.NAME.transactions]` groups statements that stand or fall together. An
+  `UPDATE` or `DELETE` with no `WHERE` and any `CREATE`, `DROP` or `ALTER` are refused. `metagente trust`
+  shows such a database as one that is changed, and it is another approval than for reading it. What a
+  driver says is cleaned of what is between quotes, and a problem in a list names the place of the item,
+  never its content. New limit `limits.max_sql_write_rows` (10000). A connection that only reads
+  works as before and keeps its approval.
 - `docs/tutorial.md`: your first agent in 15 minutes, adapted from the tutorial of the original project
   to this port (installing, `trust`, the token of `serve`, `[credentials]` for `remote`).
 - `docs/LANGUAGE.md` has an index of every word of the language, a table of the commands, and the

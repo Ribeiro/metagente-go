@@ -15,8 +15,25 @@ import (
 // MaxBytes is the longest statement that is read.
 const MaxBytes = 64 << 10
 
+// Kind says what a statement does, from its first word.
+type Kind int
+
+const (
+	// Read is a SELECT or a WITH: it gives rows.
+	Read Kind = iota
+	// Insert, Update and Delete change rows and give how many.
+	Insert
+	Update
+	Delete
+)
+
+// Writes says whether the statement changes rows.
+func (k Kind) Writes() bool { return k != Read }
+
 // Statement is one SQL statement written with :name parameters.
 type Statement struct {
+	// Kind is what the statement does.
+	Kind Kind
 	// Text is the statement as written, without the final semicolon.
 	Text string
 	// Params are the distinct names of the parameters, in the order they are first used.
@@ -30,8 +47,15 @@ type use struct {
 	name       string
 }
 
-// Parse reads a statement. It must be one statement that begins with SELECT or WITH.
-func Parse(text string) (*Statement, error) {
+// Parse reads a statement that only reads: one statement that begins with SELECT or WITH.
+func Parse(text string) (*Statement, error) { return parse(text, false) }
+
+// ParseWrite reads a statement for a database that may be changed: it may also begin with INSERT, UPDATE
+// or DELETE. An UPDATE or a DELETE has to have a WHERE, so that no statement changes every row of a table
+// by a slip. Nothing that changes the shape of the database (CREATE, DROP, ALTER) is accepted.
+func ParseWrite(text string) (*Statement, error) { return parse(text, true) }
+
+func parse(text string, write bool) (*Statement, error) {
 	if len(text) > MaxBytes {
 		return nil, fmt.Errorf("it is longer than %d bytes", MaxBytes)
 	}
@@ -43,15 +67,29 @@ func Parse(text string) (*Statement, error) {
 	if sc.first == "" {
 		return nil, errors.New("it is empty")
 	}
-	if sc.first != "select" && sc.first != "with" {
-		return nil, fmt.Errorf("it begins with %s, and a statement here has to begin with SELECT or WITH", strings.ToUpper(sc.first))
+	kind, ok := kinds[sc.first]
+	if !ok || (kind.Writes() && !write) {
+		return nil, fmt.Errorf("it begins with %s, and a statement here has to begin with %s", strings.ToUpper(sc.first), allowedWords(write))
 	}
+	if (kind == Update || kind == Delete) && !sc.where {
+		return nil, fmt.Errorf("it is an %s with no WHERE, which would change every row", strings.ToUpper(sc.first))
+	}
+	s.Kind = kind
 	end := len(text)
 	if sc.semicolon >= 0 {
 		end = sc.semicolon
 	}
 	s.Text = strings.TrimRight(text[:end], " \t\r\n")
 	return s, nil
+}
+
+var kinds = map[string]Kind{"select": Read, "with": Read, "insert": Insert, "update": Update, "delete": Delete}
+
+func allowedWords(write bool) string {
+	if write {
+		return "SELECT, WITH, INSERT, UPDATE or DELETE"
+	}
+	return "SELECT or WITH"
 }
 
 // Rewrite returns the statement with each parameter replaced by placeholder(n), where n counts the
@@ -75,6 +113,7 @@ type scanner struct {
 	text      string
 	s         *Statement
 	first     string // the first word, in lower case
+	where     bool   // a WHERE was seen
 	semicolon int    // where the final ; is, or -1
 	seen      map[string]bool
 }
@@ -119,6 +158,9 @@ func (sc *scanner) step(i int) (int, error) {
 		}
 		if sc.first == "" {
 			sc.first = strings.ToLower(t[i:end])
+		}
+		if strings.EqualFold(t[i:end], "where") {
+			sc.where = true
 		}
 		return end, nil
 	}

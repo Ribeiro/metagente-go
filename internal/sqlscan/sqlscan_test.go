@@ -124,3 +124,39 @@ func TestWordsOutsideASCIIAreWordsOfTheStatement(t *testing.T) {
 		t.Errorf("params = %v", s.Params)
 	}
 }
+
+func TestAStatementThatChangesRowsIsReadOnlyWhereItIsAllowed(t *testing.T) {
+	for text, kind := range map[string]Kind{
+		"select 1":                               Read,
+		"with a as (select 1) select * from a":   Read,
+		"insert into t (a) values (:a)":          Insert,
+		"UPDATE t SET a = :a WHERE id = :id":     Update,
+		"delete from t where day < :day":         Delete,
+		"update t set a = 'where' where b = :b ": Update,
+	} {
+		s, err := ParseWrite(text)
+		if err != nil || s.Kind != kind || s.Kind.Writes() != (kind != Read) {
+			t.Errorf("%q: kind = %v, err = %v", text, s, err)
+		}
+		if kind.Writes() {
+			if _, err := Parse(text); err == nil || !strings.Contains(err.Error(), "begins with") {
+				t.Errorf("%q: a connection that only reads must refuse it, got %v", text, err)
+			}
+		}
+	}
+	for text, want := range map[string]string{
+		"update t set a = 1":                   "UPDATE with no WHERE",
+		"delete from t":                        "DELETE with no WHERE",
+		"delete from t -- where":               "no WHERE",
+		"update t set a = 'where'":             "no WHERE",
+		"drop table t":                         "begins with DROP",
+		"create table t (a int)":               "begins with CREATE",
+		"alter table t add b int":              "begins with ALTER",
+		"insert into t values (1); delete t w": "more than one statement",
+	} {
+		_, err := ParseWrite(text)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: error = %v, want %q", text, err, want)
+		}
+	}
+}

@@ -17,6 +17,8 @@ import (
 	"github.com/Ribeiro/metagente-go/internal/config"
 	"github.com/Ribeiro/metagente-go/internal/diag"
 	"github.com/Ribeiro/metagente-go/internal/lang"
+	"github.com/Ribeiro/metagente-go/internal/sqlscan"
+	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
 // fakeDriver is a database that keeps a note of how it was used: what the tests of the network drivers
@@ -27,6 +29,7 @@ type fakeDriver struct {
 	begun    []bool // read only, for each transaction
 	prepared []string
 	queried  []string
+	executed []string
 }
 
 var fake = &fakeDriver{}
@@ -46,7 +49,7 @@ func (f *fakeDriver) Open(dsn string) (driver.Conn, error) {
 func (f *fakeDriver) reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.dsns, f.begun, f.prepared, f.queried = nil, nil, nil, nil
+	f.dsns, f.begun, f.prepared, f.queried, f.executed = nil, nil, nil, nil, nil
 }
 
 type fakeConn struct{ f *fakeDriver }
@@ -87,8 +90,19 @@ type fakeStmt struct {
 func (s *fakeStmt) Close() error  { return nil }
 func (s *fakeStmt) NumInput() int { return -1 }
 func (s *fakeStmt) Exec([]driver.Value) (driver.Result, error) {
-	return nil, io.ErrUnexpectedEOF
+	s.f.mu.Lock()
+	s.f.executed = append(s.f.executed, s.query)
+	s.f.mu.Unlock()
+	if strings.Contains(s.query, "deadlock") {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return fakeResult{}, nil
 }
+
+type fakeResult struct{}
+
+func (fakeResult) LastInsertId() (int64, error)               { return 0, nil }
+func (fakeResult) RowsAffected() (int64, error)               { return 3, nil }
 func (s *fakeStmt) Query([]driver.Value) (driver.Rows, error) { return &fakeRows{}, nil }
 
 type fakeRows struct{ done bool }
@@ -242,4 +256,70 @@ func TestAnErrorOfTheNetworkOrOfTheConnectionMayPassAndAnotherDoesNot(t *testing
 			t.Errorf("%s: %v", name, got)
 		}
 	}
+}
+
+// fakeWriter is a tool on the fake network database whose connection may change rows.
+func fakeWriter(t *testing.T, statements map[string]string) *SQL {
+	t.Helper()
+	sqlDrivers["fake"] = sqlDriver{name: "fakesql", readOnlyTx: true, prepare: true,
+		connect: func(conn *config.SQLConn, password, _ string) (string, error) { return conn.Host + "|" + password, nil }}
+	placeholders["fake"] = func(int) string { return "?" }
+	t.Cleanup(func() { delete(sqlDrivers, "fake"); delete(placeholders, "fake") })
+	conn := networkConn("fake")
+	conn.Mode = config.ModeWrite
+	for name, text := range statements {
+		st := writing(t, text, "")
+		st.Name = name
+		conn.Statements[name] = st
+	}
+	decl := &lang.ToolDecl{Name: "dest", Kind: lang.ToolSQL, Command: "db"}
+	tool, err := NewSQL(decl, SQLOptions{Conns: map[string]*config.SQLConn{"db": conn}, Getenv: func(string) string { return "" }, Pool: NewSQLPool()}, config.Default().Limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tool.Close() })
+	return tool
+}
+
+func TestAStatementThatChangesRowsRunsInAWritableTransactionOfTheNetworkDriver(t *testing.T) {
+	fake.reset()
+	tool := fakeWriter(t, map[string]string{"purge": "delete from stg where job = :job"})
+	got, err := tool.Call(context.Background(), "purge", Args{"job": value.Number(1)})
+	if err != nil || got.Number != 3 {
+		t.Fatalf("got %s, %v", got.Display(), rendered(t, err))
+	}
+	begun, readOnly, _, _ := fake.counts()
+	if begun != 1 || readOnly {
+		t.Errorf("transactions = %d, read only = %v", begun, readOnly)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.executed) != 1 {
+		t.Errorf("executed = %v", fake.executed)
+	}
+}
+
+func TestAFailureToChangeRowsThatMayPassIsMarkedSoAndShowsNoValue(t *testing.T) {
+	fake.reset()
+	tool := fakeWriter(t, map[string]string{"deadlock": "delete from stg where job = :job -- deadlock"})
+	_, err := tool.Call(context.Background(), "deadlock", Args{"job": value.Number(1)})
+	if err == nil {
+		t.Fatal("the statement must fail")
+	}
+	if _, ok := diag.RetryOf(err); !ok {
+		t.Error("a connection that dropped in the middle of a write is a failure that may pass")
+	}
+}
+
+func writing(t *testing.T, text string, each string, columns ...string) *config.SQLStatement {
+	t.Helper()
+	parsed, err := sqlscan.ParseWrite(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := config.ResultRows
+	if parsed.Kind.Writes() {
+		result = config.ResultCount
+	}
+	return &config.SQLStatement{Result: result, Parsed: parsed, Each: each, Columns: columns}
 }

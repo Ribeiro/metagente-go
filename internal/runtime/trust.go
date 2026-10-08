@@ -147,8 +147,11 @@ func (rt *Runtime) allowServer(spec mcp.Spec) error {
 // sqlItem is the approval of a database: where it is, the statements that may run on it, and a
 // fingerprint of their text.
 func sqlItem(spec tools.SQLSpec) trust.Item {
-	return trust.SQLItem(spec.Driver, spec.Target, spec.Connection, spec.Statements, spec.Fingerprint).
-		WithCredential(spec.Credential)
+	item := trust.SQLItem(spec.Driver, spec.Target, spec.Connection, spec.Statements, spec.Fingerprint)
+	if spec.Writes {
+		item = trust.SQLWriteItem(spec.Driver, spec.Target, spec.Connection, spec.Statements, spec.Transactions, spec.Fingerprint)
+	}
+	return item.WithCredential(spec.Credential)
 }
 
 // sqlNeeds lists the databases the agents read. A connection that is not in the configuration is left
