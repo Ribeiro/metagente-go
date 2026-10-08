@@ -150,7 +150,12 @@ func seed(t *testing.T, driver string) string {
 		}
 		sb.Write(raw)
 	}
-	text := sb.String()
+	return seedFile(t, driver, sb.String())
+}
+
+// seedFile writes a script for a database, with what the server of that kind needs around it.
+func seedFile(t *testing.T, driver, text string) string {
+	t.Helper()
 	switch driver {
 	case "sqlserver":
 		text = "CREATE DATABASE orders;\nGO\nUSE orders;\nGO\n" + text
@@ -177,10 +182,15 @@ func image(name string) string {
 
 func start(t *testing.T, driver string) server {
 	t.Helper()
+	return startWith(t, driver, seed(t, driver))
+}
+
+// startWith starts a server of the kind and runs the script at the path in it.
+func startWith(t *testing.T, driver, path string) server {
+	t.Helper()
 	testcontainers.SkipIfProviderIsNotHealthy(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	path := seed(t, driver)
 	var (
 		ctr  testcontainers.Container
 		port string

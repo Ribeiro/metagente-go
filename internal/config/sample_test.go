@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -94,4 +95,57 @@ func minus(a, b []string) string {
 		}
 	}
 	return strings.Join(out, ", ")
+}
+
+// The Extractor calls `page` and `range` of its source by name. Each source of the sample, put in place of the
+// SQLite one, has to give the same two statements with the same values.
+func TestTheSourceOfTheSampleOfEveryDatabaseOffersThePageAndTheRange(t *testing.T) {
+	dir := filepath.Join("..", "..", "samples", "async-elt")
+	base := readSample(t, filepath.Join(dir, "metagente.toml"))
+	want := sourceOf(t, base)
+	for _, name := range []string{"postgres", "sqlserver", "oracle"} {
+		fragment := readSample(t, filepath.Join(dir, "sources", "source."+name+".toml"))
+		start, end := strings.Index(base, "[sql.source]"), strings.Index(base, "# ---- the outbox")
+		text := base[:start] + fragment + "\n" + base[end:] + "\n[credentials]\nsource = \"SOURCE_DB_PASSWORD\"\n"
+		got := sourceOf(t, text)
+		if got.Driver != name || got.Writes() {
+			t.Errorf("%s: driver %q, writes %v", name, got.Driver, got.Writes())
+		}
+		for _, statement := range []string{"page", "range"} {
+			a, b := want.Statements[statement], got.Statements[statement]
+			if b == nil {
+				t.Errorf("%s: no statement %s", name, statement)
+				continue
+			}
+			if !reflect.DeepEqual(sorted(a.Parsed.Params), sorted(b.Parsed.Params)) || a.Result != b.Result {
+				t.Errorf("%s: %s takes %v, and %v in SQLite", name, statement, b.Parsed.Params, a.Parsed.Params)
+			}
+		}
+		if len(got.Names()) != 2 {
+			t.Errorf("%s: statements %v, and the Extractor calls two", name, got.Names())
+		}
+	}
+}
+
+func readSample(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func sourceOf(t *testing.T, text string) *SQLConn {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "metagente.toml")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir, path)
+	if err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	return cfg.SQL["source"]
 }

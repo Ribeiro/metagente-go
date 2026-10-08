@@ -13,7 +13,7 @@ provider = "anthropic"
 model = "claude-sonnet-5-5"
 api_key_env = "ANTHROPIC_API_KEY"
 
-# ---- the source: read only. The demo is a SQLite file; see the notes at the end for PostgreSQL. ----
+# ---- the source: read only. The demo is a SQLite file; see the notes at the end for the others. ----
 [sql.source]
 driver = "sqlite"
 path = "demo/source.db"           # relative to this folder
@@ -154,7 +154,8 @@ stream = "ETL"                    # a stream that takes etl.> ; it has the limit
 # events = "BROKER_PASSWORD"
 
 # ---- notes ----
-# For a source that is PostgreSQL, MySQL or MariaDB, change [sql.source] to
+# For a source that is PostgreSQL, SQL Server or Oracle, take the section [sql.source] of sources/source.<database>.toml,
+# with the two statements already written. For MySQL or MariaDB, change [sql.source] to
 #
 #   driver = "postgres"
 #   host = "db.example.com"
