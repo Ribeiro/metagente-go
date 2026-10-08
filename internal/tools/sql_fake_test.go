@@ -323,3 +323,23 @@ func writing(t *testing.T, text string, each string, columns ...string) *config.
 	}
 	return &config.SQLStatement{Result: result, Parsed: parsed, Each: each, Columns: columns}
 }
+
+var errPlain = errors.New("plain")
+
+func TestADriverThatCannotAskForAReadOnlyTransactionIsToldFirstInsideOne(t *testing.T) {
+	fake.reset()
+	tool := fakeTool(t, false, false, "pw", "h")
+	driver := sqlDrivers["fake"]
+	driver.readOnlyStart = "SET TRANSACTION READ ONLY"
+	sqlDrivers["fake"] = driver
+	if _, err := tool.Call(context.Background(), "one", Args{}); err != nil {
+		t.Fatal(rendered(t, err))
+	}
+	begun, readOnly, prepared, queried := fake.counts()
+	if begun != 1 || readOnly || prepared != 1 || queried != 1 {
+		t.Errorf("transactions %d (read only %v), prepared %d, queried %d", begun, readOnly, prepared, queried)
+	}
+	if fake.prepared[0] != "SET TRANSACTION READ ONLY" {
+		t.Errorf("the first thing said was %q", fake.prepared[0])
+	}
+}

@@ -43,6 +43,10 @@ type sqlDriver struct {
 	connect func(conn *config.SQLConn, password, root string) (string, error)
 	// readOnlyTx makes each statement run in a transaction that the database knows to be read only.
 	readOnlyTx bool
+	// readOnlyStart is the statement that makes a transaction read only, for a database whose driver cannot
+	// ask for it: it runs first in the transaction of each statement that reads. It is empty when readOnlyTx
+	// is enough or when the database has no such thing.
+	readOnlyStart string
 	// prepare asks the database to prepare each statement, which is how some drivers give numbers as numbers.
 	prepare bool
 	// transient says whether an error of this driver is one that may pass: a connection that dropped, a
@@ -60,6 +64,9 @@ var placeholders = map[string]func(int) string{
 	"postgres": func(n int) string { return "$" + strconv.Itoa(n) },
 	"mysql":    func(int) string { return "?" },
 	"mariadb":  func(int) string { return "?" },
+	// SQL Server numbers its parameters @p1, @p2, and Oracle :1, :2.
+	"sqlserver": func(n int) string { return "@p" + strconv.Itoa(n) },
+	"oracle":    func(n int) string { return ":" + strconv.Itoa(n) },
 }
 
 // SQLOptions is what `tool x from sql` needs from the runtime.
@@ -354,6 +361,16 @@ func (s *SQL) run(ctx context.Context, db *sql.DB, st *sqlStatement, bound []any
 			defer stmt.Close()
 			q = preparedQuery{stmt}
 		}
+	} else if driver.readOnlyStart != "" {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return value.Nothing, s.failure(ctx, st, err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := tx.ExecContext(ctx, driver.readOnlyStart); err != nil {
+			return value.Nothing, s.failure(ctx, st, err)
+		}
+		q = tx
 	} else if driver.prepare {
 		stmt, err := db.PrepareContext(ctx, st.query)
 		if err != nil {
@@ -498,6 +515,10 @@ func omitTag(driver string) string {
 		return "nopostgres"
 	case "mysql", "mariadb":
 		return "nomysql"
+	case "sqlserver":
+		return "nosqlserver"
+	case "oracle":
+		return "nooracle"
 	}
 	return "nosqlite"
 }

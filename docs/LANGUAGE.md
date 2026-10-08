@@ -241,7 +241,9 @@ agent Pager
 - Only `SELECT` and `WITH`, one statement at a time. The database is opened read only, and the engine
   is told so as well: SQLite is opened with `mode=ro` and `query_only`; PostgreSQL, MySQL and MariaDB
   get every statement in a read only transaction, so even a `SELECT` that calls a function that writes is
-  refused by the server. Still, give the user of the connection only the right to read: that is the
+  refused by the server; Oracle gets `SET TRANSACTION READ ONLY` first in each transaction. SQL Server has
+  no such transaction: there a `SELECT` cannot change rows (a function of SQL Server may not), but a
+  `SELECT … INTO` or a call that the user may make is stopped only by the rights of the user. Still, give the user of the connection only the right to read: that is the
   protection that does not depend on this program.
 - The columns become the fields of the records, so they need names that are valid fields and are not
   repeated (`AS` gives one). A number beyond 2^53 comes back as text, so it keeps every digit; a blob
@@ -253,8 +255,16 @@ agent Pager
   before the first connection; changing a statement asks again.
 - The most rows and bytes of an answer are `max_sql_rows` (10000) and `max_sql_bytes` (5 MiB) in
   `[limits]`; an answer that passes either is a problem, not a cut answer. Use `LIMIT` and a `repeat`.
-- `driver` is `sqlite`, `postgres`, `mysql` or `mariadb`. A build made with `-tags nosqlite`,
-  `nopostgres` or `nomysql` (which also leaves out MariaDB) leaves the driver out; the releases do not.
+- `driver` is `sqlite`, `postgres`, `mysql`, `mariadb`, `sqlserver` or `oracle`. A build made with
+  `-tags nosqlite`, `nopostgres`, `nomysql` (which also leaves out MariaDB), `nosqlserver` or `nooracle`
+  leaves the driver out; the releases do not.
+- Each database writes its statements in its own dialect: `LIMIT` for PostgreSQL, MySQL, MariaDB and SQLite;
+  `SELECT TOP (:size) …` or `OFFSET … FETCH` for SQL Server; `FETCH FIRST :size ROWS ONLY` for Oracle. Oracle
+  gives the names of columns in capitals unless they are quoted, so write `id AS "id"`; it also treats an
+  empty text as nothing. For SQL Server and Oracle the `database` is the database, and the name of the
+  service for Oracle; `ca_file` is for SQL Server (and the others) but not for Oracle, which trusts the
+  certificates of the computer. To insert a row only when it is not there, write `INSERT … SELECT … WHERE NOT
+  EXISTS (…)`; `MERGE` is not accepted.
 
 A database reached over the network says where it is, and who reads it, instead of a `path`:
 
@@ -263,9 +273,9 @@ A database reached over the network says where it is, and who reads it, instead 
 orders = "ORDERS_DB_PASSWORD"          # the password, from the environment
 
 [sql.orders-db]
-driver   = "postgres"                  # or "mysql" or "mariadb"
+driver   = "postgres"                  # or "mysql", "mariadb", "sqlserver" or "oracle"
 host     = "db.example.com"            # a name or an address, with no port
-port     = 5432                        # optional: 5432 for postgres, 3306 for mysql and mariadb
+port     = 5432                        # optional: 5432 for postgres, 3306 for mysql and mariadb, 1433 for sqlserver, 1521 for oracle
 database = "orders"
 user     = "reader"
 tls      = "verify"                    # optional: "verify" (the default), "require" or "disable"

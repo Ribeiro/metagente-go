@@ -230,7 +230,7 @@ metagente run my-agent.ag    # an agent with `tool http`
 - `tool events from broker "main" publish "etl.>"`: publishes messages to a JetStream broker, only to the
   subjects the agent declared, each with an id that lets the broker drop a copy; approved by
   `metagente trust`. See `docs/LANGUAGE.md`.
-- `tool orders from sql "orders-db"`: reads a database (SQLite, PostgreSQL, MySQL, MariaDB) with named, parameterized
+- `tool orders from sql "orders-db"`: reads a database (SQLite, PostgreSQL, MySQL, MariaDB, SQL Server, Oracle) with named, parameterized
   `SELECT` statements written in `[sql.orders-db]` of `metagente.toml`; read only, with limits, approved
   by `metagente trust`. A connection with `mode = "write"` may also run named `INSERT`, `UPDATE` and
   `DELETE` statements, a list of rows in one transaction, and transactions of several statements (never
@@ -636,7 +636,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    so a failed batch can be tried again. The pieces are done (a `sql` tool that reads and, for the
    destination, writes; a `broker` tool; `metagente consume`; `fail ... retry`; `tool codec`; `tool meter`), and
    so are the Extractor, the Worker (with an optional step with a language model, a budget and brakes) and the
-   sweeper of [the sample](samples/async-elt/), for SQLite and PostgreSQL. SQL Server and Oracle are next; the
+   sweeper of [the sample](samples/async-elt/), for SQLite and PostgreSQL. The `sql` tool also speaks SQL Server
+   and Oracle (the sample's statements are not written for them yet); the
    page has the design, the failures it covers and the decisions taken.
 
 ### Not verified yet

@@ -379,7 +379,9 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
 4. **The sweeper with its alerts and the resend of lost batches,** and more dialects (SQL Server, Oracle).
    *Status:* the sweeper is done (`samples/async-elt/sweeper.ag`: alerts once for each cause with codes and counts, the
    notice to transform a stuck batch again, the ask to the Extractor to send a lost batch again). It does not see the
-   circuit breaker of `consume`, which is in that process. SQL Server and Oracle are next.
+   circuit breaker of `consume`, which is in that process. The `sql` tool now speaks SQL Server (`sqlserver`) and
+   Oracle (`oracle`), tried against real servers in `integration/`; `MERGE` is not accepted, so the upsert of this table
+   is written as `INSERT … SELECT … WHERE NOT EXISTS`. The SQL files of the sample for these two engines are not written.
 
 ## 16. Tests
 

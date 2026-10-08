@@ -58,7 +58,7 @@ func TestAProblemInAConnectionIsToldWithTheLineOfItsSection(t *testing.T) {
 	}
 	for name, c := range map[string]struct{ text, want string }{
 		"no driver":        {section("path = \"a.db\"\n[sql.orders.statements]\na = \"select 1\"\n"), "[sql.orders] needs a driver"},
-		"another driver":   {section("driver = \"oracle\"\n[sql.orders.statements]\na = \"select 1\"\n"), "names the driver `oracle`, which this version does not have"},
+		"another driver":   {section("driver = \"db2\"\n[sql.orders.statements]\na = \"select 1\"\n"), "names the driver `db2`, which this version does not have"},
 		"no statements":    {section("driver = \"sqlite\"\n"), "[sql.orders] has no statements"},
 		"unknown setting":  {section("driver = \"sqlite\"\nreadonly = false\n[sql.orders.statements]\na = \"select 1\"\n"), "I do not know the setting `readonly` in [sql.orders]"},
 		"driver not text":  {section("driver = 3\n[sql.orders.statements]\na = \"select 1\"\n"), "`driver` in [sql.orders] must be a text in quotes"},
@@ -384,5 +384,28 @@ func TestTheCeilingOfCodecIsASetting(t *testing.T) {
 	}
 	if shown := problemText(t, Default().apply("metagente.toml", "[limits]\nmax_data_bytes = 0\n")); !strings.Contains(shown, "max_data_bytes") {
 		t.Errorf("shown:\n%s", shown)
+	}
+}
+
+func TestSQLServerAndOracleHaveTheirOwnPortsAndOracleTrustsTheComputer(t *testing.T) {
+	section := func(driver, extra string) string {
+		return "[sql.db]\ndriver = \"" + driver + "\"\nhost = \"h\"\ndatabase = \"d\"\nuser = \"u\"\n" + extra +
+			"[sql.db.statements]\na = \"select 1\"\n"
+	}
+	for driver, port := range map[string]int{"sqlserver": 1433, "oracle": 1521} {
+		cfg := Default()
+		if err := cfg.apply("metagente.toml", section(driver, "")); err != nil {
+			t.Fatalf("%s: %v", driver, err)
+		}
+		if got := cfg.SQL["db"]; got.Port != port || got.TLS != TLSVerify {
+			t.Errorf("%s: port %d, tls %q", driver, got.Port, got.TLS)
+		}
+	}
+	if err := Default().apply("metagente.toml", section("sqlserver", "ca_file = \"ca.pem\"\n")); err != nil {
+		t.Errorf("ca_file for SQL Server: %v", err)
+	}
+	shown := problemText(t, Default().apply("metagente.toml", section("oracle", "ca_file = \"ca.pem\"\n")))
+	if !strings.Contains(shown, "ca_file in [sql.db] is not for Oracle") {
+		t.Errorf("ca_file for Oracle: %s", shown)
 	}
 }

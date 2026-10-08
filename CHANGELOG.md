@@ -9,6 +9,11 @@ minor versions.
 
 ### Added
 
+- `tool … from sql` reads and writes SQL Server (`driver = "sqlserver"`) and Oracle (`driver = "oracle"`) too, with
+  drivers written in Go (no client to install). Statements are written in the dialect of each database; Oracle
+  asks for a read only transaction before each read, and SQL Server, which has none, relies on the rights of the
+  user. They have build tags that leave them out (`-tags nosqlserver`, `-tags nooracle`), and tests against real
+  servers in `integration/`.
 - `samples/async-elt`, the sweeper (phase 4 of `docs/design-async-elt.md`): `sweeper.ag`, run from time to time, which
   heals a job that lost an event and tells the team what needs a person. It posts alerts to a webhook once for each
   cause (a job paused by a brake, rows that do not add up, a budget at 80 percent, a batch stopped, an event refused,
