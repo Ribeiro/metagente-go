@@ -307,7 +307,7 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 		disturbed.Add(1)
 		go func() {
 			defer disturbed.Done()
-			p.disturb(t, r, res, dest, nats, crew, batches, stop)
+			p.disturb(t, res, dest, nats, crew, batches, stop)
 		}()
 	}
 
@@ -340,7 +340,8 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 }
 
 // disturb waits until a share of the batches is done and then does the harm of the run.
-func (p *pilot) disturb(t *testing.T, r pilotRun, res *pilotResult, dest server, nats natsServer, crew *fleet, batches int, stop <-chan struct{}) {
+func (p *pilot) disturb(t *testing.T, res *pilotResult, dest server, nats natsServer, crew *fleet, batches int, stop <-chan struct{}) {
+	r := res.run
 	enough := batches / 4
 	if r.kill {
 		enough = batches / 3
