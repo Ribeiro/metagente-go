@@ -414,8 +414,9 @@ The questions that were open in the first draft, with what was decided. The item
 are proposals until the owner of data protection of the organization confirms them.
 
 Reported by the maintainer on 2026-10-08: the team accepts personal data inside the broker, which is the
-premise of the batch event in section 5. The rest of items 2 and 3 (the model step, and the retention
-times) is still to be confirmed.
+premise of the batch event in section 5. Also by the maintainer on 2026-10-08: for now no personal data has
+to be masked or pseudonymized (item 2), and the retention times of item 3 are accepted, as long as each one
+can be configured. Both stay open for the owner of data protection of the organization to confirm.
 
 1. **What is a failure that can pass, and one that cannot?** *Decided.* The runtime classifies by where
    the error comes from. Infrastructure (a timeout, a connection, the destination or the broker down, the
@@ -425,14 +426,18 @@ times) is still to be confirmed.
    business that stopped the batch; the optional mark `retry` asks for a new try: `fail "message" retry`, or
    `fail "message" retry in 60 seconds` to suggest the wait (section 13). Every new try has a maximum
    number of deliveries, so none goes on forever.
-2. **Personal data in the model step.** *Decided as a proposal, to confirm.* Nothing goes to the model
-   unless it is allowed, column by column: the job lists the columns, already masked. If they still
-   hold personal data, a provider with a suitable contract, or a server of your own. Each batch records,
+2. **Personal data in the model step.** *Decided by the maintainer, to confirm.* Nothing goes to the model
+   unless it is allowed, column by column: the job lists the columns. For now they need not be masked or
+   pseudonymized, so they may carry personal data as they are: use a provider with a suitable contract
+   (no training with the data, no retention), or a server of your own. Each batch records,
    without content, the columns, the provider and the version of the model. The first pilot uses
    synthetic or masked data. This also involves the owner of data protection, not only engineering.
-3. **Retention.** *Decided as a proposal, to confirm.* Short and each with a reason: broker 7 days, dead
-   letters 14 days, staging 7 days after the end of the job, control tables 1 year (section 10). The time
-   to answer a request to erase data has to be longer than the retention.
+3. **Retention.** *Accepted by the maintainer, to confirm; each time has to be configurable.* Short and each
+   with a reason: broker 7 days, dead letters 14 days, staging 7 days after the end of the job, control tables
+   1 year (section 10). These are the values to start with, not fixed ones: the age of the stream is set
+   when the operator makes it (`--max-age`), the staging purge takes the number of days in its message, and
+   whatever is added to purge the control tables takes its time the same way. The time to answer a request
+   to erase data has to be longer than the retention.
 4. **Bad rows.** *Decided.* Quarantine and go on, with a brake: if more than a share of a batch (20% to
    start) is rejected, the batch fails; if several do, the job pauses. A high rate of rejection is
    usually a change in the source, not a few bad rows.

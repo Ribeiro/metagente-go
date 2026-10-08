@@ -228,7 +228,13 @@ reason, never content). Publish the data again with a new id to the same subject
 source. A fix of the data in staging, or of the rules in `metagente.toml`, comes first.
 
 **The staging table** holds the rows as the Extractor masked them, so `purge` deletes the batches that were
-done more than N days ago. Keep it short (the design proposes 7 days after the end of the job).
+done more than N days ago. Keep it short (the design starts with 7 days after the end of the job). The number of
+days is in the message `purge`, so each project chooses its own.
+
+**Retention, where each time is set** (the values to start with are in the design, and none is fixed):
+the broker, with `--max-age` when the stream `ETL` is made (7 days); the dead letters, with `--max-age` on their
+stream (14 days); the staging table, with the days of `purge` (7 days after the job ends); the control tables hold
+no personal data and have no purge yet (the design says 1 year).
 
 **A PostgreSQL destination:** make the tables with `migrations/destination.postgres.sql`, put the password in
 the variable `DEST_DB_PASSWORD`, and run the commands above with `--config metagente.postgres.toml`. The file
