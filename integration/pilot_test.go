@@ -152,6 +152,15 @@ func (f *fleet) killOne() {
 	}
 }
 
+// killAll ends the Workers that are running.
+func (f *fleet) killAll() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, w := range f.procs {
+		_ = w.cmd.Process.Kill()
+	}
+}
+
 // wait waits until every Worker has left. When the run takes longer than it should, the Workers are killed and the answer
 // is false.
 func (f *fleet) wait(ctx context.Context) bool {
@@ -338,21 +347,27 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 		crew.add()
 	}
 
-	stop := make(chan struct{})
-	var disturbed sync.WaitGroup
-	if r.kill || r.freezeDest || r.freezeBroker {
-		disturbed.Add(1)
-		go func() {
-			defer disturbed.Done()
-			p.disturb(t, res, dest, nats, crew, batches, stop)
-		}()
-	}
-
 	// No run may take for ever: past this time the Extractor and the Workers are stopped and the run fails, with the rest
 	// of the report still written.
 	limit := 5*time.Minute + time.Duration(p.rows/100)*time.Second + 3*p.pause
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
+
+	var helpers sync.WaitGroup
+	if r.kill || r.freezeDest || r.freezeBroker {
+		helpers.Add(1)
+		go func() {
+			defer helpers.Done()
+			p.disturb(ctx, t, res, dest, nats, crew, batches)
+		}()
+	}
+	if r.badPercent > 20 {
+		helpers.Add(1)
+		go func() {
+			defer helpers.Done()
+			p.stopWhenPaused(ctx, dest, crew)
+		}()
+	}
 
 	// The Extractor starts again where it stopped, the way an operator would, when the broker was away.
 	started := time.Now()
@@ -366,15 +381,18 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 		time.Sleep(2 * time.Second)
 	}
 	res.extractSeconds = time.Since(started).Seconds()
-	close(stop)
-	disturbed.Wait()
 	if err != nil {
+		cancel()
+		helpers.Wait()
 		res.problem("the Extractor did not finish (%d restarts): %v\n%s", res.extractRestarts, err, out)
 		return res
 	}
 	if !strings.Contains(out, fmt.Sprintf("%d rows", p.rows)) {
 		res.problem("the Extractor says %q, and the source has %d rows", strings.TrimSpace(out), p.rows)
 	}
+	// The harm of the run goes on while the Workers work, which is after the Extractor is done, and it is over before the
+	// Workers are waited for: a Worker that the harm starts must be one of those that are waited for.
+	helpers.Wait()
 	if !crew.wait(ctx) {
 		res.problem("the Workers were still working after %s: they were stopped", limit)
 	}
@@ -384,8 +402,16 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 	return res
 }
 
-// disturb waits until a share of the batches is done and then does the harm of the run.
-func (p *pilot) disturb(t *testing.T, res *pilotResult, dest server, nats natsServer, crew *fleet, batches int, stop <-chan struct{}) {
+// doneBatches says how many batches the destination has finished.
+func doneBatches(dest server) (int, error) {
+	out, err := dest.psql("SELECT count(*) FROM etl_batches WHERE state = 'done'")
+	n, _ := strconv.Atoi(out)
+	return n, err
+}
+
+// disturb waits until a share of the batches is done and then does the harm of the run. If every batch is done before that,
+// there is nothing left to harm, and the run is told so.
+func (p *pilot) disturb(ctx context.Context, t *testing.T, res *pilotResult, dest server, nats natsServer, crew *fleet, batches int) {
 	r := res.run
 	enough := batches / 4
 	if r.kill {
@@ -394,17 +420,22 @@ func (p *pilot) disturb(t *testing.T, res *pilotResult, dest server, nats natsSe
 	if enough < 1 {
 		enough = 1
 	}
-wait:
 	for {
 		select {
-		case <-stop:
-			t.Logf("the run ended before %d batches were done, so nothing was disturbed", enough)
+		case <-ctx.Done():
 			return
 		case <-time.After(200 * time.Millisecond):
 		}
-		out, err := dest.psql("SELECT count(*) FROM etl_batches WHERE state = 'done'")
-		if n, _ := strconv.Atoi(out); err == nil && n >= enough {
-			break wait
+		n, err := doneBatches(dest)
+		if err != nil {
+			continue
+		}
+		if n >= batches {
+			t.Logf("all %d batches were done before the harm could be done", batches)
+			return
+		}
+		if n >= enough {
+			break
 		}
 	}
 	switch {
@@ -418,6 +449,26 @@ wait:
 		freeze(t, nats.ctr, p.pause)
 	}
 	res.harmed = true
+}
+
+// stopWhenPaused ends the Workers a few seconds after the job is paused: the batches that wait for the job to be resumed
+// are asked for again in an hour, so the Workers would never be idle and would never leave.
+func (p *pilot) stopWhenPaused(ctx context.Context, dest server, crew *fleet) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+		if out, err := dest.psql("SELECT count(*) FROM etl_jobs WHERE state = 'paused'"); err == nil && out == "1" {
+			select {
+			case <-ctx.Done():
+			case <-time.After(3 * time.Second):
+			}
+			crew.killAll()
+			return
+		}
+	}
 }
 
 // close sends the control event to the Worker that closes the job, and waits for it to be taken.
