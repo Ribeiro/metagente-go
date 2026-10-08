@@ -58,7 +58,7 @@ func TestAProblemInAConnectionIsToldWithTheLineOfItsSection(t *testing.T) {
 	}
 	for name, c := range map[string]struct{ text, want string }{
 		"no driver":        {section("path = \"a.db\"\n[sql.orders.statements]\na = \"select 1\"\n"), "[sql.orders] needs a driver"},
-		"another driver":   {section("driver = \"postgres\"\n[sql.orders.statements]\na = \"select 1\"\n"), "names the driver `postgres`, which this version does not have"},
+		"another driver":   {section("driver = \"oracle\"\n[sql.orders.statements]\na = \"select 1\"\n"), "names the driver `oracle`, which this version does not have"},
 		"no statements":    {section("driver = \"sqlite\"\n"), "[sql.orders] has no statements"},
 		"unknown setting":  {section("driver = \"sqlite\"\nreadonly = false\n[sql.orders.statements]\na = \"select 1\"\n"), "I do not know the setting `readonly` in [sql.orders]"},
 		"driver not text":  {section("driver = 3\n[sql.orders.statements]\na = \"select 1\"\n"), "`driver` in [sql.orders] must be a text in quotes"},
@@ -130,5 +130,75 @@ func TestTheCeilingsOfADatabaseAnswerAreSettings(t *testing.T) {
 	shown := problemText(t, Default().apply("metagente.toml", "[limits]\nmax_sql_rows = 0\n"))
 	if !strings.Contains(shown, "`max_sql_rows` in [limits] must be a whole number of at least 1") {
 		t.Errorf("shown:\n%s", shown)
+	}
+}
+
+const networkSQL = `
+[sql.pg]
+driver = "postgres"
+host = "db.example.com"
+database = "orders"
+user = "reader"
+statements = { one = "select 1" }
+
+[sql.my]
+driver = "mariadb"
+host = "10.0.0.7"
+port = 3307
+database = "orders"
+user = "reader"
+tls = "require"
+statements = { one = "select 1" }
+
+[sql.verified]
+driver = "mysql"
+host = "db.example.com"
+database = "orders"
+user = "reader"
+ca_file = "certs/ca.pem"
+statements = { one = "select 1" }
+`
+
+func TestNetworkDatabasesHaveTheirPortAndTLSFilledIn(t *testing.T) {
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", networkSQL); err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	pg, my, verified := cfg.SQL["pg"], cfg.SQL["my"], cfg.SQL["verified"]
+	if pg.Port != 5432 || pg.TLS != TLSVerify || pg.User != "reader" || pg.Host != "db.example.com" {
+		t.Errorf("pg = %+v", pg)
+	}
+	if my.Port != 3307 || my.TLS != TLSRequire {
+		t.Errorf("my = %+v", my)
+	}
+	if verified.Port != 3306 || verified.TLS != TLSVerify || verified.CAFile != "certs/ca.pem" {
+		t.Errorf("verified = %+v", verified)
+	}
+}
+
+func TestAProblemInANetworkConnectionIsTold(t *testing.T) {
+	const statements = "statements = { one = \"select 1\" }\n"
+	section := func(body string) string { return "[runtime]\ntimeout_seconds = 30\n\n[sql.db]\n" + body + statements }
+	for name, c := range map[string]struct{ text, want string }{
+		"no host":          {section("driver = \"postgres\"\ndatabase = \"a\"\nuser = \"u\"\n"), "needs a host, a database and a user"},
+		"no user":          {section("driver = \"mysql\"\nhost = \"h\"\ndatabase = \"a\"\n"), "needs a host, a database and a user"},
+		"a path":           {section("driver = \"postgres\"\npath = \"x.db\"\nhost = \"h\"\ndatabase = \"a\"\nuser = \"u\"\n"), "has no path"},
+		"a port in a host": {section("driver = \"postgres\"\nhost = \"h:5432\"\ndatabase = \"a\"\nuser = \"u\"\n"), "signs that do not belong"},
+		"a host as a url":  {section("driver = \"postgres\"\nhost = \"a@h\"\ndatabase = \"a\"\nuser = \"u\"\n"), "signs that do not belong"},
+		"a bad tls":        {section("driver = \"postgres\"\nhost = \"h\"\ndatabase = \"a\"\nuser = \"u\"\ntls = \"maybe\"\n"), "has to be verify, require or disable"},
+		"ca without tls":   {section("driver = \"postgres\"\nhost = \"h\"\ndatabase = \"a\"\nuser = \"u\"\ntls = \"require\"\nca_file = \"a.pem\"\n"), "only means something with tls"},
+		"a bad port":       {section("driver = \"postgres\"\nhost = \"h\"\nport = 70000\ndatabase = \"a\"\nuser = \"u\"\n"), "whole number from 1 to 65535"},
+		"a port in text":   {section("driver = \"postgres\"\nhost = \"h\"\nport = \"5432\"\ndatabase = \"a\"\nuser = \"u\"\n"), "whole number from 1 to 65535"},
+		"a password":       {section("driver = \"postgres\"\nhost = \"h\"\ndatabase = \"a\"\nuser = \"u\"\npassword = \"x\"\n"), "I do not know the setting `password`"},
+		"sqlite with host": {section("driver = \"sqlite\"\npath = \"a.db\"\nhost = \"h\"\n"), "is a SQLite database"},
+	} {
+		err := Default().apply("metagente.toml", c.text)
+		if err == nil {
+			t.Errorf("%s: no problem", name)
+			continue
+		}
+		if shown := problemText(t, err); !strings.Contains(shown, c.want) {
+			t.Errorf("%s: missing %q in:\n%s", name, c.want, shown)
+		}
 	}
 }

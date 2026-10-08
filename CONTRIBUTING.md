@@ -3,7 +3,8 @@
 ## What is needed
 
 Go 1.26 or newer, and `make`. `make check` runs what the CI runs: the format, `go vet`, the tests, the
-tests with `-race` of the packages that run things at the same time, and the tests of the binary.
+tests with `-race` of the packages that run things at the same time, and the tests of the binary. `make integration` runs the tests that start real databases in containers (Docker
+or Podman); they are skipped when there is no container runtime.
 
 ## The rules of this project
 

@@ -1,4 +1,4 @@
-.PHONY: all fmt fmtcheck vet test race acceptance check characterize characterize-cover version build dist
+.PHONY: all fmt fmtcheck vet test race acceptance integration check characterize characterize-cover version build dist
 
 all: fmt vet test
 
@@ -25,6 +25,11 @@ race:
 # The binary, through the scripts of testdata/script. Behind a build tag.
 acceptance:
 	go test -tags acceptance ./internal/acceptance/...
+
+# The tests that start real services in containers (Testcontainers; section 16 of docs/design-async-elt.md).
+# They need Docker or Podman and are not part of `make check`; without a container runtime they are skipped.
+integration:
+	cd integration && go test -tags integration -count=1 ./...
 
 # Everything, in the order that stops soonest.
 check: fmtcheck vet test race acceptance

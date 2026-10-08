@@ -76,9 +76,13 @@ jobs:
             exit 1
           fi
       - name: go.mod and go.sum are tidy
-        run: go mod tidy -diff
+        run: |
+          go mod tidy -diff
+          (cd integration && go mod tidy -diff)
       - name: go vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          (cd integration && go vet -tags integration ./...)
       # The vulnerabilities known in the standard library and in the modules, that the code reaches. The
       # version of Go comes from the toolchain line of go.mod: a new fix of Go turns this red until it is
       # raised there.
@@ -120,11 +124,14 @@ jobs:
         run: go build ./...
       - name: Unit tests
         run: go test -count=1 ${{ matrix.race && '-race' || '' }} ./...
-      - name: Without the SQLite driver (-tags nosqlite)
+      # The drivers of the databases are behind build tags that leave them out, one by one and all together.
+      - name: Without the drivers of the databases (-tags nosqlite, nopostgres, nomysql)
         if: ${{ matrix.os == 'ubuntu-24.04' }}
         run: |
-          go vet -tags nosqlite ./...
-          go test -count=1 -tags nosqlite ./internal/tools ./internal/config ./internal/lang
+          for tags in nosqlite nopostgres nomysql nosqlite,nopostgres,nomysql; do
+            go vet -tags "$tags" ./...
+            go test -count=1 -tags "$tags" ./internal/tools ./internal/config ./internal/lang
+          done
       - name: Acceptance tests (the binary, through the scripts of testdata/script)
         run: go test -count=1 -tags acceptance ./internal/acceptance/...
       # A green job does not say what it did not run. Where the tests skip themselves (the links between
@@ -141,6 +148,25 @@ jobs:
       - name: Binaries for every system
         if: ${{ matrix.os == 'ubuntu-24.04' }}
         run: make dist VERSION=0.0.0-ci
+
+  # The tests that start real databases in containers (Testcontainers), through the program as it is
+  # built. The images are pinned by digest in integration/sql_test.go; they are pulled from the mirror of
+  # Google so that the limit of pulls of Docker Hub does not stop a run.
+  integration:
+    name: Integration (containers)
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      METAGENTE_IT_REGISTRY: mirror.gcr.io/
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Tests with PostgreSQL, MariaDB and MySQL
+        run: make integration
 
   # macOS: once a week and on request; in a public repository, at every change too. It is the system of
   # the computer where the program is written, so it is the one that is already tested at every change.
@@ -204,7 +230,7 @@ jobs:
   # A test that failed or was cancelled makes it red. macOS counts only when it ran.
   ci-passed:
     name: CI passed
-    needs: [changes, lint, test, test-macos]
+    needs: [changes, lint, test, test-macos, integration]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
