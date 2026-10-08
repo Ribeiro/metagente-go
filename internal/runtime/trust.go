@@ -44,7 +44,7 @@ func (w *needsWalk) visit(list []*lang.AgentDef) {
 		fresh = append(fresh, agent)
 		w.thinks = w.thinks || lang.UsesThink(agent)
 	}
-	w.lists = append(w.lists, trust.NeedsOfWith(fresh, w.rt.Config.Credentials), w.rt.sqlNeeds(fresh))
+	w.lists = append(w.lists, trust.NeedsOfWith(fresh, w.rt.Config.Credentials), w.rt.sqlNeeds(fresh), w.rt.brokerNeeds(fresh))
 	for _, agent := range fresh {
 		for _, decl := range agent.Links {
 			target, err := w.rt.Linker.Resolve(w.rt.Config.Root, agent, decl.Name, decl.Path, decl.HasPath)
@@ -175,6 +175,44 @@ func (rt *Runtime) allowSQL(spec tools.SQLSpec) error {
 	return diag.Newf("the database of `%s` has not been approved for this project", spec.Tool).
 		AddRelated(item.Describe()).
 		Fix("read what it reads, and approve it with: metagente trust FILE.ag")
+}
+
+// brokerItem is the approval of a message broker: where it is and the subjects that may be published to.
+func brokerItem(spec tools.BrokerSpec) trust.Item {
+	return trust.BrokerItem(spec.Driver, spec.Target, spec.Connection, spec.Subjects, spec.Fingerprint).
+		WithCredential(spec.Credential)
+}
+
+// brokerNeeds lists the brokers the agents publish to. A broker that is not in the configuration is left
+// out: the agent says so when it is set up.
+func (rt *Runtime) brokerNeeds(agents []*lang.AgentDef) []trust.Item {
+	var items []trust.Item
+	for _, agent := range agents {
+		for _, decl := range agent.Tools {
+			if decl.Kind != lang.ToolBroker {
+				continue
+			}
+			if spec, err := tools.BrokerSpecOf(decl, rt.Config.Broker, rt.Config.Credentials); err == nil {
+				items = append(items, brokerItem(spec))
+			}
+		}
+	}
+	return items
+}
+
+// allowBroker is the check a broker makes before it is reached for the first time.
+func (rt *Runtime) allowBroker(spec tools.BrokerSpec) error {
+	item := brokerItem(spec)
+	missing, err := rt.Trust.Missing(rt.Config.Root, []trust.Item{item})
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return diag.Newf("the broker of `%s` has not been approved for this project", spec.Tool).
+		AddRelated(item.Describe()).
+		Fix("read where it publishes, and approve it with: metagente trust FILE.ag")
 }
 
 // allowRemote is the check the pool of remote agents makes before it reaches an

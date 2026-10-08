@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Ribeiro/metagente-go/internal/broker"
 	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
@@ -434,6 +435,34 @@ func (w *walker) call(call *CallExpr, vars map[string]bool) {
 	}
 	w.missingValues(call, info)
 	w.unexpectedValues(call, info)
+	if tool.Kind == ToolBroker {
+		w.publishSubject(call, tool)
+	}
+}
+
+// publishSubject refuses a subject written in the call that the tool did not declare. A subject that is
+// built from values is only known when the agent runs, and the run checks it again.
+func (w *walker) publishSubject(call *CallExpr, tool *ToolDecl) {
+	for _, arg := range call.Args {
+		text, ok := arg.Value.(*TextExpr)
+		if arg.Key != "subject" || !ok {
+			continue
+		}
+		var subject strings.Builder
+		for _, part := range text.Parts {
+			if part.IsVar {
+				return
+			}
+			subject.WriteString(part.Lit)
+		}
+		for _, pattern := range tool.Allow {
+			if broker.Matches(pattern, subject.String()) {
+				return
+			}
+		}
+		w.add(w.at(call.Span, fmt.Sprintf("the tool `%s` may not publish to `%s`", tool.Name, subject.String())).
+			Fixf("it declared: %s; add the subject after `publish` in the tool line", strings.Join(tool.Allow, ", ")))
+	}
 }
 
 // undeclaredTarget refuses a call to a name that was never declared, with the same words the

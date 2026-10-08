@@ -79,6 +79,7 @@ const (
 	ToolEnv
 	ToolMCP
 	ToolSQL
+	ToolBroker
 )
 
 // ToolDecl is one `tool` line.
@@ -95,14 +96,15 @@ type ToolDecl struct {
 	// EnvNames are the variables `tool env "A" "B"` may read.
 	EnvNames []string
 	// Command is the command or address of `tool x from mcp "..."`, or the name of the connection of
-	// `tool x from sql "..."` (see ConnectionName).
+	// `tool x from sql "..."` and `tool x from broker "..."` (see ConnectionName).
 	Command string
 	// MCPEnv are the extra variables passed to the tool server
 	// (`... from mcp "cmd" env "A"`, requirement E1).
 	MCPEnv []string
 	// ReadOnly removes the actions that change things (requirement L7).
 	ReadOnly bool
-	// Allow lists the domains `tool http allow "..."` may reach (requirement H2).
+	// Allow lists the domains `tool http allow "..."` may reach (requirement H2), or the subjects that
+	// `tool x from broker "..." publish "..."` may publish to.
 	Allow []string
 	// AllowPrivate is `tool http allow private`.
 	AllowPrivate bool

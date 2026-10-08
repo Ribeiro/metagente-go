@@ -202,3 +202,70 @@ func TestAProblemInANetworkConnectionIsTold(t *testing.T) {
 		}
 	}
 }
+
+const brokerTOML = `
+[credentials]
+events = "BROKER_PASSWORD"
+
+[broker.main]
+driver = "jetstream"
+url = "tls://broker.example.com:4222"
+user = "etl"
+stream = "ETL"
+ca_file = "certs/ca.pem"
+
+[broker.local]
+driver = "jetstream"
+url = "nats://127.0.0.1:4222"
+tls = "disable"
+
+[broker.memory]
+driver = "memory"
+`
+
+func TestBrokersAreReadWithTheirTLSFilledIn(t *testing.T) {
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", brokerTOML+"\n[limits]\nmax_broker_bytes = 4096\n"); err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	main, local, memory := cfg.Broker["main"], cfg.Broker["local"], cfg.Broker["memory"]
+	if main.TLS != TLSVerify || main.User != "etl" || main.Stream != "ETL" || main.CAFile != "certs/ca.pem" || main.URL != "tls://broker.example.com:4222" {
+		t.Errorf("main = %+v", main)
+	}
+	if local.TLS != TLSDisable || memory == nil || memory.Driver != "memory" || cfg.Limits.MaxBrokerBytes != 4096 {
+		t.Errorf("local = %+v, memory = %+v, limit = %d", local, memory, cfg.Limits.MaxBrokerBytes)
+	}
+	if Default().Limits.MaxBrokerBytes != 1<<20 {
+		t.Errorf("default limit = %d", Default().Limits.MaxBrokerBytes)
+	}
+}
+
+func TestAProblemInABrokerIsTold(t *testing.T) {
+	section := func(body string) string { return "[runtime]\ntimeout_seconds = 30\n\n[broker.main]\n" + body }
+	for name, c := range map[string]struct{ text, want string }{
+		"no driver":       {section("url = \"nats://h:4222\"\n"), "needs a driver"},
+		"another driver":  {section("driver = \"kafka\"\nurl = \"nats://h:4222\"\n"), "names the driver `kafka`"},
+		"no url":          {section("driver = \"jetstream\"\n"), "needs a url"},
+		"not a url":       {section("driver = \"jetstream\"\nurl = \"broker\"\n"), "not an address of a NATS server"},
+		"a http url":      {section("driver = \"jetstream\"\nurl = \"http://h:4222\"\n"), "not an address of a NATS server"},
+		"a password":      {section("driver = \"jetstream\"\nurl = \"nats://ana:secret@h:4222\"\n"), "has a user or a password in it"},
+		"a path":          {section("driver = \"jetstream\"\nurl = \"nats://h:4222/x\"\n"), "more than the address"},
+		"a bad stream":    {section("driver = \"jetstream\"\nurl = \"nats://h:4222\"\nstream = \"a.b\"\n"), "not the name of a stream"},
+		"a bad tls":       {section("driver = \"jetstream\"\nurl = \"nats://h:4222\"\ntls = \"maybe\"\n"), "has to be verify, require or disable"},
+		"ca without tls":  {section("driver = \"jetstream\"\nurl = \"nats://h:4222\"\ntls = \"require\"\nca_file = \"a.pem\"\n"), "only means something"},
+		"a password key":  {section("driver = \"jetstream\"\nurl = \"nats://h:4222\"\npassword = \"x\"\n"), "I do not know the setting `password`"},
+		"memory with url": {section("driver = \"memory\"\nurl = \"nats://h:4222\"\n"), "is a broker in memory"},
+		"not a section":   {"[broker]\ndriver = \"jetstream\"\n", "`driver` in [broker] must be a section of its own"},
+		"a bad name":      {"[broker.\"two words\"]\ndriver = \"memory\"\n", "is not a name for a connection"},
+		"url not text":    {section("driver = \"jetstream\"\nurl = 7\n"), "`url` in [broker.main] must be a text"},
+	} {
+		err := Default().apply("metagente.toml", c.text)
+		if err == nil {
+			t.Errorf("%s: no problem", name)
+			continue
+		}
+		if shown := problemText(t, err); !strings.Contains(shown, c.want) {
+			t.Errorf("%s: missing %q in:\n%s", name, c.want, shown)
+		}
+	}
+}

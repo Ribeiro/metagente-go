@@ -224,6 +224,9 @@ metagente run my-agent.ag    # an agent with `tool http`
   program or connects to an address runs before the person approved it, for this
   project. `run` asks when there is a terminal and refuses when there is not.
 - The built in tools: `file`, `http`, `env`, `state`, `clock`.
+- `tool events from broker "main" publish "etl.>"`: publishes messages to a JetStream broker, only to the
+  subjects the agent declared, each with an id that lets the broker drop a copy; approved by
+  `metagente trust`. See `docs/LANGUAGE.md`.
 - `tool orders from sql "orders-db"`: reads a database (SQLite, PostgreSQL, MySQL, MariaDB) with named, parameterized
   `SELECT` statements written in `[sql.orders-db]` of `metagente.toml`; read only, with limits, approved
   by `metagente trust`. See `docs/LANGUAGE.md`.

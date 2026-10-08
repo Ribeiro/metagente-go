@@ -43,6 +43,10 @@ var builtinTable = map[ToolKind][]ActionInfo{
 		{Name: "get", Description: "Recall a value",
 			Params: []ParamInfo{{"key", true}}},
 	},
+	ToolBroker: {
+		{Name: "publish", Description: "Publish a message to a subject of the broker, with an id that makes a copy recognizable",
+			Params: []ParamInfo{{"subject", true}, {"id", true}, {"data", true}}, Mutates: true},
+	},
 	ToolClock: {
 		{Name: "now", Description: "The current date and time"},
 		{Name: "wait", Description: "Wait for a number of seconds",

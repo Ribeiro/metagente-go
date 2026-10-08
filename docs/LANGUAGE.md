@@ -27,6 +27,7 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `allow` | the domains `tool http` may reach, or `allow private` | [tool](#tool) |
 | `and` | both are true | [Conditions](#conditions) |
 | `at` | the address of a `remote` | [remote](#remote) |
+| `broker` | a message broker: `tool name from broker "connection" publish "subject"` | [A message broker](#a-message-broker-tool-from-broker) |
 | `clock.now`, `clock.wait` | the time, and waiting | [tool](#tool) |
 | `contains` | a text has a piece, or a list has an item | [Conditions](#conditions) |
 | `env` | `tool env "NAME"`, or the variables given to a tool server | [tool](#tool) |
@@ -48,6 +49,7 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `on`, `on start` | the lines to run for a message, or once at the start | [on](#on) |
 | `or` | at least one is true | [Conditions](#conditions) |
 | `private` | `tool http allow private` | [tool](#tool) |
+| `publish` | `tool name from broker "..." publish "subject"`, and `name.publish` | [A message broker](#a-message-broker-tool-from-broker) |
 | `readonly` | only the actions that change nothing | [tool](#tool) |
 | `remote` | an agent served somewhere else (A2A) | [remote](#remote) |
 | `repeat while` | repeats lines while a condition is true | [repeat](#repeat) |
@@ -160,6 +162,7 @@ The tools an agent may use. An agent can only call what it declared.
 | `tool search from mcp "https://mcp.example.com/mcp"` | a tool server at that address |
 | `tool weather from mcp "..." env "HTTPS_PROXY"` | give the program these variables too |
 | `tool weather from mcp "..." readonly` | only the actions that the server marks as read only |
+| `tool events from broker "main" publish "etl.>"` | publish to a message broker, only to those subjects (see [A message broker](#a-message-broker-tool-from-broker)) |
 | `tool orders from sql "orders-db"` | read a database, with the statements that `[sql.orders-db]` of `metagente.toml` names (see [A database](#a-database-tool-from-sql)) |
 
 The clauses of `http` (`allow`, `readonly`) and of a tool server (`env`, `readonly`) may come in any
@@ -275,6 +278,62 @@ next_page = "SELECT id, customer FROM orders WHERE id > :after ORDER BY id LIMIT
 - Host, port, database, user and TLS are what `metagente trust` shows and approves, with the statements.
 - `result = "value"` and the like work the same in every database. What the server sends as a decimal
   (`numeric`, `DECIMAL`), as a UUID or as JSON comes as text; a `datetime` as text in RFC 3339 in UTC.
+
+### A message broker (`tool from broker`)
+
+`tool events from broker "main" publish "etl.orders.batch"` lets the agent publish messages to a message
+broker (JetStream, a NATS server with persistence). The broker is described in `metagente.toml`, in a
+`[broker.main]` section, and the agent can publish **only to the subjects it wrote after `publish`**, as
+`tool http allow` does for sites. A `*` stands for any one name of a subject and a `>` at the end for all
+the names that follow: `"etl.*.batch"`, `"etl.>"`.
+
+```toml
+[credentials]
+events = "BROKER_PASSWORD"            # the password (or the token, with no user), from the environment
+
+[broker.main]
+driver  = "jetstream"                 # or "memory", see below
+url     = "tls://broker.example.com:4222"
+user    = "etl"                       # optional; with no user, the secret is a token
+tls     = "verify"                    # optional: "verify" (the default), "require" or "disable"
+ca_file = "certs/ca.pem"              # optional: the certificates to trust, from the folder of the project
+stream  = "ETL"                       # optional: the stream that has to take what is published
+```
+
+```
+agent Sender
+  goal "Send the batches"
+  tool events from broker "main" publish "etl.orders.batch" "etl.orders.control"
+  accepts go start
+  on go
+    for n in [1, 2, 3]
+      events.publish subject: "etl.orders.batch" id: "job7:{n}" data: [n, "x"]
+    sent = events.publish subject: "etl.orders.control" id: "job7:end" data: "done"
+    reply "the last message is number {sent.seq} of the stream"
+```
+
+- `events.publish subject: ... id: ... data: ...` waits until the broker says that it keeps the message,
+  and gives a record with `stream`, `seq` and `duplicate`. `data` is a text, which goes as it is, or any
+  other value, which goes as JSON.
+- **Every message needs an `id`**, and the same message has to have the same id every time it is sent (for
+  example `job:number`). The broker drops a copy of an id it has seen lately, and says `duplicate: yes`: a
+  server answers "at least once", and this is how the effect happens once. A JetStream stream remembers the
+  ids for its window of duplicates (2 minutes unless the stream says otherwise), so make the window longer
+  than the time between a try and the next.
+- `check` refuses a subject written in the call that the tool did not declare; a subject built from values
+  is checked again when the agent runs.
+- A message may have `max_broker_bytes` (1 MiB) in `[limits]`; a larger one is a problem, and nothing is
+  sent. The server has a limit of its own too (1 MiB unless it is changed). Cut the batches by their size.
+- Metagente does not create streams: they belong to whoever runs the server. A subject that no stream takes
+  is a final failure. A **full stream** (the stream refuses the new messages, so nothing that was not
+  processed is thrown away) and a broker that **cannot be reached** are failures that may pass: they carry
+  the mark of `fail ... retry`, so `metagente consume` and any caller can ask again later.
+- The password never appears in a problem. `tls = "disable"` sends everything in the clear, and belongs
+  only on a computer you trust (`localhost`). Where the broker is, the user, the TLS mode, the stream and
+  the subjects are what `metagente trust` shows and approves; changing any of them asks again.
+- `driver = "memory"` is a broker in the memory of the process, with no url: it serves the tests, and the
+  trying of agents without a server (what is published stays in the memory of the process). A build made with
+  `-tags nojetstream` leaves JetStream out (the releases do not).
 
 The actions of the built in tools:
 
@@ -544,13 +603,14 @@ Words that look like a mistake get a suggestion: `acepts` gets "did you mean `ac
 | turns of a `repeat` | `max_loop_turns` (10000) | `[runtime]` |
 | a file read or written | `max_file_bytes` (1 MiB) | `[limits]` |
 | an answer of `http` | `max_http_bytes` (5 MiB) | `[limits]` |
+| a message to a broker | `max_broker_bytes` (1 MiB) | `[limits]` |
 | an answer of `sql` | `max_sql_rows` (10000), `max_sql_bytes` (5 MiB) | `[limits]` |
 | what `state` keeps in a conversation | `max_state_entries` (1000), `max_state_bytes` (256 KiB) | `[limits]` |
 | what a tool gives to `think` | `max_tool_result_bytes` (32 KiB), cut and marked | `[limits]` |
 
 ## Words the language keeps
 
-`agent`, `goal`, `tool`, `link`, `remote`, `accepts`, `on`, `from`, `mcp`, `sql`, `env`, `at`, `allow`,
+`agent`, `goal`, `tool`, `link`, `remote`, `accepts`, `on`, `from`, `mcp`, `sql`, `broker`, `publish`, `env`, `at`, `allow`,
 `private`, `readonly`, `reply`, `fail`, `if`, `otherwise`, `for`, `in`, `repeat`, `while`, `think`, `using`,
 `within`, `seconds`, `is`, `not`, `more`, `less`, `than`, `contains`, `and`, `or`, `yes`, `no`, `nothing`.
 
@@ -648,12 +708,14 @@ remote        = "remote" NAME "at" TEXT NEWLINE ;
 accepts       = "accepts" NAME { NAME } [ COMMENT ] NEWLINE ;          (* the comment describes it *)
 handler       = "on" NAME NEWLINE block ;                               (* "on start" runs first *)
 
-tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | server_tool | sql_tool ) NEWLINE ;
+tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | server_tool | sql_tool | broker_tool ) NEWLINE ;
 file_tool     = "file" [ TEXT ] { "readonly" } ;
 http_tool     = "http" { "readonly" | "allow" ( "private" | TEXT { TEXT } ) } ;
 env_tool      = "env" TEXT { TEXT } ;
 server_tool   = NAME "from" "mcp" TEXT { "readonly" | "env" TEXT { TEXT } } ;
 sql_tool      = NAME "from" "sql" TEXT ;                            (* TEXT is a name of [sql.NAME] *)
+broker_tool   = NAME "from" "broker" TEXT "publish" TEXT { TEXT } { "publish" TEXT { TEXT } } ;
+                                                     (* the first TEXT is a name of [broker.NAME]; the others are subjects *)
                                                      (* NAME is not file, http, env, state or clock *)
 
 (* The lines of a section *)

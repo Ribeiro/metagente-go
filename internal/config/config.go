@@ -85,6 +85,8 @@ type Limits struct {
 	// problem, not a shorter answer.
 	MaxSQLRows  int
 	MaxSQLBytes int64
+	// MaxBrokerBytes is the most a message to a broker may hold. A larger one is a problem, not a cut message.
+	MaxBrokerBytes int64
 }
 
 // Network is the [network] section: how `tool http` reaches the web where it
@@ -108,6 +110,8 @@ type Config struct {
 	Network Network
 	// SQL are the connections to databases, by the name that `tool x from sql "NAME"` uses.
 	SQL map[string]*SQLConn
+	// Broker are the message brokers, by the name that `tool x from broker "NAME"` uses.
+	Broker map[string]*BrokerConn
 	// Root is the project folder: where metagente.toml was found, or where
 	// Metagente was started.
 	Root string
@@ -161,8 +165,10 @@ func Default() *Config {
 			MaxStateBytes:      256 << 10, // with 1000 conversations, about 250 MiB at most
 			MaxSQLRows:         10000,
 			MaxSQLBytes:        5 << 20,
+			MaxBrokerBytes:     1 << 20,
 		},
-		SQL: map[string]*SQLConn{},
+		SQL:    map[string]*SQLConn{},
+		Broker: map[string]*BrokerConn{},
 	}
 }
 
@@ -283,12 +289,13 @@ var settings = map[string]setter{
 	"limits.max_state_bytes":       setInt64(func(c *Config) *int64 { return &c.Limits.MaxStateBytes }, 1),
 	"limits.max_sql_rows":          setInt(func(c *Config) *int { return &c.Limits.MaxSQLRows }, 1),
 	"limits.max_sql_bytes":         setInt64(func(c *Config) *int64 { return &c.Limits.MaxSQLBytes }, 1),
+	"limits.max_broker_bytes":      setInt64(func(c *Config) *int64 { return &c.Limits.MaxBrokerBytes }, 1),
 
 	"network.http_proxy":          setProxy,
 	"network.http_proxy_auth_env": setEnvName(func(c *Config) *string { return &c.Network.HTTPProxyAuthEnv }),
 }
 
-var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "network": true, "credentials": true, "sql": true}
+var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "network": true, "credentials": true, "sql": true, "broker": true}
 
 // Load reads the configuration for a project started in the folder start.
 // When explicit is not empty, that file is read and nothing is searched.
@@ -408,6 +415,12 @@ func (cfg *Config) apply(name, text string) error {
 		case e.section == "sql":
 			// The key is the name of a connection, and the value is the table under [sql.NAME].
 			if err := cfg.addSQL(name, text, e); err != nil {
+				return err
+			}
+			continue
+		case e.section == "broker":
+			// The same for [broker.NAME].
+			if err := cfg.addBroker(name, text, e); err != nil {
 				return err
 			}
 			continue
