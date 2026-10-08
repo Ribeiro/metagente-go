@@ -1,0 +1,14 @@
+# The source of the Extractor for postgres. Use it in place of the section [sql.source] of metagente.toml (from
+# `[sql.source]` to the line before `# ---- the outbox`), and put the password of the user in [credentials]
+# under the name of the tool: `source = "SOURCE_DB_PASSWORD"`. The user of the source needs only to read.
+# The table is made by migrations/demo-source.postgres.sql here, or is your own: keep the columns and their order.
+[sql.source]
+driver = "postgres"
+host = "db.example.com"
+database = "orders"
+user = "extractor"                # a user that may only read
+
+[sql.source.statements]
+# `document` is masked in the SELECT itself, and `total` is a number of the language in every dialect.
+page = "SELECT id, customer, '***' || right(document, 4) AS document, CAST(total AS double precision) AS total, note FROM orders WHERE id > :after ORDER BY id LIMIT :size"
+range = "SELECT id, customer, '***' || right(document, 4) AS document, CAST(total AS double precision) AS total, note FROM orders WHERE id > :after AND id <= :upto ORDER BY id"

@@ -9,6 +9,10 @@ minor versions.
 
 ### Added
 
+- `samples/async-elt`: the Extractor can read from a PostgreSQL, MySQL, MariaDB, SQL Server or Oracle source too:
+  `sources/source.<database>.toml` is the section `[sql.source]` with `page` and `range` in the dialect of each (the
+  agent does not change), and `migrations/demo-source.<database>.sql` makes the demo orders. Tried against real
+  servers in `integration/`.
 - `tool … from sql`: a connection with `mode = "write"` accepts `MERGE` (PostgreSQL 15+, SQL Server, Oracle). It has to
   have an `ON`, so that it says which rows match; MySQL, MariaDB and SQLite have no `MERGE` and the connection says
   so. SQL Server gets the closing semicolon that it asks for. Tried against real servers in `integration/`.

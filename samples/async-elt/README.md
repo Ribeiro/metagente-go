@@ -275,8 +275,12 @@ The rows may hold personal data, so the sample treats every job as if they did (
 
 - **Another table:** change the two statements `page` and `range` in `metagente.toml` (the same columns, in
   the same order) and `columns` and `table` in `extractor.ag`. The key must be a whole number called `id`.
-- **Another source:** PostgreSQL, MySQL and MariaDB work the same way; the notes at the end of
-  `metagente.toml` say what to change.
+- **Another source:** `sources/source.postgres.toml`, `source.mysql.toml`, `source.mariadb.toml`, `source.sqlserver.toml` and `source.oracle.toml` are the section
+  `[sql.source]` for each of those databases, with `page` and `range` in its dialect (`LIMIT`, `TOP`, `FETCH FIRST`;
+  the document masked in the SELECT; the total as a number). Put the one you need in place of the SQLite section of
+  `metagente.toml`, and the password of its user in `[credentials]` as `source = "SOURCE_DB_PASSWORD"`.
+  `migrations/demo-source.<database>.sql` makes the same 2500 demo orders there (`demo-source.mysql.sql` serves
+  MariaDB too). The user of the source only reads.
 - **The size of a batch:** `size` is the most rows of a page and `bytes` the size the rows aim at. Try 64,
   128, 256 and 512 KiB, and look for the best throughput. The broker takes a message up to `max_broker_bytes`
   (1 MiB) of `[limits]`.
