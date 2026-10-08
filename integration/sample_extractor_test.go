@@ -42,9 +42,9 @@ func databaseSource(t *testing.T, dir, driver string, db server) {
 }
 
 func TestTheExtractorReadsASourceOfEveryDatabase(t *testing.T) {
-	for _, driver := range databases {
+	for _, driver := range append([]string{"mysql", "mariadb"}, databases...) {
 		t.Run(driver, func(t *testing.T) {
-			db := startWith(t, driver, seedFile(t, driver, sampleText(t, "migrations/demo-source."+driver+".sql")))
+			db := startWith(t, driver, seedFile(t, driver, sampleText(t, "migrations/demo-source."+strings.Replace(driver, "mariadb", "mysql", 1)+".sql")))
 			s := startNATS(t)
 			stream := s.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: 1000})
 			dir := s.extractorProject(t)

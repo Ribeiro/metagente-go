@@ -154,8 +154,8 @@ stream = "ETL"                    # a stream that takes etl.> ; it has the limit
 # events = "BROKER_PASSWORD"
 
 # ---- notes ----
-# For a source that is PostgreSQL, SQL Server or Oracle, take the section [sql.source] of sources/source.<database>.toml,
-# with the two statements already written. For MySQL or MariaDB, change [sql.source] to
+# For a source that is PostgreSQL, MySQL, MariaDB, SQL Server or Oracle, take the section [sql.source] of
+# sources/source.<database>.toml, with the two statements already written. To write them yourself, change [sql.source] to
 #
 #   driver = "postgres"
 #   host = "db.example.com"

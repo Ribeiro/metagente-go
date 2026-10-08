@@ -103,7 +103,7 @@ func TestTheSourceOfTheSampleOfEveryDatabaseOffersThePageAndTheRange(t *testing.
 	dir := filepath.Join("..", "..", "samples", "async-elt")
 	base := readSample(t, filepath.Join(dir, "metagente.toml"))
 	want := sourceOf(t, base)
-	for _, name := range []string{"postgres", "sqlserver", "oracle"} {
+	for _, name := range []string{"postgres", "mysql", "mariadb", "sqlserver", "oracle"} {
 		fragment := readSample(t, filepath.Join(dir, "sources", "source."+name+".toml"))
 		start, end := strings.Index(base, "[sql.source]"), strings.Index(base, "# ---- the outbox")
 		text := base[:start] + fragment + "\n" + base[end:] + "\n[credentials]\nsource = \"SOURCE_DB_PASSWORD\"\n"
