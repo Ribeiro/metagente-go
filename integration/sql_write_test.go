@@ -27,7 +27,7 @@ tls = "disable"
 mode = "write"
 
 [sql.db.statements]
-page = "SELECT id, customer, total, big FROM orders WHERE id > :after ORDER BY id LIMIT :size"
+page = %q
 land = { sql = "INSERT INTO landing (job, id, customer) VALUES (:job, :id, :customer)", each = "rows", columns = ["id", "customer"] }
 mark = "INSERT INTO marks (job, state) VALUES (:job, :state)"
 finish = "UPDATE marks SET state = 'done' WHERE job = :job"
@@ -37,7 +37,7 @@ state = { sql = "SELECT state FROM marks WHERE job = :job", result = "value" }
 
 [sql.db.transactions]
 land_batch = ["land", "mark"]
-`, s.driver, s.host, s.port, dbName, dbUser)
+`, s.driver, s.host, s.port, s.database(), s.user(), s.page())
 	agent := `agent Lander
   goal "Land the orders"
   tool dest from sql "db"
@@ -73,7 +73,7 @@ land_batch = ["land", "mark"]
 // A batch is landed with its mark in one transaction, a copy of it is refused without leaving anything
 // behind and without telling what the rows held, and the other statements change what they say.
 func TestAnAgentLandsABatchInOneTransaction(t *testing.T) {
-	for _, driver := range []string{"postgres", "mariadb", "mysql"} {
+	for _, driver := range []string{"postgres", "mariadb", "mysql", "sqlserver", "oracle"} {
 		t.Run(driver, func(t *testing.T) {
 			s := start(t, driver)
 			dir := s.writeProject(t)

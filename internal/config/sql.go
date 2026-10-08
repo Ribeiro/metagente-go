@@ -14,7 +14,7 @@ import (
 // SQLDrivers are the databases that a [sql.NAME] section may name. Whether a build can open one of
 // them is another matter: a build made with -tags nosqlite cannot open SQLite. MariaDB speaks the
 // protocol of MySQL, and has its own name here only so that the file says what it is.
-var SQLDrivers = []string{"sqlite", "postgres", "mysql", "mariadb"}
+var SQLDrivers = []string{"sqlite", "postgres", "mysql", "mariadb", "sqlserver", "oracle"}
 
 // IsNetworkDriver says whether the database of a driver is reached over the network, with a host, a
 // port and a user, and not as a file.
@@ -247,6 +247,10 @@ func (c *SQLConn) checkPlace(fail func(string, ...any) *diag.Diagnostic, where s
 		return fail("tls in %s is `%s`, and it has to be %s, %s or %s", where, c.TLS, TLSVerify, TLSRequire, TLSDisable).
 			Fix("remove it to have the default, " + TLSVerify)
 	}
+	if c.CAFile != "" && c.Driver == "oracle" {
+		return fail("ca_file in %s is not for Oracle, which trusts the certificates of this computer", where).
+			Fix("remove it, and put the certificate of your authority among those of the computer")
+	}
 	if c.CAFile != "" && c.TLS != TLSVerify {
 		return fail("ca_file in %s only means something with tls = \"%s\"", where, TLSVerify).
 			Fix("remove it, or remove tls")
@@ -255,8 +259,13 @@ func (c *SQLConn) checkPlace(fail func(string, ...any) *diag.Diagnostic, where s
 }
 
 func defaultPort(driver string) int {
-	if driver == "postgres" {
+	switch driver {
+	case "postgres":
 		return 5432
+	case "sqlserver":
+		return 1433
+	case "oracle":
+		return 1521
 	}
 	return 3306
 }

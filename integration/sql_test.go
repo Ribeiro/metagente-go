@@ -16,8 +16,10 @@ import (
 
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mariadb"
+	"github.com/testcontainers/testcontainers-go/modules/mssql"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // The images are pinned by digest, so a run today and a run in a year use the same servers. To move to
@@ -28,7 +30,11 @@ const (
 	postgresImage = "library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
 	mariadbImage  = "library/mariadb:11.4@sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6"
 	mysqlImage    = "library/mysql:8.4@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242"
+	oracleImage   = "gvenzl/oracle-free:23-slim-faststart@sha256:f5ff19033860d662c821cb04eb10483fa94f14f78eae252d054291ea07028093"
 )
+
+// SQL Server is on the registry of Microsoft, not on Docker Hub, so a mirror of Docker Hub does not have it.
+const sqlserverImage = "mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04@sha256:c1aa8afe9b06eab64c9774a4802dcd032205d1be785b1fd51e1c0151e7586b74"
 
 const (
 	dbName   = "orders"
@@ -63,6 +69,59 @@ type server struct {
 	port   int
 }
 
+// user and database are what the connection names. SQL Server has only its administrator in the container,
+// and Oracle names its database by the service of the pluggable database.
+func (s server) user() string {
+	if s.driver == "sqlserver" {
+		return "sa"
+	}
+	return dbUser
+}
+
+func (s server) database() string {
+	if s.driver == "oracle" {
+		return "FREEPDB1"
+	}
+	return dbName
+}
+
+// page is the statement that reads a page of orders, written in the dialect of the server. Oracle gives its
+// columns in capitals unless they are quoted, and its numbers as it likes, so the columns are named and the
+// numbers go as text.
+func (s server) page() string {
+	switch s.driver {
+	case "sqlserver":
+		return "SELECT TOP (:size) id, customer, total, big FROM orders WHERE id > :after ORDER BY id"
+	case "oracle":
+		return `SELECT id AS "id", customer AS "customer", TO_CHAR(total, 'FM999990.00') AS "total", TO_CHAR(big) AS "big" FROM orders WHERE id > :after ORDER BY id FETCH FIRST :size ROWS ONLY`
+	}
+	return "SELECT id, customer, total, big FROM orders WHERE id > :after ORDER BY id LIMIT :size"
+}
+
+func (s server) one() string {
+	if s.driver == "oracle" {
+		return `SELECT id AS "id", customer AS "customer", TO_CHAR(total, 'FM999990.00') AS "total", TO_CHAR(big) AS "big" FROM orders WHERE id = :id`
+	}
+	return "SELECT id, customer, total, big FROM orders WHERE id = :id"
+}
+
+func (s server) none() string {
+	if s.driver == "oracle" {
+		return `SELECT id AS "id" FROM orders WHERE id = :id`
+	}
+	return "SELECT id FROM orders WHERE id = :id"
+}
+
+// writing is a statement that reads and still asks the database to change something. Where a function may
+// write (PostgreSQL, MySQL, MariaDB) it calls one; Oracle has no such function without a trick, so it locks
+// the row, which a transaction that only reads refuses. SQL Server has neither, and has no test of this.
+func (s server) writing() string {
+	if s.driver == "oracle" {
+		return "SELECT id FROM orders WHERE id = 1 FOR UPDATE"
+	}
+	return "SELECT write_note()"
+}
+
 // seed is the same orders for every database: 25 rows, and a number that a number of the language cannot
 // hold. It also has a function that writes a line in a table: a statement that calls it is a SELECT, and
 // the only thing that stops it is that the transaction is read only (the user may write: it owns the database).
@@ -73,11 +132,13 @@ func seed(t *testing.T, driver string) string {
 	sb.WriteString("CREATE TABLE journal (note VARCHAR(50));\n")
 	sb.WriteString("CREATE TABLE landing (job BIGINT, id BIGINT, customer VARCHAR(50), PRIMARY KEY (job, id));\n")
 	sb.WriteString("CREATE TABLE marks (job BIGINT PRIMARY KEY, state VARCHAR(20));\n")
-	if driver == "postgres" {
+	switch driver {
+	case "postgres":
 		sb.WriteString("CREATE FUNCTION write_note() RETURNS int LANGUAGE plpgsql AS $$ BEGIN INSERT INTO journal VALUES ('written'); RETURN 1; END $$;\n")
-	} else {
+	case "mariadb", "mysql":
 		sb.WriteString("SET GLOBAL log_bin_trust_function_creators = 1;\nDELIMITER //\nCREATE FUNCTION write_note() RETURNS INT MODIFIES SQL DATA BEGIN INSERT INTO journal VALUES ('written'); RETURN 1; END//\nDELIMITER ;\n")
 	}
+	// Neither SQL Server nor Oracle has a function that changes rows when a query calls it.
 	for i := 1; i <= 25; i++ {
 		fmt.Fprintf(&sb, "INSERT INTO orders VALUES (%d, 'Customer %d', %d.50, 9007199254740993);\n", i, i, i)
 	}
@@ -89,8 +150,18 @@ func seed(t *testing.T, driver string) string {
 		}
 		sb.Write(raw)
 	}
+	text := sb.String()
+	switch driver {
+	case "sqlserver":
+		text = "CREATE DATABASE orders;\nGO\nUSE orders;\nGO\n" + text
+	case "oracle":
+		// Oracle has no BIGINT.
+		text = strings.ReplaceAll(text, "BIGINT", "NUMBER(19)")
+		// The script may run as the administrator, so it says who it is: the tables have to be the user's.
+		text = "CONNECT " + dbUser + "/" + dbSecret + "@//localhost:1521/FREEPDB1\n" + text
+	}
 	path := filepath.Join(t.TempDir(), "seed.sql")
-	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -109,7 +180,7 @@ func start(t *testing.T, driver string) server {
 	testcontainers.SkipIfProviderIsNotHealthy(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	script := seed(t, driver)
+	path := seed(t, driver)
 	var (
 		ctr  testcontainers.Container
 		port string
@@ -121,20 +192,39 @@ func start(t *testing.T, driver string) server {
 		var c *postgres.PostgresContainer
 		c, err = postgres.Run(ctx, image(postgresImage),
 			postgres.WithDatabase(dbName), postgres.WithUsername(dbUser), postgres.WithPassword(dbSecret),
-			postgres.WithInitScripts(script), postgres.BasicWaitStrategies())
+			postgres.WithInitScripts(path), postgres.BasicWaitStrategies())
 		ctr, port = c, "5432/tcp"
 	case "mariadb":
 		var c *mariadb.MariaDBContainer
 		c, err = mariadb.Run(ctx, image(mariadbImage),
 			mariadb.WithDatabase(dbName), mariadb.WithUsername(dbUser), mariadb.WithPassword(dbSecret),
-			mariadb.WithScripts(script))
+			mariadb.WithScripts(path))
 		ctr, port = c, "3306/tcp"
 	case "mysql":
 		var c *mysql.MySQLContainer
 		c, err = mysql.Run(ctx, image(mysqlImage),
 			mysql.WithDatabase(dbName), mysql.WithUsername(dbUser), mysql.WithPassword(dbSecret),
-			mysql.WithScripts(script))
+			mysql.WithScripts(path))
 		ctr, port = c, "3306/tcp"
+	case "sqlserver":
+		var c *mssql.MSSQLServerContainer
+		var script *os.File
+		if script, err = os.Open(path); err != nil {
+			t.Fatal(err)
+		}
+		defer script.Close()
+		c, err = mssql.Run(ctx, sqlserverImage, mssql.WithAcceptEULA(), mssql.WithPassword(dbSecret), mssql.WithInitSQL(script))
+		ctr, port = c, "1433/tcp"
+	case "oracle":
+		var c testcontainers.Container
+		c, err = testcontainers.Run(ctx, image(oracleImage),
+			testcontainers.WithExposedPorts("1521/tcp"),
+			testcontainers.WithEnv(map[string]string{"ORACLE_PASSWORD": dbSecret, "APP_USER": dbUser, "APP_USER_PASSWORD": dbSecret}),
+			testcontainers.WithFiles(testcontainers.ContainerFile{HostFilePath: path, ContainerFilePath: "/container-entrypoint-initdb.d/seed.sql", FileMode: 0o644}),
+			testcontainers.WithWaitStrategy(wait.ForLog("DATABASE IS READY TO USE!").WithStartupTimeout(5*time.Minute)))
+		ctr, port = c, "1521/tcp"
+		// A transaction that only reads is refused (ORA-01466) while the tables are only seconds old.
+		time.Sleep(10 * time.Second)
 	}
 	if ctr != nil {
 		testcontainers.CleanupContainer(t, ctr)
@@ -169,13 +259,13 @@ user = %q
 tls = "disable"
 
 [sql.db.statements]
-page = "SELECT id, customer, total, big FROM orders WHERE id > :after ORDER BY id LIMIT :size"
+page = %q
 count = { sql = "SELECT count(*) FROM orders", result = "value" }
-one = { sql = "SELECT id, customer, total, big FROM orders WHERE id = :id", result = "row" }
-none = { sql = "SELECT id FROM orders WHERE id = :id", result = "row" }
-write = { sql = "SELECT write_note()", result = "value" }
+one = { sql = %q, result = "row" }
+none = { sql = %q, result = "row" }
+write = { sql = %q, result = "value" }
 written = { sql = "SELECT count(*) FROM journal", result = "value" }
-`, s.driver, s.host, s.port, dbName, dbUser)
+`, s.driver, s.host, s.port, s.database(), s.user(), s.page(), s.one(), s.none(), s.writing())
 	agent := `agent Pager
   goal "Read the orders in pages"
   tool orders from sql "db"
@@ -234,7 +324,7 @@ func metagente(t *testing.T, dir, password string, args ...string) (string, erro
 }
 
 func TestAnAgentReadsEveryRowInPages(t *testing.T) {
-	for _, driver := range []string{"postgres", "mariadb", "mysql"} {
+	for _, driver := range []string{"postgres", "mariadb", "mysql", "sqlserver", "oracle"} {
 		t.Run(driver, func(t *testing.T) {
 			s := start(t, driver)
 			dir := s.project(t, dbSecret)
@@ -257,7 +347,7 @@ func TestAnAgentReadsEveryRowInPages(t *testing.T) {
 // A statement that is a SELECT can still write, through a function. The transaction is read only, so
 // the database refuses, whatever the user is allowed to do.
 func TestAStatementThatWritesIsRefusedByTheDatabase(t *testing.T) {
-	for _, driver := range []string{"postgres", "mariadb", "mysql"} {
+	for _, driver := range []string{"postgres", "mariadb", "mysql", "oracle"} {
 		t.Run(driver, func(t *testing.T) {
 			s := start(t, driver)
 			dir := s.project(t, dbSecret)
@@ -277,7 +367,7 @@ func TestAStatementThatWritesIsRefusedByTheDatabase(t *testing.T) {
 }
 
 func TestAWrongPasswordIsToldWithoutShowingIt(t *testing.T) {
-	for _, driver := range []string{"postgres", "mariadb"} {
+	for _, driver := range []string{"postgres", "mariadb", "sqlserver"} {
 		t.Run(driver, func(t *testing.T) {
 			s := start(t, driver)
 			dir := s.project(t, dbSecret)

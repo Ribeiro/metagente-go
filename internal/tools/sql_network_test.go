@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -91,4 +92,13 @@ func TestADriverLeftOutOfTheBuildIsSaidWithItsTag(t *testing.T) {
 			t.Errorf("%s: %v", driver, err)
 		}
 	}
+}
+
+func mustQuery(t *testing.T, dsn string) url.Values {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Query()
 }
