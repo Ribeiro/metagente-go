@@ -427,7 +427,7 @@ func TestABrokerIsKeyedByItsSubjectsAndSaysWhereItPublishes(t *testing.T) {
 	if a.Key() == b.Key() {
 		t.Error("other subjects must need another approval")
 	}
-	if a.Kind != KindBroker || !strings.Contains(a.Describe(), "publishes to the broker: jetstream tls://b:4222") ||
+	if a.Kind != KindBroker || !strings.Contains(a.Describe(), "uses the message broker: jetstream tls://b:4222") ||
 		!strings.Contains(a.Describe(), "subjects etl.>") {
 		t.Errorf("describe = %q", a.Describe())
 	}

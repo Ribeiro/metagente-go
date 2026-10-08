@@ -71,6 +71,8 @@ type trustArgs struct {
 	yes        bool
 	list       bool
 	revoke     bool
+	// from, subject and dead name what `metagente consume` reaches, so it can be approved too.
+	from, subject, dead string
 }
 
 // modes is how many of the three things that `trust` can do were asked for; it has to be one.
@@ -95,27 +97,44 @@ func parseTrustArgs(args []string) (*trustArgs, error) {
 			t.list = true
 		case arg == "--revoke":
 			t.revoke = true
-		case arg == "--config":
+		case arg == "--config" || arg == "--from" || arg == "--subject" || arg == "--dead":
 			if i+1 >= len(args) {
-				return nil, badUsage("`--config` needs a value.", "write it like: --config FILE")
+				return nil, badUsage(fmt.Sprintf("`%s` needs a value.", arg), fmt.Sprintf("write it like: %s VALUE", arg))
 			}
 			i++
-			t.configPath = args[i]
-		case strings.HasPrefix(arg, "--config="):
-			t.configPath = strings.TrimPrefix(arg, "--config=")
+			t.setValue(arg, args[i])
+		case strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "--from=") || strings.HasPrefix(arg, "--subject=") || strings.HasPrefix(arg, "--dead="):
+			name, value, _ := strings.Cut(arg, "=")
+			t.setValue(name, value)
 		case strings.HasPrefix(arg, "--"):
 			return nil, badUsage(fmt.Sprintf("`trust` does not take the option `%s`.", arg),
-				"the options are --yes, --list, --revoke and --config FILE.")
+				"the options are --yes, --list, --revoke, --config FILE, and --from, --subject and --dead for what `consume` reaches.")
 		case t.file == "":
 			t.file = arg
 		default:
 			return nil, badUsage("`trust` takes one file.", "write it like: metagente trust hello.ag")
 		}
 	}
+	if (t.from != "" || t.subject != "" || t.dead != "") && (t.from == "" || t.subject == "" || t.dead == "") {
+		return nil, badUsage("--from, --subject and --dead go together.", "write it like: metagente trust worker.ag --from main --subject etl.orders.batch --dead etl.orders.dead")
+	}
 	if t.modes() != 1 {
 		return nil, badUsage("`trust` needs a file, or --list, or --revoke.", "write it like: metagente trust hello.ag")
 	}
 	return t, nil
+}
+
+func (t *trustArgs) setValue(name, value string) {
+	switch name {
+	case "--config":
+		t.configPath = value
+	case "--from":
+		t.from = value
+	case "--subject":
+		t.subject = value
+	case "--dead":
+		t.dead = value
+	}
 }
 
 // trustRevoke takes back everything that was approved for the project.
@@ -142,6 +161,14 @@ func trustFile(rt *runtime.Runtime, cfg *config.Config, t *trustArgs, stdout, st
 	}
 	rt.Linker.Register(agents)
 	needs := rt.Needs(agents)
+	if t.from != "" {
+		spec, err := consumeSpec(cfg, &consumeArgs{from: t.from, subject: t.subject, dead: t.dead})
+		if err != nil {
+			printError(stderr, err)
+			return 1
+		}
+		needs = trust.Merge(needs, []trust.Item{runtime.BrokerItem(spec)})
+	}
 	if len(needs) == 0 {
 		fmt.Fprintf(stdout, "Nothing in %s needs approval: it starts no programs and reaches no addresses.\n", t.file)
 		return 0

@@ -4,15 +4,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -40,6 +44,9 @@ type sqlDriver struct {
 	readOnlyTx bool
 	// prepare asks the database to prepare each statement, which is how some drivers give numbers as numbers.
 	prepare bool
+	// transient says whether an error of this driver is one that may pass: a connection that dropped, a
+	// deadlock, a server that is starting. It may be nil.
+	transient func(error) bool
 }
 
 // sqlDrivers are the drivers this build has. The file of each driver adds itself, so a build made with
@@ -482,20 +489,41 @@ func (s *SQL) clean(err error) string {
 
 func (s *SQL) openFailure(err error, location string) error {
 	text := s.clean(err)
+	var d *diag.Diagnostic
 	if location == "" {
-		return diag.Newf("I could not reach the database of `%s`: %s", s.decl.Name, text).
+		d = diag.Newf("I could not reach the database of `%s`: %s", s.decl.Name, text).
 			Fixf("check the host, the port, the user and the password of [sql.%s], and that this computer may reach the database", s.conn.Name)
+	} else {
+		d = diag.Newf("I could not open the database of `%s`: %s", s.decl.Name, strings.ReplaceAll(text, location, "the database")).
+			Fix("check the path, and that the file is a database that you may read")
 	}
-	return diag.Newf("I could not open the database of `%s`: %s", s.decl.Name, strings.ReplaceAll(text, location, "the database")).
-		Fix("check the path, and that the file is a database that you may read")
+	return s.markIfItMayPass(d, err)
+}
+
+// markIfItMayPass tells whoever called that a failure may pass when it is a network that failed, a connection
+// that dropped, a time that ran out, or something the driver knows to be temporary.
+func (s *SQL) markIfItMayPass(d *diag.Diagnostic, err error) *diag.Diagnostic {
+	if sqlMayPass(err) || (sqlDrivers[s.conn.Driver].transient != nil && sqlDrivers[s.conn.Driver].transient(err)) {
+		d.WithRetry(0)
+	}
+	return d
+}
+
+// sqlMayPass says whether an error is of the network or of the connection, whatever the driver.
+func sqlMayPass(err error) bool {
+	var network net.Error
+	return errors.As(err, &network) || errors.Is(err, driver.ErrBadConn) || errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET)
 }
 
 func (s *SQL) failure(ctx context.Context, st *sqlStatement, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	return diag.Newf("the database could not run `%s.%s`: %s", s.decl.Name, st.name, s.clean(err)).
+	d := diag.Newf("the database could not run `%s.%s`: %s", s.decl.Name, st.name, s.clean(err)).
 		Fixf("check the statement `%s` in [sql.%s] of %s", st.name, s.conn.Name, config.FileName)
+	return s.markIfItMayPass(d, err)
 }
 
 // collect reads the rows of the answer, within the ceilings, in the shape the statement asks for.

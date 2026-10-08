@@ -90,6 +90,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runToken(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "consume":
+		return runConsume(args[1:], stdout, stderr)
 	case "--version", "-v", "version":
 		fmt.Fprintf(stdout, "metagente %s\n", Version)
 		return 0
@@ -126,6 +128,11 @@ Usage:
                                        behind a proxy on this computer, which does the TLS
   metagente serve FILE.ag ... --stdio
                                        the agents as MCP tools on standard input and output (no port, no token)
+  metagente consume FILE.ag --from BROKER --subject SUBJECT --dead SUBJECT [--message NAME] [--agent NAME]
+                                       give the events of a stream to an agent, each as a call: confirmed when it
+                                       replies, asked for again when it fails with "retry", a dead letter when it
+                                       cannot be done. More: --in-flight N --max-deliver N --ack-wait SECONDS
+                                       --backoff 10s,1m,5m --idle-exit SECONDS --max-events N --durable NAME --stream NAME
   metagente --version
 `)
 }

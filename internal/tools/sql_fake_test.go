@@ -4,13 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 	"github.com/Ribeiro/metagente-go/internal/lang"
 )
 
@@ -185,6 +190,9 @@ func TestThePasswordGoesToTheConnectionAndNeverIntoAProblem(t *testing.T) {
 	if !strings.Contains(shown, "I could not reach the database") || strings.Contains(shown, "hunter2") {
 		t.Errorf("problem = %s", shown)
 	}
+	if _, ok := diag.RetryOf(err); !ok {
+		t.Error("a connection that was refused is a failure that may pass")
+	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if len(fake.dsns) == 0 || fake.dsns[0] != "refuse-host|hunter2" {
@@ -214,5 +222,24 @@ func TestAPathOfAFileStartsAtTheProjectUnlessItIsAbsolute(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "ca.pem")
 	if got := absolute(root, abs); got != abs {
 		t.Errorf("absolute = %s, want %s", got, abs)
+	}
+}
+
+func TestAnErrorOfTheNetworkOrOfTheConnectionMayPassAndAnotherDoesNot(t *testing.T) {
+	for name, c := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"refused":   {&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, true},
+		"reset":     {fmt.Errorf("read: %w", syscall.ECONNRESET), true},
+		"eof":       {io.EOF, true},
+		"bad conn":  {driver.ErrBadConn, true},
+		"time":      {context.DeadlineExceeded, true},
+		"a syntax":  {errors.New("syntax error at or near FROM"), false},
+		"cancelled": {context.Canceled, false},
+	} {
+		if got := sqlMayPass(c.err); got != c.want {
+			t.Errorf("%s: %v", name, got)
+		}
 	}
 }

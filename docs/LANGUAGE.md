@@ -668,6 +668,7 @@ agent Packer
 | `metagente serve FILE.ag ... --stdio` | the agents as MCP tools on standard input and output |
 | `metagente serve ... --public --tls-cert FILE --tls-key FILE --host NAME` | open to the network, with TLS of its own; `--token-file FILE` for a token for each client |
 | `metagente serve ... --behind-proxy --host NAME --public-url https://NAME` | behind a proxy on this computer, which does the TLS |
+| `metagente consume FILE.ag --from BROKER --subject SUBJECT --dead SUBJECT` | gives the events of a stream to an agent, each as a call (see [Consuming the events of a stream](#consuming-the-events-of-a-stream-metagente-consume)); `trust` takes the same `--from`, `--subject` and `--dead` |
 | `metagente --version` | the version |
 
 ```text
@@ -682,6 +683,54 @@ metagente serve weather.ag --stdio
 
 The exit code is 0 when it worked, 1 for a problem in the agent or the files, and 2 for a mistake in
 how the command was written. Serving, tokens and TLS are explained in the [README](../README.md#serving-agents).
+
+### Consuming the events of a stream (`metagente consume`)
+
+`metagente consume` gives the events of a message broker to an agent, one call for each event, and tells the
+broker what came of it. It is the other half of `tool broker`: an agent publishes, and another one, usually on
+another computer, consumes.
+
+```text
+metagente consume worker.ag --from main --subject etl.orders.batch --dead etl.orders.dead --message batch
+```
+
+- `--from` is a `[broker.NAME]` of `metagente.toml`; `--subject` is a subject or a pattern to read; `--dead` is
+  the subject where the events that are given up on are put. The stream has to exist and take both subjects.
+  `--message` is the message the agent is sent (it can be left out when the agent accepts only one); `--agent`
+  picks one of a file with several.
+- **What an event becomes.** A JSON object gives one value for each of its fields: `{"n": 3, "text": "..."}`
+  calls `on batch` with `n` and `text`. Anything else (a list, a text, a number) is the one value of a message
+  that takes exactly one. The values are checked against `accepts` before the agent runs; an event that does
+  not fit is a dead letter, and the agent never sees it. Each event is a conversation of its own, so `tool
+  state` does not carry anything from one event to the next.
+- **What comes of it:**
+
+  | The agent... | The event is... |
+  |---|---|
+  | replies | confirmed, and not delivered again |
+  | fails with `fail "..." retry`, or a tool says that the failure may pass (a broker, a database that cannot be reached, a full stream) | asked for again after a wait, up to `--max-deliver` deliveries (5); after the last one, a dead letter |
+  | fails with `fail "..."` | a dead letter at once |
+  | is stopped (Ctrl+C or SIGTERM) | given back to the broker at once, to be delivered to whoever reads next |
+
+  The wait is the larger of what `retry in N seconds` suggested and `--backoff` (10 s, 1 min, 5 min, 15 min by
+  default, by the delivery that failed; the last repeats).
+- **Dead letters** are messages on the `--dead` subject with the content of the event, an id (`dead:` and the id
+  of the event, so a copy is dropped) and the headers `Metagente-Dead-Reason`, `-Subject`, `-Event` and
+  `-Attempts`. The reason is what the agent said, cut to 300 characters, never the content. If the dead
+  letters cannot take the event, it is tried again a few times, and then left in the stream; nothing is thrown away.
+- **Circuit breaker.** After `--breaker-after` failures that may pass in a row (3), no more events are taken for
+  30 seconds, growing to 5 minutes; then one event is let through to test, and the rest follow when it
+  works. An outage of the destination does not use up the deliveries of the events that wait.
+- **At the same time:** `--in-flight N` events (1). While an agent works the broker is told every third of
+  `--ack-wait` (60 s) that the work goes on, so a long batch is not delivered to someone else.
+- **It ends** with Ctrl+C or SIGTERM, after `--idle-exit SECONDS` with nothing to do (to drain a stream), or
+  after `--max-events N`. `--durable NAME` names the consumer on the broker (the default is made from the
+  agent and the message): several `consume` with the same name share the work, and a name is how the broker
+  remembers the place after a stop. `--stream NAME` says the stream when `[broker.NAME]` does not.
+- **Approval.** What `consume` reaches is approved like a tool is: `metagente trust worker.ag --from main
+  --subject etl.orders.batch --dead etl.orders.dead`, once for each subject. The password or token comes from
+  `[credentials]`, under the name of the broker (`main = "BROKER_PASSWORD"`). The lines it writes tell what
+  happens to each event, with its number and the number of the delivery, and never what is in it.
 
 ## Grammar
 

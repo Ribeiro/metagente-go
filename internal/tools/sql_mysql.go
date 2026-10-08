@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -20,12 +21,26 @@ import (
 )
 
 func init() {
-	driver := sqlDriver{name: "mysql", connect: mysqlDSN, readOnlyTx: true, prepare: true}
+	driver := sqlDriver{name: "mysql", connect: mysqlDSN, readOnlyTx: true, prepare: true, transient: mysqlTransient}
 	sqlDrivers["mysql"] = driver
 	sqlDrivers["mariadb"] = driver
 }
 
 var registered sync.Map
+
+// mysqlTransient is an error that may pass: a connection that is gone, a server that is not up, too many
+// connections (1040), a lock that waited too long (1205) or a deadlock (1213).
+func mysqlTransient(err error) bool {
+	var my *mysql.MySQLError
+	if errors.As(err, &my) {
+		switch my.Number {
+		case 1040, 1205, 1213, 1053, 2002, 2003, 2006, 2013:
+			return true
+		}
+		return false
+	}
+	return errors.Is(err, mysql.ErrInvalidConn)
+}
 
 // mysqlDSN builds the address of the database. Each statement is prepared, which is how the driver gives
 // numbers as numbers, and runs in a transaction that is read only.

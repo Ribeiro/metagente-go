@@ -161,7 +161,7 @@ func (i Item) Describe() string {
 	case KindSQL:
 		return "reads the database: " + i.Target + " (" + i.Detail + ")"
 	case KindBroker:
-		return "publishes to the broker: " + i.Target + " (" + i.Detail + ")"
+		return "uses the message broker: " + i.Target + " (" + i.Detail + ")"
 	default:
 		text := "connects to: " + i.Target
 		if i.Credential != "" {

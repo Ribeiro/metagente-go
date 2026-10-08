@@ -177,6 +177,9 @@ type refusing struct{ err error }
 func (r refusing) Publish(context.Context, broker.Message) (broker.PubAck, error) {
 	return broker.PubAck{}, r.err
 }
+func (refusing) Consume(context.Context, broker.ConsumerSpec) (broker.Consumer, error) {
+	return nil, errors.New("not used")
+}
 func (refusing) Close() error { return nil }
 
 func TestOtherRefusalsAreFinalAndNeverShowThePassword(t *testing.T) {
