@@ -244,31 +244,33 @@ func check(t *testing.T, dir string) string {
 
 func TestTheWorkerLandsTransformsAndClosesAJobInEveryDatabase(t *testing.T) {
 	for _, driver := range databases {
-		t.Run(driver, func(t *testing.T) {
-			dir := pipelineIn(t, driver)
-			// The job has a budget for the model step.
-			if out := send(t, dir, "budget", "job=j1", "max_calls=1000", "max_tokens=1000000"); !strings.Contains(out, "job j1 may use 1000 requests") {
-				t.Fatalf("budget:\n%s", out)
-			}
-			extract(t, dir)
-			// The batches first, then the control event.
-			if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 3: done 3, asked for again 0, dead letters 0") {
-				t.Errorf("batches:\n%s", out)
-			}
-			if out := consumeOn(t, dir, "etl.*.control", "control"); !strings.Contains(out, "Taken 1: done 1") {
-				t.Errorf("control:\n%s", out)
-			}
-			if out := check(t, dir); !strings.Contains(out, "final 2500; rejected 0; job done; batches done 3; labelled 1500; asked 75; reason none") {
-				t.Errorf("check:\n%s", out)
-			}
-			// Staging first, then the control tables: a job that is done and has nothing in staging is forgotten.
-			if out := send(t, dir, "purge", "days=0"); !strings.Contains(out, "removed 2500 rows from staging") {
-				t.Errorf("purge:\n%s", out)
-			}
-			if out := send(t, dir, "purge_control", "days=0"); !strings.Contains(out, "removed 1 finished jobs from the control tables") {
-				t.Errorf("purge_control:\n%s", out)
-			}
-		})
+		t.Run(driver, func(t *testing.T) { landsAndClosesAJob(t, driver) })
+	}
+}
+
+func landsAndClosesAJob(t *testing.T, driver string) {
+	dir := pipelineIn(t, driver)
+	// The job has a budget for the model step.
+	if out := send(t, dir, "budget", "job=j1", "max_calls=1000", "max_tokens=1000000"); !strings.Contains(out, "job j1 may use 1000 requests") {
+		t.Fatalf("budget:\n%s", out)
+	}
+	extract(t, dir)
+	// The batches first, then the control event.
+	if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 3: done 3, asked for again 0, dead letters 0") {
+		t.Errorf("batches:\n%s", out)
+	}
+	if out := consumeOn(t, dir, "etl.*.control", "control"); !strings.Contains(out, "Taken 1: done 1") {
+		t.Errorf("control:\n%s", out)
+	}
+	if out := check(t, dir); !strings.Contains(out, "final 2500; rejected 0; job done; batches done 3; labelled 1500; asked 75; reason none") {
+		t.Errorf("check:\n%s", out)
+	}
+	// Staging first, then the control tables: a job that is done and has nothing in staging is forgotten.
+	if out := send(t, dir, "purge", "days=0"); !strings.Contains(out, "removed 2500 rows from staging") {
+		t.Errorf("purge:\n%s", out)
+	}
+	if out := send(t, dir, "purge_control", "days=0"); !strings.Contains(out, "removed 1 finished jobs from the control tables") {
+		t.Errorf("purge_control:\n%s", out)
 	}
 }
 
@@ -276,23 +278,25 @@ func TestTheWorkerLandsTransformsAndClosesAJobInEveryDatabase(t *testing.T) {
 // lets them go on, and nothing the model already labelled is asked again.
 func TestAJobWhoseBudgetIsSpentIsPausedAndGoesOnWhenItIsResumedInEveryDatabase(t *testing.T) {
 	for _, driver := range databases {
-		t.Run(driver, func(t *testing.T) {
-			dir := pipelineIn(t, driver)
-			send(t, dir, "budget", "job=j1", "max_calls=5", "max_tokens=1000000")
-			extract(t, dir)
-			out := consumeOn(t, dir, "etl.*.batch", "batch", "--max-deliver", "3", "--backoff", "200ms,200ms", "--breaker-after", "10")
-			if !strings.Contains(out, "dead letters 0") || !strings.Contains(out, "asked for again 3") {
-				t.Errorf("batches:\n%s", out)
-			}
-			if got := check(t, dir); !strings.Contains(got, "job paused") || !strings.Contains(got, "asked 5") || !strings.Contains(got, "reason MODEL_BUDGET") {
-				t.Errorf("paused:\n%s", got)
-			}
-			// The budget is raised and the job resumed: the events that waited come again.
-			send(t, dir, "budget", "job=j1", "max_calls=1000", "max_tokens=1000000")
-			if got := send(t, dir, "resume", "job=j1"); !strings.Contains(got, "1 paused job is running again") {
-				t.Errorf("resume:\n%s", got)
-			}
-		})
+		t.Run(driver, func(t *testing.T) { pausesAJobWithoutBudget(t, driver) })
+	}
+}
+
+func pausesAJobWithoutBudget(t *testing.T, driver string) {
+	dir := pipelineIn(t, driver)
+	send(t, dir, "budget", "job=j1", "max_calls=5", "max_tokens=1000000")
+	extract(t, dir)
+	out := consumeOn(t, dir, "etl.*.batch", "batch", "--max-deliver", "3", "--backoff", "200ms,200ms", "--breaker-after", "10")
+	if !strings.Contains(out, "dead letters 0") || !strings.Contains(out, "asked for again 3") {
+		t.Errorf("batches:\n%s", out)
+	}
+	if got := check(t, dir); !strings.Contains(got, "job paused") || !strings.Contains(got, "asked 5") || !strings.Contains(got, "reason MODEL_BUDGET") {
+		t.Errorf("paused:\n%s", got)
+	}
+	// The budget is raised and the job resumed: the events that waited come again.
+	send(t, dir, "budget", "job=j1", "max_calls=1000", "max_tokens=1000000")
+	if got := send(t, dir, "resume", "job=j1"); !strings.Contains(got, "1 paused job is running again") {
+		t.Errorf("resume:\n%s", got)
 	}
 }
 
@@ -327,64 +331,66 @@ func (w *webhook) told() []string {
 // the stream lost is sent again by the Extractor, the team is told once, and the job closes.
 func TestTheSweeperHealsAJobInEveryDatabase(t *testing.T) {
 	for _, driver := range databases {
-		t.Run(driver, func(t *testing.T) {
-			dir, nats, stream := pipelineWithServers(t, driver)
-			hook := newWebhook(t)
-			if out, err := worker(t, dir, "trust", "sweeper.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
-				t.Fatalf("trust sweeper: %v\n%s", err, out)
-			}
-			if out, err := worker(t, dir, "trust", "age.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
-				t.Fatalf("trust age: %v\n%s", err, out)
-			}
-			extract(t, dir)
-			// The stream loses the second batch (the sequence numbers are 1, 2, 3 for the batches and 4 for the control).
-			if err := stream.DeleteMsg(context.Background(), 2); err != nil {
-				t.Fatalf("losing a message: %v", err)
-			}
-			if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 2: done 2") {
-				t.Fatalf("batches:\n%s", out)
-			}
-			consumeOn(t, dir, "etl.*.control", "control")
-			// Batch 1 also stayed landed, long ago, and the totals were announced long ago.
-			worker(t, dir, "run", "age.ag", "stick", "start=x", "--config", "worker.dest.toml")
-			worker(t, dir, "run", "age.ag", "old", "start=x", "--config", "worker.dest.toml")
-
-			sweep := func() string {
-				cmd := exec.Command(binary, "run", "sweeper.ag", "sweep", "minutes=5", "--config", "worker.dest.toml")
-				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), "DEST_DB_PASSWORD="+dbSecret, "BROKER_PASSWORD="+natsSecret, "ALERT_URL="+hook.URL, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
-				out, err := cmd.CombinedOutput()
-				if err != nil {
-					t.Fatalf("sweep: %v\n%s", err, out)
-				}
-				return string(out)
-			}
-			if out := sweep(); !strings.Contains(out, "1 causes looked at, 1 batches stuck, 1 jobs with batches missing") {
-				t.Fatalf("sweep:\n%s", out)
-			}
-			if told := hook.told(); len(told) != 1 || !strings.Contains(told[0], "ETL BATCH_STUCK job j1 1") {
-				t.Errorf("the team was told %v", told)
-			}
-			// The Worker transforms batch 1 again; the Extractor sends batch 2 again (after the window of copies); the Worker lands it.
-			if out := consumeOn(t, dir, "etl.*.retransform", "retransform"); !strings.Contains(out, "Taken 1: done 1") {
-				t.Errorf("retransform:\n%s", out)
-			}
-			time.Sleep(2 * time.Second)
-			// The Extractor is on the machine of the source: its own configuration, and its own approval.
-			if out, err := metagente(t, dir, natsSecret, "trust", "extractor.ag", "--from", "main", "--subject", "etl.*.resend", "--dead", "etl.dead", "--yes"); err != nil {
-				t.Fatalf("trust resend: %v\n%s", err, out)
-			}
-			if out, err := metagente(t, dir, natsSecret, "consume", "extractor.ag", "--from", "main", "--subject", "etl.*.resend", "--dead", "etl.dead",
-				"--message", "resend", "--idle-exit", "3", "--durable", "it-resend"); err != nil || !strings.Contains(out, "Taken 1: done 1") {
-				t.Errorf("resend (err = %v):\n%s", err, out)
-			}
-			if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 1: done 1") {
-				t.Errorf("batch 2 again:\n%s", out)
-			}
-			if out := check(t, dir); !strings.Contains(out, "final 2500; rejected 0; job done; batches done 3") {
-				t.Errorf("check:\n%s", out)
-			}
-			_ = nats
-		})
+		t.Run(driver, func(t *testing.T) { sweepsAJob(t, driver) })
 	}
+}
+
+func sweepsAJob(t *testing.T, driver string) {
+	dir, nats, stream := pipelineWithServers(t, driver)
+	hook := newWebhook(t)
+	if out, err := worker(t, dir, "trust", "sweeper.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
+		t.Fatalf("trust sweeper: %v\n%s", err, out)
+	}
+	if out, err := worker(t, dir, "trust", "age.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
+		t.Fatalf("trust age: %v\n%s", err, out)
+	}
+	extract(t, dir)
+	// The stream loses the second batch (the sequence numbers are 1, 2, 3 for the batches and 4 for the control).
+	if err := stream.DeleteMsg(context.Background(), 2); err != nil {
+		t.Fatalf("losing a message: %v", err)
+	}
+	if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 2: done 2") {
+		t.Fatalf("batches:\n%s", out)
+	}
+	consumeOn(t, dir, "etl.*.control", "control")
+	// Batch 1 also stayed landed, long ago, and the totals were announced long ago.
+	worker(t, dir, "run", "age.ag", "stick", "start=x", "--config", "worker.dest.toml")
+	worker(t, dir, "run", "age.ag", "old", "start=x", "--config", "worker.dest.toml")
+
+	sweep := func() string {
+		cmd := exec.Command(binary, "run", "sweeper.ag", "sweep", "minutes=5", "--config", "worker.dest.toml")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "DEST_DB_PASSWORD="+dbSecret, "BROKER_PASSWORD="+natsSecret, "ALERT_URL="+hook.URL, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("sweep: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	if out := sweep(); !strings.Contains(out, "1 causes looked at, 1 batches stuck, 1 jobs with batches missing") {
+		t.Fatalf("sweep:\n%s", out)
+	}
+	if told := hook.told(); len(told) != 1 || !strings.Contains(told[0], "ETL BATCH_STUCK job j1 1") {
+		t.Errorf("the team was told %v", told)
+	}
+	// The Worker transforms batch 1 again; the Extractor sends batch 2 again (after the window of copies); the Worker lands it.
+	if out := consumeOn(t, dir, "etl.*.retransform", "retransform"); !strings.Contains(out, "Taken 1: done 1") {
+		t.Errorf("retransform:\n%s", out)
+	}
+	time.Sleep(2 * time.Second)
+	// The Extractor is on the machine of the source: its own configuration, and its own approval.
+	if out, err := metagente(t, dir, natsSecret, "trust", "extractor.ag", "--from", "main", "--subject", "etl.*.resend", "--dead", "etl.dead", "--yes"); err != nil {
+		t.Fatalf("trust resend: %v\n%s", err, out)
+	}
+	if out, err := metagente(t, dir, natsSecret, "consume", "extractor.ag", "--from", "main", "--subject", "etl.*.resend", "--dead", "etl.dead",
+		"--message", "resend", "--idle-exit", "3", "--durable", "it-resend"); err != nil || !strings.Contains(out, "Taken 1: done 1") {
+		t.Errorf("resend (err = %v):\n%s", err, out)
+	}
+	if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 1: done 1") {
+		t.Errorf("batch 2 again:\n%s", out)
+	}
+	if out := check(t, dir); !strings.Contains(out, "final 2500; rejected 0; job done; batches done 3") {
+		t.Errorf("check:\n%s", out)
+	}
+	_ = nats
 }
