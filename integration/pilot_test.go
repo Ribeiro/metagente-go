@@ -409,32 +409,42 @@ func (p *pilot) measure(t *testing.T, dest server, res *pilotResult) {
 	res.job = dest.mustPsql(t, "SELECT state || '/' || coalesce(pause_reason, 'none') FROM etl_jobs WHERE job_id = 'j1'")
 	unbalanced, _ := strconv.Atoi(dest.mustPsql(t, "SELECT count(*) FROM etl_batches WHERE state = 'done' AND rows_read <> coalesce(rows_loaded, 0) + coalesce(rows_rejected, 0)"))
 
-	// What the pilot approves: the books close, there is no duplicate after a kill, and each failure ends as the design says.
-	if res.duplicates != 0 {
-		res.problem("%d rows came to staging twice", res.duplicates)
+	res.judge(p.rows, unbalanced)
+}
+
+// judge says what the pilot approves: the books close, there is no duplicate after a kill, and each failure ends as the
+// design says.
+func (r *pilotResult) judge(rows, unbalanced int) {
+	if r.duplicates != 0 {
+		r.problem("%d rows came to staging twice", r.duplicates)
 	}
 	if unbalanced != 0 {
-		res.problem("%d batches are done and read is not loaded plus rejected", unbalanced)
+		r.problem("%d batches are done and read is not loaded plus rejected", unbalanced)
 	}
-	if res.final != res.loaded {
-		res.problem("the final table has %d rows and the batches say %d were loaded", res.final, res.loaded)
+	if r.final != r.loaded {
+		r.problem("the final table has %d rows and the batches say %d were loaded", r.final, r.loaded)
 	}
-	brake := res.run.badPercent > 20
-	switch {
-	case brake:
-		if !strings.HasPrefix(res.job, "paused/") {
-			res.problem("%d%% of the rows are invalid and the job is %q: the brake of quality should have paused it", res.run.badPercent, res.job)
+	if r.run.badPercent > 20 {
+		// More invalid rows than the brake allows: the job has to stop, not to go on.
+		if !strings.HasPrefix(r.job, "paused/") {
+			r.problem("%d%% of the rows are invalid and the job is %q: the brake of quality should have paused it", r.run.badPercent, r.job)
 		}
-	default:
-		if res.job != "done/none" {
-			res.problem("the job is %q, and it should be done", res.job)
-		}
-		if res.read != p.rows || res.loaded+res.rejected != p.rows {
-			res.problem("read %d, loaded %d, rejected %d, and the source has %d rows", res.read, res.loaded, res.rejected, p.rows)
-		}
-		if want := res.run.badPercent * p.rows / 100; res.run.badPercent > 0 && (res.rejected < want*9/10 || res.rejected > want*11/10) {
-			res.problem("%d rows were rejected, and about %d were invalid", res.rejected, want)
-		}
+		return
+	}
+	r.judgeEnd(rows)
+}
+
+// judgeEnd is for the runs that have to end well: the job is done and every row is loaded or rejected.
+func (r *pilotResult) judgeEnd(rows int) {
+	if r.job != "done/none" {
+		r.problem("the job is %q, and it should be done", r.job)
+	}
+	if r.read != rows || r.loaded+r.rejected != rows {
+		r.problem("read %d, loaded %d, rejected %d, and the source has %d rows", r.read, r.loaded, r.rejected, rows)
+	}
+	want := r.run.badPercent * rows / 100
+	if r.run.badPercent > 0 && (r.rejected < want*9/10 || r.rejected > want*11/10) {
+		r.problem("%d rows were rejected, and about %d were invalid", r.rejected, want)
 	}
 }
 
