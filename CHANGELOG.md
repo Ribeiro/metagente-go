@@ -26,6 +26,15 @@ minor versions.
   connection string only through `[credentials]`, and the database and the statements are approved by
   `metagente trust`. SQLite (pure Go, no C compiler) is the first driver; a build with `-tags nosqlite`
   leaves it out. The program grows by about 6 MB with it.
+- `tool … from sql` reads PostgreSQL (`driver = "postgres"`), MySQL and MariaDB (`"mysql"`, `"mariadb"`) too.
+  A network database is written with `host`, `port`, `database`, `user`, `tls` (`verify`, `require`,
+  `disable`) and `ca_file`; the password comes from `[credentials]`. Every statement runs in a read only
+  transaction, and the host, the port, the user and the TLS mode are part of what `metagente trust`
+  approves. The drivers (pgx and go-sql-driver/mysql, both written in Go) can be left out of a build with
+  `-tags nopostgres` and `-tags nomysql`.
+- `integration/`, a module of its own with the tests that start PostgreSQL, MariaDB and MySQL in
+  containers (Testcontainers, images pinned by digest) and run the compiled program against them; `make
+  integration`, and a job of the CI.
 
 ## [0.5.0] - 2026-10-07
 

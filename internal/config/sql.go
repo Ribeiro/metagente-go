@@ -12,8 +12,23 @@ import (
 )
 
 // SQLDrivers are the databases that a [sql.NAME] section may name. Whether a build can open one of
-// them is another matter: a build made with -tags nosqlite cannot open SQLite.
-var SQLDrivers = []string{"sqlite"}
+// them is another matter: a build made with -tags nosqlite cannot open SQLite. MariaDB speaks the
+// protocol of MySQL, and has its own name here only so that the file says what it is.
+var SQLDrivers = []string{"sqlite", "postgres", "mysql", "mariadb"}
+
+// IsNetworkDriver says whether the database of a driver is reached over the network, with a host, a
+// port and a user, and not as a file.
+func IsNetworkDriver(driver string) bool { return driver != "sqlite" }
+
+// TLS modes of a network database.
+const (
+	// TLSVerify encrypts and checks the certificate and the name of the server. It is the default.
+	TLSVerify = "verify"
+	// TLSRequire encrypts and does not check the certificate.
+	TLSRequire = "require"
+	// TLSDisable sends everything in the clear.
+	TLSDisable = "disable"
+)
 
 // Results are the shapes in which a statement gives its answer.
 const (
@@ -31,7 +46,17 @@ type SQLConn struct {
 	Name   string
 	Driver string
 	// Path is the file of a SQLite database, relative to the folder of the project.
-	Path       string
+	Path string
+	// Host, Port, Database and User say where a network database is and who reads it. The password is
+	// never here: it comes from [credentials].
+	Host     string
+	Port     int
+	Database string
+	User     string
+	// TLS is one of the TLS modes, and CAFile the certificates to trust with TLSVerify, relative to the
+	// folder of the project.
+	TLS        string
+	CAFile     string
 	Statements map[string]*SQLStatement
 }
 
@@ -84,11 +109,23 @@ func (cfg *Config) addSQL(file, text string, e entry) error {
 			conn.Driver, err = sqlText(value)
 		case "path":
 			conn.Path, err = sqlText(value)
+		case "host":
+			conn.Host, err = sqlText(value)
+		case "database":
+			conn.Database, err = sqlText(value)
+		case "user":
+			conn.User, err = sqlText(value)
+		case "tls":
+			conn.TLS, err = sqlText(value)
+		case "ca_file":
+			conn.CAFile, err = sqlText(value)
+		case "port":
+			conn.Port, err = sqlPort(value)
 		case "statements":
 			err = addStatements(conn, value)
 		default:
 			return fail("I do not know the setting `%s` in %s", key, where).
-				Fix("a connection has: driver, path and statements")
+				Fix("a connection has: driver, statements, and path (SQLite) or host, port, database, user, tls and ca_file")
 		}
 		if err != nil {
 			return fail("`%s` in %s %s", key, where, err.Error()).Fix("change it in " + FileName)
@@ -100,6 +137,11 @@ func (cfg *Config) addSQL(file, text string, e entry) error {
 	case !knownDriver(conn.Driver):
 		return fail("%s names the driver `%s`, which this version does not have", where, conn.Driver).
 			Fixf("the drivers are: %s", strings.Join(SQLDrivers, ", "))
+	}
+	if err := conn.checkPlace(fail, where); err != nil {
+		return err
+	}
+	switch {
 	case len(conn.Statements) == 0:
 		return fail("%s has no statements", where).
 			Fixf("add some under [sql.%s.statements], for example: next_page = \"SELECT id FROM orders WHERE id > :after ORDER BY id LIMIT :size\"", e.key)
@@ -109,6 +151,60 @@ func (cfg *Config) addSQL(file, text string, e entry) error {
 	}
 	cfg.SQL[e.key] = conn
 	return nil
+}
+
+// checkPlace looks at the settings that say where the database is: a file for SQLite, a host and a user
+// for the others, and never a mix. It fills in the port and the TLS mode that were left out.
+func (c *SQLConn) checkPlace(fail func(string, ...any) *diag.Diagnostic, where string) error {
+	if !IsNetworkDriver(c.Driver) {
+		if c.Host != "" || c.Port != 0 || c.Database != "" || c.User != "" || c.TLS != "" || c.CAFile != "" {
+			return fail("%s is a SQLite database, and host, port, database, user, tls and ca_file are for the others", where).
+				Fix("write only the path of the file")
+		}
+		return nil
+	}
+	switch {
+	case c.Path != "":
+		return fail("%s names the driver `%s`, which is reached over the network and has no path", where, c.Driver).
+			Fix("write host, database and user instead")
+	case c.Host == "" || c.Database == "" || c.User == "":
+		return fail("%s needs a host, a database and a user", where).
+			Fix(`write, for example: host = "db.example.com", database = "orders", user = "reader"; the password goes in [credentials]`)
+	case strings.ContainsAny(c.Host, " /@?#\\:") || strings.ContainsAny(c.Database+c.User, "\x00\r\n"):
+		return fail("%s has a host, a database or a user with signs that do not belong there", where).
+			Fix("write the host as a name or an address, with no port: the port has its own setting")
+	}
+	if c.Port == 0 {
+		c.Port = defaultPort(c.Driver)
+	}
+	switch c.TLS {
+	case "":
+		c.TLS = TLSVerify
+	case TLSVerify, TLSRequire, TLSDisable:
+	default:
+		return fail("tls in %s is `%s`, and it has to be %s, %s or %s", where, c.TLS, TLSVerify, TLSRequire, TLSDisable).
+			Fix("remove it to have the default, " + TLSVerify)
+	}
+	if c.CAFile != "" && c.TLS != TLSVerify {
+		return fail("ca_file in %s only means something with tls = \"%s\"", where, TLSVerify).
+			Fix("remove it, or remove tls")
+	}
+	return nil
+}
+
+func defaultPort(driver string) int {
+	if driver == "postgres" {
+		return 5432
+	}
+	return 3306
+}
+
+func sqlPort(value any) (int, error) {
+	n, ok := value.(int64)
+	if !ok || n < 1 || n > 65535 {
+		return 0, fmt.Errorf("must be a whole number from 1 to 65535")
+	}
+	return int(n), nil
 }
 
 func knownDriver(name string) bool {

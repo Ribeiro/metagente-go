@@ -232,19 +232,48 @@ agent Pager
   column, or `nothing`. `row` and `value` are a problem when the statement gives more than one row, so a
   statement that was meant to give one does not silently give the wrong one.
 - Only `SELECT` and `WITH`, one statement at a time. The database is opened read only, and the engine
-  is told so as well (SQLite: `mode=ro` and `query_only`).
+  is told so as well: SQLite is opened with `mode=ro` and `query_only`; PostgreSQL, MySQL and MariaDB
+  get every statement in a read only transaction, so even a `SELECT` that calls a function that writes is
+  refused by the server. Still, give the user of the connection only the right to read: that is the
+  protection that does not depend on this program.
 - The columns become the fields of the records, so they need names that are valid fields and are not
   repeated (`AS` gives one). A number beyond 2^53 comes back as text, so it keeps every digit; a blob
   must be text in UTF-8; a time comes as text in RFC 3339.
-- A connection string that is a secret does not go in the file: `[credentials]` names the variable that
-  holds it, by the name of the tool (`orders = "ORDERS_DB"`), and the value of the variable replaces
-  `path`. A problem never shows it, nor the values of a call.
+- A secret does not go in the file: `[credentials]` names the variable that holds it, by the name of the
+  tool (`orders = "ORDERS_DB"`). For SQLite the value replaces `path`; for PostgreSQL, MySQL and MariaDB
+  it is the password. A problem never shows it, nor the values of a call.
 - The database, the connection, and the text of every statement are approved with `metagente trust`
   before the first connection; changing a statement asks again.
 - The most rows and bytes of an answer are `max_sql_rows` (10000) and `max_sql_bytes` (5 MiB) in
   `[limits]`; an answer that passes either is a problem, not a cut answer. Use `LIMIT` and a `repeat`.
-- `driver` is `sqlite` for now. A build made with `-tags nosqlite` leaves the driver out (the releases
-  do not).
+- `driver` is `sqlite`, `postgres`, `mysql` or `mariadb`. A build made with `-tags nosqlite`,
+  `nopostgres` or `nomysql` (which also leaves out MariaDB) leaves the driver out; the releases do not.
+
+A database reached over the network says where it is, and who reads it, instead of a `path`:
+
+```toml
+[credentials]
+orders = "ORDERS_DB_PASSWORD"          # the password, from the environment
+
+[sql.orders-db]
+driver   = "postgres"                  # or "mysql" or "mariadb"
+host     = "db.example.com"            # a name or an address, with no port
+port     = 5432                        # optional: 5432 for postgres, 3306 for mysql and mariadb
+database = "orders"
+user     = "reader"
+tls      = "verify"                    # optional: "verify" (the default), "require" or "disable"
+ca_file  = "certs/ca.pem"              # optional: the certificates to trust, from the folder of the project
+
+[sql.orders-db.statements]
+next_page = "SELECT id, customer FROM orders WHERE id > :after ORDER BY id LIMIT :size"
+```
+
+- `tls = "verify"` encrypts and checks the certificate and the name of the server (with `ca_file` for the
+  certificates of a company, or else those of the system). `require` encrypts and does not check;
+  `disable` sends everything in the clear, which only belongs on a private network that you trust.
+- Host, port, database, user and TLS are what `metagente trust` shows and approves, with the statements.
+- `result = "value"` and the like work the same in every database. What the server sends as a decimal
+  (`numeric`, `DECIMAL`), as a UUID or as JSON comes as text; a `datetime` as text in RFC 3339 in UTC.
 
 The actions of the built in tools:
 

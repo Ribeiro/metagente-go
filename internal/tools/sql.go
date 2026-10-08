@@ -32,6 +32,14 @@ type sqlDriver struct {
 	file bool
 	// dsn gives the connection string for a location, in a way that allows reading only.
 	dsn func(location string) string
+	// connect gives the connection string of a network database: it is given the connection, the
+	// password (which may be empty) and the folder of the project, and builds the string so that the
+	// session can only read.
+	connect func(conn *config.SQLConn, password, root string) (string, error)
+	// readOnlyTx makes each statement run in a transaction that the database knows to be read only.
+	readOnlyTx bool
+	// prepare asks the database to prepare each statement, which is how some drivers give numbers as numbers.
+	prepare bool
 }
 
 // sqlDrivers are the drivers this build has. The file of each driver adds itself, so a build made with
@@ -40,7 +48,10 @@ var sqlDrivers = map[string]sqlDriver{}
 
 // placeholders are the signs each driver wants for the parameters of a statement.
 var placeholders = map[string]func(int) string{
-	"sqlite": func(int) string { return "?" },
+	"sqlite":   func(int) string { return "?" },
+	"postgres": func(n int) string { return "$" + strconv.Itoa(n) },
+	"mysql":    func(int) string { return "?" },
+	"mariadb":  func(int) string { return "?" },
 }
 
 // SQLOptions is what `tool x from sql` needs from the runtime.
@@ -89,11 +100,16 @@ func SQLSpecOf(decl *lang.ToolDecl, conns map[string]*config.SQLConn, credential
 		Credential: credentials[decl.Name], Statements: conn.Names(),
 	}
 	spec.Target = conn.Path
-	if spec.Credential != "" {
+	if config.IsNetworkDriver(conn.Driver) {
+		spec.Target = fmt.Sprintf("%s@%s:%d/%s (tls %s)", conn.User, conn.Host, conn.Port, conn.Database, conn.TLS)
+	} else if spec.Credential != "" {
 		spec.Target = "the address held in the variable " + spec.Credential
 	}
 	sum := sha256.New()
 	fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", conn.Driver, conn.Path, spec.Credential)
+	if config.IsNetworkDriver(conn.Driver) {
+		fmt.Fprintf(sum, "%s\x00%d\x00%s\x00%s\x00%s\x00%s\x00", conn.Host, conn.Port, conn.Database, conn.User, conn.TLS, conn.CAFile)
+	}
 	for _, name := range spec.Statements {
 		st := conn.Statements[name]
 		fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", name, st.Result, st.Parsed.Text)
@@ -235,12 +251,51 @@ func (s *SQL) Call(ctx context.Context, action string, args Args) (value.Value, 
 	if err != nil {
 		return value.Nothing, err
 	}
-	rows, err := db.QueryContext(ctx, st.query, bound...)
+	return s.run(ctx, db, st, bound)
+}
+
+// run runs the statement, in a read only transaction when the driver has them, and gives its answer.
+func (s *SQL) run(ctx context.Context, db *sql.DB, st *sqlStatement, bound []any) (value.Value, error) {
+	driver := sqlDrivers[s.conn.Driver]
+	var q interface {
+		QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	} = db
+	if driver.readOnlyTx {
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return value.Nothing, s.failure(ctx, st, err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		q = tx
+		if driver.prepare {
+			stmt, err := tx.PrepareContext(ctx, st.query)
+			if err != nil {
+				return value.Nothing, s.failure(ctx, st, err)
+			}
+			defer stmt.Close()
+			q = preparedQuery{stmt}
+		}
+	} else if driver.prepare {
+		stmt, err := db.PrepareContext(ctx, st.query)
+		if err != nil {
+			return value.Nothing, s.failure(ctx, st, err)
+		}
+		defer stmt.Close()
+		q = preparedQuery{stmt}
+	}
+	rows, err := q.QueryContext(ctx, st.query, bound...)
 	if err != nil {
 		return value.Nothing, s.failure(ctx, st, err)
 	}
 	defer rows.Close()
 	return s.collect(ctx, st, rows)
+}
+
+// preparedQuery runs a statement that was prepared already: the text is not given again.
+type preparedQuery struct{ stmt *sql.Stmt }
+
+func (p preparedQuery) QueryContext(ctx context.Context, _ string, args ...any) (*sql.Rows, error) {
+	return p.stmt.QueryContext(ctx, args...)
 }
 
 // bind turns the values of the call into the parameters of the statement, in the order of its places.
@@ -318,14 +373,14 @@ func (s *SQL) database(ctx context.Context) (*sql.DB, error) {
 	driver, ok := sqlDrivers[s.conn.Driver]
 	if !ok {
 		return nil, diag.Newf("this build of Metagente was made without the `%s` driver", s.conn.Driver).
-			Fix("use a build that has it (the releases do), or build without the tag nosqlite")
+			Fixf("use a build that has it (the releases do), or build without the tag %s", omitTag(s.conn.Driver))
 	}
-	location, err := s.location(driver)
+	location, dsn, err := s.where(driver)
 	if err != nil {
 		return nil, err
 	}
-	db, err := s.opts.Pool.get(s.conn.Driver+"\x00"+location, func() (*sql.DB, error) {
-		db, err := sql.Open(driver.name, driver.dsn(location))
+	db, err := s.opts.Pool.get(s.conn.Driver+"\x00"+dsn, func() (*sql.DB, error) {
+		db, err := sql.Open(driver.name, dsn)
 		if err != nil {
 			return nil, err
 		}
@@ -342,6 +397,39 @@ func (s *SQL) database(ctx context.Context) (*sql.DB, error) {
 		return nil, s.openFailure(err, location)
 	}
 	return db, nil
+}
+
+// omitTag is the build tag that leaves a driver out.
+func omitTag(driver string) string {
+	switch driver {
+	case "postgres":
+		return "nopostgres"
+	case "mysql", "mariadb":
+		return "nomysql"
+	}
+	return "nosqlite"
+}
+
+// where gives the connection string, and the place that an error must not name (the path of a file).
+// A network database has its host in the errors: it is what a person needs to see, and it is no secret.
+func (s *SQL) where(driver sqlDriver) (location, dsn string, err error) {
+	if driver.connect != nil {
+		password := ""
+		if variable := s.spec.Credential; variable != "" {
+			password = s.opts.Getenv(variable)
+			if password == "" {
+				return "", "", diag.Newf("the password of the database for `%s` is not set: the variable %s is empty", s.decl.Name, variable).
+					Fixf("set it in the terminal that runs Metagente, for example: export %s=...", variable)
+			}
+		}
+		dsn, err = driver.connect(s.conn, password, s.opts.Root)
+		return "", dsn, err
+	}
+	location, err = s.location(driver)
+	if err != nil {
+		return "", "", err
+	}
+	return location, driver.dsn(location), nil
 }
 
 // location says where the database is: the variable of a credential if one is set, or the path of the
@@ -393,8 +481,12 @@ func (s *SQL) clean(err error) string {
 }
 
 func (s *SQL) openFailure(err error, location string) error {
-	return diag.Newf("I could not open the database of `%s`: %s", s.decl.Name,
-		strings.ReplaceAll(s.clean(err), location, "the database")).
+	text := s.clean(err)
+	if location == "" {
+		return diag.Newf("I could not reach the database of `%s`: %s", s.decl.Name, text).
+			Fixf("check the host, the port, the user and the password of [sql.%s], and that this computer may reach the database", s.conn.Name)
+	}
+	return diag.Newf("I could not open the database of `%s`: %s", s.decl.Name, strings.ReplaceAll(text, location, "the database")).
 		Fix("check the path, and that the file is a database that you may read")
 }
 
@@ -552,4 +644,12 @@ func cellValue(column string, cell any) (value.Value, int64, error) {
 		return value.Text(text), int64(len(text)), nil
 	}
 	return value.Nothing, 0, fmt.Errorf("the column `%s` holds a kind of value that I cannot read", column)
+}
+
+// absolute is the path of a file named in metagente.toml: it starts at the folder of the project.
+func absolute(root, path string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(root, path)
 }

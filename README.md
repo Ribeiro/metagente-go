@@ -224,7 +224,7 @@ metagente run my-agent.ag    # an agent with `tool http`
   program or connects to an address runs before the person approved it, for this
   project. `run` asks when there is a terminal and refuses when there is not.
 - The built in tools: `file`, `http`, `env`, `state`, `clock`.
-- `tool orders from sql "orders-db"`: reads a database (SQLite for now) with named, parameterized
+- `tool orders from sql "orders-db"`: reads a database (SQLite, PostgreSQL, MySQL, MariaDB) with named, parameterized
   `SELECT` statements written in `[sql.orders-db]` of `metagente.toml`; read only, with limits, approved
   by `metagente trust`. See `docs/LANGUAGE.md`.
 - Configuration: `metagente.toml`, `--config`, and the environment overrides.
