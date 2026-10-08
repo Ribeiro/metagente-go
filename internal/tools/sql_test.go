@@ -468,7 +468,7 @@ func TestTheFingerprintChangesWithTheTextOfAStatementOrTheDatabase(t *testing.T)
 		return spec.Fingerprint
 	}
 	base := fingerprint("a.db", "select id from orders", "")
-	if again := fingerprint("a.db", "select id from orders", ""); again != base {
+	if fingerprint("a.db", "select id from orders", "") != base {
 		t.Error("the same connection gave another fingerprint")
 	}
 	for name, other := range map[string]string{

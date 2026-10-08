@@ -82,64 +82,62 @@ type scanner struct {
 func (sc *scanner) run() error {
 	sc.semicolon = -1
 	sc.seen = map[string]bool{}
-	t := sc.text
-	for i := 0; i < len(t); {
-		c := t[i]
-		switch {
-		case c == '\'' || c == '"' || c == '`':
-			if err := sc.noMoreAfterEnd(i); err != nil {
-				return err
-			}
-			end, ok := skipQuoted(t, i)
-			if !ok {
-				return errors.New("a quote is never closed")
-			}
-			i = end
-		case c == '-' && i+1 < len(t) && t[i+1] == '-':
-			i = skipLine(t, i)
-		case c == '/' && i+1 < len(t) && t[i+1] == '*':
-			end := strings.Index(t[i+2:], "*/")
-			if end < 0 {
-				return errors.New("a comment is never closed")
-			}
-			i += 2 + end + 2
-		case c == ';':
-			if sc.semicolon >= 0 {
-				return errors.New("it has more than one statement")
-			}
-			sc.semicolon = i
-			i++
-		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
-			i++
-		case c == ':':
-			if err := sc.noMoreAfterEnd(i); err != nil {
-				return err
-			}
-			next, err := sc.colon(i)
-			if err != nil {
-				return err
-			}
-			i = next
-		case isIdentStart(c):
-			if err := sc.noMoreAfterEnd(i); err != nil {
-				return err
-			}
-			end := i
-			for end < len(t) && isIdentChar(t[end]) {
-				end++
-			}
-			if sc.first == "" {
-				sc.first = strings.ToLower(t[i:end])
-			}
-			i = end
-		default:
-			if err := sc.noMoreAfterEnd(i); err != nil {
-				return err
-			}
-			i++
+	for i := 0; i < len(sc.text); {
+		next, err := sc.step(i)
+		if err != nil {
+			return err
 		}
+		i = next
 	}
 	return nil
+}
+
+// step reads what begins at i and returns where the next thing begins.
+func (sc *scanner) step(i int) (int, error) {
+	t := sc.text
+	c := t[i]
+	switch {
+	case c == '-' && i+1 < len(t) && t[i+1] == '-':
+		return skipLine(t, i), nil
+	case c == '/' && i+1 < len(t) && t[i+1] == '*':
+		end := strings.Index(t[i+2:], "*/")
+		if end < 0 {
+			return 0, errors.New("a comment is never closed")
+		}
+		return i + 2 + end + 2, nil
+	case c == ';':
+		if sc.semicolon >= 0 {
+			return 0, errors.New("it has more than one statement")
+		}
+		sc.semicolon = i
+		return i + 1, nil
+	case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+		return i + 1, nil
+	}
+	// Everything else is code, and none may follow the final semicolon.
+	if err := sc.noMoreAfterEnd(i); err != nil {
+		return 0, err
+	}
+	switch {
+	case c == '\'' || c == '"' || c == '`':
+		end, ok := skipQuoted(t, i)
+		if !ok {
+			return 0, errors.New("a quote is never closed")
+		}
+		return end, nil
+	case c == ':':
+		return sc.colon(i)
+	case isIdentStart(c):
+		end := i
+		for end < len(t) && isIdentChar(t[end]) {
+			end++
+		}
+		if sc.first == "" {
+			sc.first = strings.ToLower(t[i:end])
+		}
+		return end, nil
+	}
+	return i + 1, nil
 }
 
 // noMoreAfterEnd refuses code after the final semicolon: only spaces and comments may follow it.
