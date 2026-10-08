@@ -10,7 +10,9 @@ import (
 )
 
 var (
-	agentWords     = []string{"goal", "tool", "link", "remote", "accepts", "on"}
+	agentWords = []string{"goal", "tool", "link", "remote", "accepts", "on"}
+	// builtinTools are the tools the hint of an unknown tool lists. `codec` is not in it yet: the hint is
+	// part of the record of the language, which only the maintainer rewrites (make characterize).
 	builtinTools   = []string{"file", "http", "env", "state", "clock"}
 	statementWords = []string{"reply", "fail", "if", "otherwise", "for", "repeat", "think"}
 )
@@ -377,7 +379,7 @@ func (p *parser) toolDecl(c *cursor, span Span) (*ToolDecl, error) {
 		return p.fileTool(c, span)
 	case "http":
 		return p.httpTool(c, span)
-	case "state", "clock":
+	case "state", "clock", "codec":
 		return p.plainTool(c, span, name)
 	case "env":
 		return p.envTool(c, span)
@@ -454,11 +456,14 @@ func (p *parser) allowClause(c *cursor, decl *ToolDecl) error {
 	return nil
 }
 
-// plainTool reads `tool state` and `tool clock`, which take nothing.
+// plainTool reads `tool state`, `tool clock` and `tool codec`, which take nothing.
 func (p *parser) plainTool(c *cursor, span Span, name string) (*ToolDecl, error) {
 	kind := ToolState
-	if name == "clock" {
+	switch name {
+	case "clock":
 		kind = ToolClock
+	case "codec":
+		kind = ToolCodec
 	}
 	if err := p.finish(c); err != nil {
 		return nil, err

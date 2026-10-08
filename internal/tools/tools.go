@@ -65,6 +65,8 @@ func Build(def *lang.AgentDef, opts Options) (Registry, error) {
 			registry[decl.Name] = NewClock(decl, opts.MaxWaitSeconds)
 		case lang.ToolEnv:
 			registry[decl.Name] = NewEnv(decl, opts.HiddenEnv)
+		case lang.ToolCodec:
+			registry[decl.Name] = NewCodec(decl, opts.Limits)
 		case lang.ToolSQL:
 			tool, err := NewSQL(decl, opts.SQL, opts.Limits)
 			if err != nil {

@@ -8,7 +8,7 @@ import (
 )
 
 // BuiltinNames are the names of the built in tools.
-var BuiltinNames = []string{"file", "http", "env", "state", "clock"}
+var BuiltinNames = []string{"file", "http", "env", "state", "clock", "codec"}
 
 // IsBuiltinName reports whether name is one of the built in tools.
 func IsBuiltinName(name string) bool { return isBuiltinName(name) }

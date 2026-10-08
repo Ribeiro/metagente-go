@@ -74,8 +74,10 @@ type Serve struct {
 // Limits is the [limits] section: ceilings that keep one agent from using all
 // the memory of the machine.
 type Limits struct {
-	MaxFileBytes       int64 // F2
-	MaxHTTPBytes       int64 // H3
+	MaxFileBytes int64 // F2
+	MaxHTTPBytes int64 // H3
+	// MaxDataBytes is the most bytes that `tool data` reads, writes or unpacks in one action.
+	MaxDataBytes       int64
 	MaxToolResultBytes int64 // L3
 	MaxMCPCalls        int   // E3
 	MaxMCPResultBytes  int64 // what one tool server answer may hold
@@ -160,6 +162,7 @@ func Default() *Config {
 		Limits: Limits{
 			MaxFileBytes:       1 << 20,
 			MaxHTTPBytes:       5 << 20,
+			MaxDataBytes:       8 << 20,
 			MaxToolResultBytes: 32 << 10,
 			MaxMCPCalls:        8,
 			MaxMCPResultBytes:  5 << 20,
@@ -284,6 +287,7 @@ var settings = map[string]setter{
 	"serve.auth_failures_per_minute":    setInt(func(c *Config) *int { return &c.Serve.AuthFailuresPerMinute }, 1),
 
 	"limits.max_file_bytes":        setInt64(func(c *Config) *int64 { return &c.Limits.MaxFileBytes }, 1),
+	"limits.max_data_bytes":        setInt64(func(c *Config) *int64 { return &c.Limits.MaxDataBytes }, 1),
 	"limits.max_http_bytes":        setInt64(func(c *Config) *int64 { return &c.Limits.MaxHTTPBytes }, 1),
 	"limits.max_tool_result_bytes": setInt64(func(c *Config) *int64 { return &c.Limits.MaxToolResultBytes }, 1),
 	"limits.max_mcp_calls":         setInt(func(c *Config) *int { return &c.Limits.MaxMCPCalls }, 1),
@@ -408,13 +412,9 @@ func (cfg *Config) apply(name, text string) error {
 			// The keys are the names an agent file gives its remote agents and tool
 			// servers, so they are not in the table. The value is never repeated: it
 			// is probably the token itself.
-			variable, _ := e.value.(string)
-			if !secret.ValidEnvName(variable) {
-				return diag.Newf("`%s` in [credentials] must be the NAME of an environment variable, such as BOB_TOKEN, not the token itself", e.key).
-					At(name, e.line, 1).WithSource(maskLine(text, e.line)).
-					Fix("put the token in the variable (export BOB_TOKEN=...) and write only its name here")
+			if err := cfg.addCredential(name, text, e); err != nil {
+				return err
 			}
-			cfg.Credentials[e.key] = variable
 			continue
 		case e.section == "sql":
 			// The key is the name of a connection, and the value is the table under [sql.NAME].
@@ -441,17 +441,34 @@ func (cfg *Config) apply(name, text string) error {
 			continue
 		}
 		if err := set(cfg, e.value); err != nil {
-			source := text
-			if id == "network.http_proxy" {
-				// The address may hold a password, which an error never repeats.
-				source = maskLine(text, e.line)
-			}
-			return diag.Newf("`%s` in [%s] must be %s", e.key, e.section, err.Error()).
-				At(name, e.line, 1).WithSource(source).
-				Fix("change the value in " + FileName)
+			return settingProblem(name, text, e, err)
 		}
 	}
 	return nil
+}
+
+// addCredential reads one line of [credentials]: the NAME of the variable that holds a token.
+func (cfg *Config) addCredential(name, text string, e entry) error {
+	variable, _ := e.value.(string)
+	if !secret.ValidEnvName(variable) {
+		return diag.Newf("`%s` in [credentials] must be the NAME of an environment variable, such as BOB_TOKEN, not the token itself", e.key).
+			At(name, e.line, 1).WithSource(maskLine(text, e.line)).
+			Fix("put the token in the variable (export BOB_TOKEN=...) and write only its name here")
+	}
+	cfg.Credentials[e.key] = variable
+	return nil
+}
+
+// settingProblem is the problem of a value that a setting does not accept.
+func settingProblem(name, text string, e entry, err error) error {
+	source := text
+	if e.section+"."+e.key == "network.http_proxy" {
+		// The address may hold a password, which an error never repeats.
+		source = maskLine(text, e.line)
+	}
+	return diag.Newf("`%s` in [%s] must be %s", e.key, e.section, err.Error()).
+		At(name, e.line, 1).WithSource(source).
+		Fix("change the value in " + FileName)
 }
 
 // applyEnv applies the environment variables that override the file.

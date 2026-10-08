@@ -235,6 +235,9 @@ metagente run my-agent.ag    # an agent with `tool http`
   by `metagente trust`. A connection with `mode = "write"` may also run named `INSERT`, `UPDATE` and
   `DELETE` statements, a list of rows in one transaction, and transactions of several statements (never
   DDL), approved as a database that is changed. See `docs/LANGUAGE.md`.
+- `tool codec`: JSON, gzip, SHA-256, UUID v7 and records made from values, for the agents of a pipeline that
+  move rows through a broker; it touches nothing outside its values, with a limit of bytes
+  (`limits.max_data_bytes`). See `docs/LANGUAGE.md`.
 - Configuration: `metagente.toml`, `--config`, and the environment overrides.
 - `think "..." [using a b]`: the agent asks a language model, which may use the tools it
   declared. The provider is chosen only in `metagente.toml`: `anthropic`, or

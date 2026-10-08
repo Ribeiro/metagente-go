@@ -80,6 +80,7 @@ const (
 	ToolMCP
 	ToolSQL
 	ToolBroker
+	ToolCodec
 )
 
 // ToolDecl is one `tool` line.

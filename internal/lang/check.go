@@ -434,7 +434,9 @@ func (w *walker) call(call *CallExpr, vars map[string]bool) {
 		return
 	}
 	w.missingValues(call, info)
-	w.unexpectedValues(call, info)
+	if !info.Open {
+		w.unexpectedValues(call, info)
+	}
 	if tool.Kind == ToolBroker {
 		w.publishSubject(call, tool)
 	}
