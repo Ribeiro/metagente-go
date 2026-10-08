@@ -252,6 +252,24 @@ func (w *walker) add(d *diag.Diagnostic) {
 	w.res.Problems = append(w.res.Problems, d)
 }
 
+// retryWait warns about a wait suggested by `retry in N seconds` that cannot be meant: a wait that is not
+// positive, or longer than the most that is suggested.
+func (w *walker) retryWait(s *FailRetryStmt) {
+	if !s.HasAfter {
+		return
+	}
+	span := Span{Line: s.Line, Col: s.AfterCol}
+	switch {
+	case s.After <= 0:
+		w.res.Warnings = append(w.res.Warnings, w.at(span, "the wait of `retry in` is not a positive number of seconds").
+			Fix("write a number above 0, for example: retry in 60 seconds").AsWarning())
+	case s.After > MaxRetryAfter:
+		w.res.Warnings = append(w.res.Warnings, w.at(span,
+			fmt.Sprintf("the wait of `retry in` is longer than the %d seconds that are suggested at most, so it is cut to that", MaxRetryAfter)).
+			Fixf("write %d seconds or less", MaxRetryAfter).AsWarning())
+	}
+}
+
 func (w *walker) at(span Span, message string) *diag.Diagnostic {
 	return atSpan(w.agent, span, message)
 }
@@ -287,6 +305,9 @@ func (w *walker) stmts(stmts []Stmt, vars map[string]bool) {
 			w.expr(s.Value, vars)
 		case *FailStmt:
 			w.expr(s.Value, vars)
+		case *FailRetryStmt:
+			w.expr(s.Value, vars)
+			w.retryWait(s)
 		case *IfStmt:
 			w.expr(s.Cond, vars)
 			w.stmts(s.Then, vars)

@@ -189,19 +189,32 @@ type (
 		HasLimit bool
 		Body     []Stmt
 	}
-	// FailStmt is `fail "message"`.
+	// FailStmt is `fail "message"`: the failure is final.
 	FailStmt struct {
 		Span
 		Value Expr
 	}
+	// FailRetryStmt is `fail "message" retry`, or `fail "message" retry in 60 seconds`: the failure may
+	// pass, so whoever called may ask again. It is a statement of its own, and not a mark on FailStmt,
+	// so that what the parser makes of a program with no `retry` stays as it was.
+	FailRetryStmt struct {
+		Span
+		Value Expr
+		// After is the N of `in N seconds`, a suggestion for the wait; it is only meant when HasAfter is true.
+		After    float64
+		HasAfter bool
+		// AfterCol is where the number is written, for the checks.
+		AfterCol int
+	}
 )
 
-func (*AssignStmt) stmtNode() {}
-func (*ExprStmt) stmtNode()   {}
-func (*ReplyStmt) stmtNode()  {}
-func (*IfStmt) stmtNode()     {}
-func (*ForStmt) stmtNode()    {}
-func (*FailStmt) stmtNode()   {}
+func (*AssignStmt) stmtNode()    {}
+func (*ExprStmt) stmtNode()      {}
+func (*ReplyStmt) stmtNode()     {}
+func (*IfStmt) stmtNode()        {}
+func (*ForStmt) stmtNode()       {}
+func (*FailStmt) stmtNode()      {}
+func (*FailRetryStmt) stmtNode() {}
 
 func (*RepeatStmt) stmtNode() {
 	// Only marks RepeatStmt as a statement.

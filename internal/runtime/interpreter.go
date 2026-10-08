@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"slices"
@@ -248,7 +249,10 @@ func (a *Agent) execStmt(ctx context.Context, stmt lang.Stmt, scope *env, call *
 	case *lang.RepeatStmt:
 		return a.execRepeat(ctx, s, scope, call)
 	case *lang.FailStmt:
-		return a.execFail(ctx, s, scope, call)
+		return a.execFail(ctx, s.Value, s.Span, nil, scope, call)
+	case *lang.FailRetryStmt:
+		after := retryWait(s)
+		return a.execFail(ctx, s.Value, s.Span, &after, scope, call)
 	}
 	return value.Nothing, false, nil
 }
@@ -352,12 +356,26 @@ func (a *Agent) loopTooLong(s *lang.RepeatStmt, ceiling int) error {
 		Fix("make sure the lines under it change what the condition looks at; if more turns are really needed, raise max_loop_turns in the [runtime] section of metagente.toml")
 }
 
-func (a *Agent) execFail(ctx context.Context, s *lang.FailStmt, scope *env, call *Call) (value.Value, bool, error) {
-	message, err := a.eval(ctx, s.Value, scope, call)
+// execFail ends the section with a failure. A non nil retry says that the failure may pass, and the wait
+// that is suggested.
+func (a *Agent) execFail(ctx context.Context, text lang.Expr, span lang.Span, retry *time.Duration, scope *env, call *Call) (value.Value, bool, error) {
+	message, err := a.eval(ctx, text, scope, call)
 	if err != nil {
 		return value.Nothing, false, err
 	}
-	return value.Nothing, false, a.diag(s.Span, message.Display())
+	d := a.diag(span, message.Display())
+	if retry != nil {
+		d.WithRetry(*retry)
+	}
+	return value.Nothing, false, d
+}
+
+// retryWait is the wait that `retry in N seconds` suggests, cut to the most that is suggested.
+func retryWait(s *lang.FailRetryStmt) time.Duration {
+	if !s.HasAfter || s.After <= 0 {
+		return 0
+	}
+	return time.Duration(math.Min(s.After, lang.MaxRetryAfter) * float64(time.Second))
 }
 
 func (a *Agent) eval(ctx context.Context, expr lang.Expr, scope *env, call *Call) (value.Value, error) {

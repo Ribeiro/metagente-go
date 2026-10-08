@@ -26,6 +26,12 @@ minor versions.
   connection string only through `[credentials]`, and the database and the statements are approved by
   `metagente trust`. SQLite (pure Go, no C compiler) is the first driver; a build with `-tags nosqlite`
   leaves it out. The program grows by about 6 MB with it.
+- `fail "message" retry` and `fail "message" retry in 60 seconds`: a failure that may pass. A `fail` with no
+  `retry` is final, as before. `metagente run` prints a note under the problem; a linked agent keeps the
+  mark when it fails inside another; over A2A the failed task carries `metadata.metagente.retry` and
+  `retryAfterSeconds`, and a remote agent called by Metagente passes the mark on. `check` warns about a wait
+  that is not above 0 or is longer than 3600 seconds. This is the first part of phase 2 of the asynchronous
+  ELT (`docs/design-async-elt.md`); `metagente consume` will use it.
 - `tool … from sql` reads PostgreSQL (`driver = "postgres"`), MySQL and MariaDB (`"mysql"`, `"mariadb"`) too.
   A network database is written with `host`, `port`, `database`, `user`, `tls` (`verify`, `require`,
   `disable`) and `ca_file`; the password comes from `[credentials]`. Every statement runs in a read only

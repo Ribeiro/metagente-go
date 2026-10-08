@@ -600,8 +600,10 @@ func (p *parser) statement(line Line) (Stmt, error) {
 	}
 
 	switch first.Word {
-	case "reply", "fail":
-		return p.replyOrFail(c, first.Word, span)
+	case "reply":
+		return p.replyStatement(c, span)
+	case "fail":
+		return p.failStatement(c, span)
 	case "if":
 		return p.ifStatement(c, line, span)
 	case "otherwise":
@@ -631,8 +633,8 @@ func (p *parser) exprStatement(c *cursor, span Span) (Stmt, error) {
 	return &ExprStmt{Span: span, Expr: expr}, nil
 }
 
-// replyOrFail reads `reply value` and `fail value`.
-func (p *parser) replyOrFail(c *cursor, word string, span Span) (Stmt, error) {
+// replyStatement reads `reply value`.
+func (p *parser) replyStatement(c *cursor, span Span) (Stmt, error) {
 	c.i++
 	value, err := p.expr(c)
 	if err != nil {
@@ -641,10 +643,51 @@ func (p *parser) replyOrFail(c *cursor, word string, span Span) (Stmt, error) {
 	if err := p.finish(c); err != nil {
 		return nil, err
 	}
-	if word == "reply" {
-		return &ReplyStmt{Span: span, Value: value}, nil
+	return &ReplyStmt{Span: span, Value: value}, nil
+}
+
+// failStatement reads `fail value`, with the optional `retry` and `retry in N seconds`. `retry` has a
+// meaning only right after the value, so it is still a name anywhere else.
+func (p *parser) failStatement(c *cursor, span Span) (Stmt, error) {
+	c.i++ // fail
+	value, err := p.expr(c)
+	if err != nil {
+		return nil, err
 	}
-	return &FailStmt{Span: span, Value: value}, nil
+	if !c.peekWord("retry") {
+		if err := p.finish(c); err != nil {
+			return nil, err
+		}
+		return &FailStmt{Span: span, Value: value}, nil
+	}
+	c.i++
+	stmt := &FailRetryStmt{Span: span, Value: value}
+	if c.peekWord("in") {
+		if err := p.retryWait(c, stmt); err != nil {
+			return nil, err
+		}
+	}
+	if err := p.finish(c); err != nil {
+		return nil, err
+	}
+	return stmt, nil
+}
+
+// retryWait reads `in N seconds`, with the cursor at `in`.
+func (p *parser) retryWait(c *cursor, stmt *FailRetryStmt) error {
+	const example = `write: fail "The destination is busy" retry in 60 seconds`
+	c.i++
+	t := c.peek()
+	if t == nil || t.Kind != TokNumber {
+		return p.missing(c, "`retry in` needs a number of seconds", example)
+	}
+	stmt.After, stmt.HasAfter, stmt.AfterCol = t.Number, true, t.Col
+	c.i++
+	if !(c.peekWord("seconds") || c.peekWord("second")) {
+		return p.missing(c, "after the number I expected `seconds`", example)
+	}
+	c.i++
+	return nil
 }
 
 // ifStatement reads `if condition`, the lines under it, and the `otherwise` that may follow.

@@ -758,3 +758,34 @@ func TestACardRefusedForTheTokenSaysWhatToDoAboutTheToken(t *testing.T) {
 	_, err = refusing(404).tool(t, nil).Actions(context.Background())
 	mustContain(t, rendered(t, err), "answered 404", "http://127.0.0.1:8080/agents/Bob")
 }
+
+func TestATaskThatMayPassKeepsThatMarkWhenItIsTold(t *testing.T) {
+	f := newFakeAgent(t)
+	f.answer = func(string, map[string]any) (int, string) {
+		return okResult(`{"task":{"id":"t1","status":{"state":"TASK_STATE_FAILED","message":{"parts":[{"text":"the destination is busy\nThis may pass: it can be tried again in 90 seconds."}]}},"metadata":{"metagente":{"retry":true,"retryAfterSeconds":90}}}}`)
+	}
+	_, err := call(t, f.tool(t, nil), "ask", "city", "Lisbon")
+	shown := rendered(t, err)
+	mustContain(t, shown, "  the destination is busy")
+	if strings.Count(shown, "This may pass") != 1 {
+		t.Errorf("the note is not said once:\n%s", shown)
+	}
+	r, ok := diag.RetryOf(err)
+	if !ok || r.After != 90*time.Second {
+		t.Errorf("retry = %v, %v", r, ok)
+	}
+	f.answer = func(string, map[string]any) (int, string) {
+		return okResult(`{"task":{"id":"t1","status":{"state":"TASK_STATE_FAILED","message":{"parts":[{"text":"no"}]}},"metadata":{"metagente":{"retry":true,"retryAfterSeconds":999999}}}}`)
+	}
+	_, err = call(t, f.tool(t, nil), "ask", "city", "Lisbon")
+	if r, _ := diag.RetryOf(err); r == nil || r.After != time.Hour {
+		t.Errorf("the wait is not cut to an hour: %v", r)
+	}
+	f.answer = func(string, map[string]any) (int, string) {
+		return okResult(`{"task":{"id":"t1","status":{"state":"TASK_STATE_FAILED","message":{"parts":[{"text":"no"}]}}}}`)
+	}
+	_, err = call(t, f.tool(t, nil), "ask", "city", "Lisbon")
+	if _, ok := diag.RetryOf(err); ok {
+		t.Error("a final failure came as one that may pass")
+	}
+}
