@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -41,6 +42,17 @@ func databaseSource(t *testing.T, dir, driver string, db server) {
 	write(t, path, base)
 }
 
+// extractorRun runs the program the way the machine of the Extractor has it: the password of the source and the one
+// of the broker are two variables, and they are not the same.
+func extractorRun(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command(binary, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "DB_PASSWORD="+dbSecret, "BROKER_PASSWORD="+natsSecret, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 func TestTheExtractorReadsASourceOfEveryDatabase(t *testing.T) {
 	for _, driver := range append([]string{"mysql", "mariadb"}, databases...) {
 		t.Run(driver, func(t *testing.T) {
@@ -49,10 +61,10 @@ func TestTheExtractorReadsASourceOfEveryDatabase(t *testing.T) {
 			stream := s.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: 1000})
 			dir := s.extractorProject(t)
 			databaseSource(t, dir, driver, db)
-			if out, err := metagente(t, dir, natsSecret, "trust", "extractor.ag", "--yes"); err != nil {
+			if out, err := extractorRun(t, dir, "trust", "extractor.ag", "--yes"); err != nil {
 				t.Fatalf("trust: %v\n%s", err, out)
 			}
-			out, err := metagente(t, dir, natsSecret, "run", "extractor.ag", "extract", "job=j1", "size=1000", "bytes=5000000")
+			out, err := extractorRun(t, dir, "run", "extractor.ag", "extract", "job=j1", "size=1000", "bytes=5000000")
 			if err != nil || !strings.Contains(out, "job j1: 3 batches, 2500 rows") {
 				t.Fatalf("extractor (err = %v):\n%s", err, out)
 			}
