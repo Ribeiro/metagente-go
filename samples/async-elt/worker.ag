@@ -10,6 +10,8 @@ agent Worker
   accepts control v job_id kind batches rows  # register the totals of a job, and close it if everything is done
   # Staging holds the rows as they came: clean it from time to time.
   accepts purge days  # delete from staging the batches that were done more than this many days ago
+  # The control tables are cleaned too, much later than staging: only the jobs that are done and have nothing in staging.
+  accepts purge_control days  # delete from the control tables the jobs that were done more than this many days ago
   # The model step is for the jobs that have a budget. Without one it is off.
   accepts budget job max_calls max_tokens  # give a job a budget of requests and tokens for the model step
   accepts resume job  # let a paused job go on
@@ -84,6 +86,10 @@ agent Worker
   on purge
     removed = dest.purge days: days
     reply "removed {removed} rows from staging"
+
+  on purge_control
+    removed = dest.purge_control days: days
+    reply "removed {removed.old_jobs} finished jobs from the control tables"
 
   on budget
     given = dest.open_budget job: job max_calls: max_calls max_tokens: max_tokens

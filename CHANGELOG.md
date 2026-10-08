@@ -9,6 +9,10 @@ minor versions.
 
 ### Added
 
+- `samples/async-elt`: the message `purge_control days=N` of the Worker cleans the control tables (SQLite and PostgreSQL):
+  the jobs that are `done`, ended more than N days ago and have nothing left in staging are deleted from all of them,
+  in one transaction; a job that needs a person stays, and the final table is never touched. With it, every retention
+  time of the design has a place to be set.
 - `tool … from sql` reads and writes SQL Server (`driver = "sqlserver"`) and Oracle (`driver = "oracle"`) too, with
   drivers written in Go (no client to install). Statements are written in the dialect of each database; Oracle
   asks for a read only transaction before each read, and SQL Server, which has none, relies on the rights of the

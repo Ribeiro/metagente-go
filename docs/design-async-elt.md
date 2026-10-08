@@ -436,7 +436,7 @@ can be configured. Both stay open for the owner of data protection of the organi
    with a reason: broker 7 days, dead letters 14 days, staging 7 days after the end of the job, control tables
    1 year (section 10). These are the values to start with, not fixed ones: the age of the stream is set
    when the operator makes it (`--max-age`), the staging purge takes the number of days in its message, and
-   whatever is added to purge the control tables takes its time the same way. The time to answer a request
+   the purge of the control tables (`purge_control` in the sample) takes its time the same way. The time to answer a request
    to erase data has to be longer than the retention.
 4. **Bad rows.** *Decided.* Quarantine and go on, with a brake: if more than a share of a batch (20% to
    start) is rejected, the batch fails; if several do, the job pauses. A high rate of rejection is

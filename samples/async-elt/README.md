@@ -98,6 +98,7 @@ metagente consume worker.ag --from main --subject 'etl.*.batch'   --dead etl.dea
 metagente consume worker.ag --from main --subject 'etl.*.control' --dead etl.dead --message control
 metagente consume worker.ag --from main --subject 'etl.*.retransform' --dead etl.dead --message retransform   # asks of the sweeper
 metagente run worker.ag purge days=7        # from time to time, from cron or a timer
+metagente run worker.ag purge_control days=365   # the control tables, much later (after purge)
 ```
 
 For **each batch** (`on batch`) it does this, and the state of the batch is changed in the same transaction as
@@ -233,8 +234,12 @@ days is in the message `purge`, so each project chooses its own.
 
 **Retention, where each time is set** (the values to start with are in the design, and none is fixed):
 the broker, with `--max-age` when the stream `ETL` is made (7 days); the dead letters, with `--max-age` on their
-stream (14 days); the staging table, with the days of `purge` (7 days after the job ends); the control tables hold
-no personal data and have no purge yet (the design says 1 year).
+stream (14 days); the staging table, with the days of `purge` (7 days after the job ends); the control tables, with the days of
+`purge_control` (1 year). `purge_control` forgets only the jobs that are `done`, ended more than that many days ago and
+have nothing left in staging (run `purge` first); a job that is paused, mismatched or has a batch that failed is for a
+person and stays. It deletes the rows of the job from all the control tables in one transaction and never touches the
+final table. A job that is forgotten can no longer be told apart from a new one, so keep this time longer than the
+retention of the broker.
 
 **A PostgreSQL destination:** make the tables with `migrations/destination.postgres.sql`, put the password in
 the variable `DEST_DB_PASSWORD`, and run the commands above with `--config metagente.postgres.toml`. The file
