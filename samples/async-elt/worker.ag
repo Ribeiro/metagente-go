@@ -2,6 +2,7 @@ agent Worker
   goal "Land the batches of an ETL job in the destination, transform them, and close the job"
   tool dest from sql "dest"
   tool codec
+  link Enricher from "enricher.ag"
 
   # One batch, as the Extractor publishes it. The fields are all of the event.
   accepts batch v event_id job_id seq table key after upto read_at columns row_count encoding payload sha256  # land one batch and transform it
@@ -9,6 +10,9 @@ agent Worker
   accepts control v job_id kind batches rows  # register the totals of a job, and close it if everything is done
   # Staging holds the rows as they came: clean it from time to time.
   accepts purge days  # delete from staging the batches that were done more than this many days ago
+  # The model step is for the jobs that have a budget. Without one it is off.
+  accepts budget job max_calls max_tokens  # give a job a budget of requests and tokens for the model step
+  accepts resume job  # let a paused job go on
 
   on batch
     version = dest.version
@@ -18,8 +22,12 @@ agent Worker
       fail "the event has version {v}, and this Worker reads version 1"
     if encoding is not "json+gzip"
       fail "the event is encoded as {encoding}, and this Worker reads json+gzip"
-    if columns is not ["id", "customer", "document", "total"]
+    if columns is not ["id", "customer", "document", "total", "note"]
       fail "the columns of the event are not the ones this Worker lands"
+    # A paused job takes no batches: the event is asked for again later, so it waits for the person to resume it.
+    status = dest.job_status job: job_id
+    if status is not nothing and status.state is "paused"
+      fail "job {job_id} is paused ({status.reason}): resume it when the cause is solved" retry in 3600 seconds
     state = dest.batch_state job: job_id seq: seq
     if state is "done"
       reply "batch {seq} of {job_id} was already done"
@@ -31,10 +39,33 @@ agent Worker
         fail "the hash of batch {seq} of {job_id} does not match: the event is damaged"
       rows = codec.parse text: body
       landed = dest.land_batch job: job_id seq: seq row_count: row_count rows: rows
+    # The model step, for a job that has a budget: group by group, only for the notes that have no answer yet.
+    room = dest.model_room job: job_id
+    if room.enabled is 1
+      working = yes
+      repeat while working up to 500 times
+        group = dest.pending_enrich job: job_id seq: seq group: 20
+        waiting = codec.count value: group
+        if waiting is 0
+          working = no
+        otherwise
+          room = dest.model_room job: job_id
+          if room.calls_left is less than 1 or room.tokens_left is less than 1
+            paused = dest.pause_job job: job_id reason: "MODEL_BUDGET"
+            fail "the budget of the model step of job {job_id} is spent: raise it with `budget`, then `resume` the job" retry in 3600 seconds
+          items = codec.json value: group
+          reply_of = Enricher.classify items: items
+          parsed = codec.try_parse text: reply_of.answer
+          answers = codec.pick rows: parsed fields: ["id", "category"]
+          saved = dest.save_enrichment job: job_id seq: seq version: "notes-v1" before_calls: reply_of.first_calls after_calls: reply_of.last_calls before_tokens: reply_of.first_tokens after_tokens: reply_of.last_tokens answers: answers group: group
+      room = dest.model_room job: job_id
+      if room.percent is more than 79
+        warned = dest.warn_budget job: job_id
     # Landed (now, or by a copy of this event before): the brake, and then transaction 2.
     share = dest.reject_share job: job_id seq: seq
     if share is more than 20
       marked = dest.fail_batch job: job_id seq: seq code: "TOO_MANY_REJECTS"
+      stopped = dest.pause_if_failing job: job_id
       fail "more than 20 percent of batch {seq} of {job_id} would be rejected: it is probably a change in the source"
     transformed = dest.transform_batch job: job_id seq: seq version: "v1"
     closed = dest.try_close job: job_id
@@ -50,3 +81,11 @@ agent Worker
   on purge
     removed = dest.purge days: days
     reply "removed {removed} rows from staging"
+
+  on budget
+    given = dest.open_budget job: job max_calls: max_calls max_tokens: max_tokens
+    reply "job {job} may use {max_calls} requests and {max_tokens} tokens of the model"
+
+  on resume
+    resumed = dest.resume_job job: job
+    reply "job {job}: {resumed} paused job is running again"

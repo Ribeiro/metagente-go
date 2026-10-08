@@ -58,3 +58,23 @@ func TestCodecIsAReservedNameButDataIsStillAFreeOne(t *testing.T) {
 		t.Error("codec must be a built in name and data must not")
 	}
 }
+
+func TestTheMeterAndTheNewActionsOfCodecPassTheCheck(t *testing.T) {
+	src := "agent A\n  goal \"g\"\n  tool meter\n  tool codec\n  accepts go start\n  on go\n" +
+		"    first = meter.model\n    parsed = codec.try_parse text: start\n    answers = codec.pick rows: parsed fields: [\"id\"]\n" +
+		"    n = codec.count value: answers\n    reply \"{first.calls} {n}\"\n"
+	if res := Check(mustParse(t, src)); len(res.Problems) != 0 {
+		t.Errorf("problems: %v", res.Problems)
+	}
+	if !IsBuiltinName("meter") {
+		t.Error("meter must be a built in name")
+	}
+	res := Check(mustParse(t, "agent A\n  goal \"g\"\n  tool meter\n  accepts go\n  on go\n    x = meter.model extra: 1\n    reply \"x\"\n"))
+	found := false
+	for _, p := range res.Problems {
+		found = found || strings.Contains(p.Render(), "does not take `extra`")
+	}
+	if !found {
+		t.Errorf("an extra value to meter.model was not refused: %v", res.Problems)
+	}
+}

@@ -62,6 +62,10 @@ var builtinTable = map[ToolKind][]ActionInfo{
 			Params: []ParamInfo{{"text", true}}},
 		{Name: "count", Description: "How many items a list has",
 			Params: []ParamInfo{{"value", true}}},
+		{Name: "pick", Description: "From a list of records, keep those that have all the fields named, with only those fields; anything else gives an empty list",
+			Params: []ParamInfo{{"rows", true}, {"fields", true}}},
+		{Name: "try_parse", Description: "Read text in JSON as a value, or nothing when it is not JSON",
+			Params: []ParamInfo{{"text", true}}},
 		{Name: "size", Description: "How many bytes a value takes when written as JSON",
 			Params: []ParamInfo{{"value", true}}},
 		{Name: "gzip", Description: "Compress a text with gzip and give the result as text in base64",
@@ -71,6 +75,9 @@ var builtinTable = map[ToolKind][]ActionInfo{
 		{Name: "sha256", Description: "The SHA-256 of a text, as 64 letters and digits",
 			Params: []ParamInfo{{"text", true}}},
 		{Name: "uuid", Description: "A new UUID version 7, which sorts by the time it was made"},
+	},
+	ToolMeter: {
+		{Name: "model", Description: "How many requests to the language model this conversation has made so far, and how many tokens they cost"},
 	},
 	ToolClock: {
 		{Name: "now", Description: "The current date and time"},

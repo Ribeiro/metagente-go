@@ -6,10 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 
 	"github.com/Ribeiro/metagente-go/internal/broker"
 	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/llm"
 	"github.com/Ribeiro/metagente-go/internal/runtime"
 	"github.com/Ribeiro/metagente-go/internal/trust"
 )
@@ -65,7 +68,7 @@ func newPipeline(t *testing.T) *pipeline {
 		}
 		db.Close()
 	}
-	for _, name := range []string{"extractor.ag", "worker.ag"} {
+	for _, name := range []string{"extractor.ag", "worker.ag", "enricher.ag"} {
 		p.file[name] = filepath.Join(dir, name)
 		if err := os.WriteFile(p.file[name], []byte(sampleText(t, name)), 0o644); err != nil {
 			t.Fatal(err)
@@ -372,5 +375,265 @@ func TestTheWorkerRefusesAControlTablesOfAnotherVersionAndPurgesWhatIsDone(t *te
 	}
 	if reason := p.deadLetters()[0].Headers["Metagente-Dead-Reason"]; !strings.Contains(reason, "version 2 of the control tables") {
 		t.Errorf("reason = %q", reason)
+	}
+}
+
+// ---------- the model step ----------
+
+// labeler is a language model that labels the notes it is given by a word in them, and keeps what it was asked.
+type labeler struct {
+	mu       sync.Mutex
+	asked    []string
+	failures []error // the first requests fail with these, in order
+	garbage  bool    // answers with words that are not JSON
+}
+
+func (l *labeler) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	prompt := req.Messages[0].Parts[0].Text
+	l.mu.Lock()
+	l.asked = append(l.asked, prompt)
+	if len(l.failures) > 0 {
+		err := l.failures[0]
+		l.failures = l.failures[1:]
+		l.mu.Unlock()
+		return nil, err
+	}
+	garbage := l.garbage
+	l.mu.Unlock()
+	answer := "Sure! I labelled them all, and they were lovely."
+	if !garbage {
+		var items []struct {
+			ID   int    `json:"id"`
+			Note string `json:"note"`
+		}
+		if err := json.Unmarshal([]byte(prompt[strings.Index(prompt, "["):]), &items); err != nil {
+			return nil, fmt.Errorf("the labeler could not read its question: %w", err)
+		}
+		labels := []map[string]any{}
+		for _, item := range items {
+			category := "other"
+			switch {
+			case strings.Contains(item.Note, "gift"):
+				category = "gift"
+			case strings.Contains(item.Note, "neighbour"):
+				category = "delivery"
+			case strings.Contains(item.Note, "damaged"):
+				category = "complaint"
+			}
+			labels = append(labels, map[string]any{"id": item.ID, "category": category})
+		}
+		raw, _ := json.Marshal(labels)
+		answer = string(raw)
+	}
+	return &llm.Response{Parts: []llm.Part{{Kind: llm.PartText, Text: answer}}, Stop: llm.StopEnd, Reason: "end_turn", Usage: llm.Usage{Input: 100, Output: 50}}, nil
+}
+
+func (l *labeler) calls() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.asked)
+}
+
+// message runs one of the messages of the Worker that a person sends: budget, resume, purge.
+func (p *pipeline) message(message string, params ...string) string {
+	p.t.Helper()
+	opts := runtime.Options{File: p.file["worker.ag"], Message: message, Params: params, Confirm: func([]trust.Item) bool { return true }}
+	got, err := runtime.RunFile(context.Background(), p.rt, opts)
+	if err != nil {
+		p.t.Fatalf("%s: %v", message, err)
+	}
+	return got.Text
+}
+
+func withModel(t *testing.T, model *labeler) *pipeline {
+	t.Helper()
+	p := newPipeline(t)
+	p.rt.Model = model
+	return p
+}
+
+func TestTheModelStepLabelsTheNotesOfAJobThatHasABudgetAndNothingElseGoesToTheModel(t *testing.T) {
+	model := &labeler{}
+	p := withModel(t, model)
+	p.message("budget", "job=m1", "max_calls=1000", "max_tokens=1000000")
+	p.extract("m1", "1000")
+	if s := p.batches(); s.Done != 3 || s.Dead != 0 {
+		t.Fatalf("batches: %+v", s)
+	}
+	p.controls()
+	db := "dest/warehouse.db"
+	for query, want := range map[string]int{
+		"SELECT count(*) FROM orders_final WHERE note_category = 'gift'":      500,
+		"SELECT count(*) FROM orders_final WHERE note_category = 'delivery'":  500,
+		"SELECT count(*) FROM orders_final WHERE note_category = 'complaint'": 500,
+		"SELECT count(*) FROM orders_final WHERE note_category IS NULL":       1000, // the notes that are empty were not asked
+		"SELECT sum(model_calls) FROM etl_batches":                            75,   // 1500 notes, 20 at a time
+		"SELECT sum(model_tokens) FROM etl_batches":                           75 * 150,
+		"SELECT count(*) FROM etl_batches WHERE enrich_version = 'notes-v1'":  3,
+	} {
+		if got := p.number(db, query); got != want {
+			t.Errorf("%s = %d, want %d", query, got, want)
+		}
+	}
+	if state := p.text(db, "SELECT state FROM etl_jobs WHERE job_id = 'm1'"); state != "done" {
+		t.Errorf("job = %s", state)
+	}
+	// What leaves for the model is the id and the note, and never the name or the document of a customer.
+	if model.calls() != 75 {
+		t.Fatalf("the model was asked %d times", model.calls())
+	}
+	for _, prompt := range model.asked {
+		data := prompt[strings.Index(prompt, "["):] // the instructions come before the notes
+		if strings.Contains(data, "Customer") || regexp.MustCompile(`\*\*\*\d{4}`).MatchString(data) || strings.Contains(data, "customer") {
+			t.Fatalf("something besides the notes went to the model: %.200s", data)
+		}
+	}
+}
+
+func TestAJobWithoutABudgetNeverAsksTheModel(t *testing.T) {
+	model := &labeler{}
+	p := withModel(t, model)
+	p.extract("m2", "1000")
+	p.batches()
+	if model.calls() != 0 {
+		t.Errorf("the model was asked %d times by a job with no budget", model.calls())
+	}
+	if n := p.number("dest/warehouse.db", "SELECT count(*) FROM orders_final WHERE note_category IS NOT NULL"); n != 0 {
+		t.Errorf("%d rows have a category", n)
+	}
+}
+
+func TestAnAnswerThatIsNotInTheShapeWantedLeavesTheNotesWithoutACategoryAndTheBatchGoesOn(t *testing.T) {
+	model := &labeler{garbage: true}
+	p := withModel(t, model)
+	p.exec("demo/source.db", "DELETE FROM orders WHERE id > 100")
+	p.message("budget", "job=m3", "max_calls=1000", "max_tokens=1000000")
+	p.extract("m3", "1000")
+	if s := p.batches(); s.Done != 1 || s.Dead != 0 {
+		t.Fatalf("batches: %+v", s)
+	}
+	// 60 notes, 3 groups, and each group is tried twice and then left alone.
+	if model.calls() != 6 {
+		t.Errorf("the model was asked %d times, and 6 were expected", model.calls())
+	}
+	if n := p.number("dest/warehouse.db", "SELECT count(*) FROM orders_final WHERE note_category IS NOT NULL"); n != 0 {
+		t.Errorf("%d rows have a category", n)
+	}
+	if n := p.number("dest/warehouse.db", "SELECT count(*) FROM orders_final"); n != 100 {
+		t.Errorf("orders_final has %d rows", n)
+	}
+}
+
+func TestAFailureOfTheModelThatMayPassAsksForTheEventAgainAndNothingIsPaidTwice(t *testing.T) {
+	model := &labeler{failures: []error{&llm.Error{Message: "answered 429", Status: 429, Retry: true}}}
+	p := withModel(t, model)
+	p.exec("demo/source.db", "DELETE FROM orders WHERE id > 100")
+	p.message("budget", "job=m4", "max_calls=1000", "max_tokens=1000000")
+	p.extract("m4", "1000")
+	s := p.batches()
+	if s.Retried != 1 || s.Done != 1 || s.Dead != 0 {
+		t.Fatalf("batches: %+v", s)
+	}
+	db := "dest/warehouse.db"
+	if n := p.number(db, "SELECT sum(model_calls) FROM etl_batches"); n != 3 {
+		t.Errorf("the account has %d requests, and 3 groups were labelled", n)
+	}
+	if n := p.number(db, "SELECT count(*) FROM orders_final WHERE note_category IS NOT NULL"); n != 60 {
+		t.Errorf("%d rows have a category", n)
+	}
+}
+
+func TestWhenTheBudgetIsSpentTheJobIsPausedAndItGoesOnWhereItStoppedWhenTheBudgetIsRaised(t *testing.T) {
+	model := &labeler{}
+	p := withModel(t, model)
+	p.message("budget", "job=m5", "max_calls=10", "max_tokens=1000000")
+	p.extract("m5", "1000")
+	s := p.batches()
+	if s.Done != 0 || s.Dead != 0 || s.Retried != 3 {
+		t.Fatalf("batches: %+v (the first is stopped by the budget, the others by the pause)", s)
+	}
+	db := "dest/warehouse.db"
+	if got := p.text(db, "SELECT state || ' ' || pause_reason FROM etl_jobs WHERE job_id = 'm5'"); got != "paused MODEL_BUDGET" {
+		t.Errorf("job = %s", got)
+	}
+	if model.calls() != 10 {
+		t.Errorf("the model was asked %d times with a budget of 10", model.calls())
+	}
+	if n := p.number(db, "SELECT count(*) FROM etl_batches WHERE job_id = 'm5'"); n != 1 {
+		t.Errorf("%d batches are landed, and only the first took a turn", n)
+	}
+
+	// The person raises the budget and lets the job go on; the events were asked for again later.
+	p.message("budget", "job=m5", "max_calls=1000", "max_tokens=1000000")
+	if got := p.message("resume", "job=m5"); !strings.Contains(got, "1 paused job is running again") {
+		t.Errorf("resume = %q", got)
+	}
+	p.mem.Advance(2 * time.Hour)
+	if s := p.batches(); s.Done != 3 || s.Dead != 0 {
+		t.Fatalf("after the resume: %+v", s)
+	}
+	p.controls()
+	if state := p.text(db, "SELECT state FROM etl_jobs WHERE job_id = 'm5'"); state != "done" {
+		t.Errorf("job = %s", state)
+	}
+	// Nothing was asked twice: the 10 requests of the first try count, and the rest was only what was missing.
+	if model.calls() != 75 || p.number(db, "SELECT sum(model_calls) FROM etl_batches") != 75 {
+		t.Errorf("the model was asked %d times, and 75 groups exist", model.calls())
+	}
+}
+
+func TestTheBudgetWarnsAt80PercentAndThePersonCanSeeIt(t *testing.T) {
+	model := &labeler{}
+	p := withModel(t, model)
+	p.message("budget", "job=m6", "max_calls=90", "max_tokens=1000000") // 75 are needed: 83 percent
+	p.extract("m6", "1000")
+	if s := p.batches(); s.Done != 3 {
+		t.Fatalf("batches: %+v", s)
+	}
+	db := "dest/warehouse.db"
+	if got := p.text(db, "SELECT state || ' ' || budget_warned FROM etl_jobs WHERE job_id = 'm6'"); got != "running 1" {
+		t.Errorf("job = %s", got)
+	}
+	// A job that stays far from its budget is not warned.
+	p.message("budget", "job=m7", "max_calls=1000", "max_tokens=1000000")
+	p.extract("m7", "1000")
+	p.batches()
+	if got := p.number(db, "SELECT budget_warned FROM etl_jobs WHERE job_id = 'm7'"); got != 0 {
+		t.Errorf("budget_warned = %d", got)
+	}
+}
+
+func TestSeveralBatchesInARowStoppedByTheBrakePauseTheWholeJob(t *testing.T) {
+	p := newPipeline(t)
+	p.exec("demo/source.db", "UPDATE orders SET total = -1 WHERE id <= 1800 AND id % 10 < 4")
+	p.extract("q1", "600")
+	s := p.batches()
+	if s.Dead != 3 || s.Done != 0 || s.Retried != 2 {
+		t.Fatalf("batches: %+v (three stopped by the brake, the other two held back by the pause)", s)
+	}
+	db := "dest/warehouse.db"
+	if got := p.text(db, "SELECT state || ' ' || pause_reason FROM etl_jobs WHERE job_id = 'q1'"); got != "paused QUALITY" {
+		t.Errorf("job = %s", got)
+	}
+	if n := p.number(db, "SELECT count(*) FROM etl_batches WHERE seq > 3"); n != 0 {
+		t.Errorf("%d batches took a turn while the job was paused", n)
+	}
+
+	// The cause is solved (here, the rows are fixed in staging), the dead letters go again, and the job is resumed.
+	p.exec(db, "UPDATE stg_orders SET total = 1 WHERE total < 0")
+	for _, m := range p.deadLetters() {
+		p.publish(m.Headers["Metagente-Dead-Subject"], m.Headers["Metagente-Dead-Event"]+":again", m.Data)
+	}
+	p.message("resume", "job=q1")
+	p.mem.Advance(2 * time.Hour)
+	if s := p.batches(); s.Done != 5 || s.Dead != 0 {
+		t.Fatalf("after the resume: %+v", s)
+	}
+	p.controls()
+	if state := p.text(db, "SELECT state FROM etl_jobs WHERE job_id = 'q1'"); state != "done" {
+		t.Errorf("job = %s", state)
+	}
+	if n := p.number(db, "SELECT count(*) FROM orders_final"); n != 2500 {
+		t.Errorf("orders_final has %d rows", n)
 	}
 }

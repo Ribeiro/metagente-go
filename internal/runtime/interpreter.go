@@ -112,6 +112,8 @@ type Agent struct {
 	RT    *Runtime
 	Caps  *lang.Capabilities
 	Tools tools.Registry
+	// Used counts what this conversation has asked of the language model, for `tool meter`.
+	Used *tools.ModelUse
 }
 
 // NewAgent prepares an agent. contextID tells conversations apart: calls with
@@ -126,7 +128,9 @@ func NewAgent(rt *Runtime, def *lang.AgentDef, contextID string) (*Agent, error)
 			return nil, err
 		}
 	}
+	used := &tools.ModelUse{}
 	registry, err := tools.Build(def, tools.Options{
+		ModelUse:       used,
 		Root:           rt.Config.Root,
 		Limits:         rt.Config.Limits,
 		HiddenEnv:      rt.Config.HiddenEnv(),
@@ -178,7 +182,7 @@ func NewAgent(rt *Runtime, def *lang.AgentDef, contextID string) (*Agent, error)
 			registry[decl.Name] = &serverTool{inner: inner}
 		}
 	}
-	return &Agent{Def: def, RT: rt, Caps: lang.CapabilitiesOf(def), Tools: registry}, nil
+	return &Agent{Def: def, RT: rt, Caps: lang.CapabilitiesOf(def), Tools: registry, Used: used}, nil
 }
 
 // env holds the values the handler has kept so far.

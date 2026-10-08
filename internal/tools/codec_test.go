@@ -203,11 +203,75 @@ func TestCountSaysHowManyItemsAListHas(t *testing.T) {
 func TestACodecKnowsItsActionsAndSaysSoForAnotherOne(t *testing.T) {
 	c := codec(t, 0)
 	actions, _ := c.Actions(context.Background())
-	if len(actions) != 11 {
+	if len(actions) != 13 {
 		t.Errorf("actions = %d", len(actions))
 	}
 	fail(t, c, "jsno", Args{}, "has no action called `jsno`")
 	if c.Name() != "codec" {
 		t.Errorf("name = %s", c.Name())
 	}
+}
+
+func TestTryParseGivesNothingForTextThatIsNotJSON(t *testing.T) {
+	c := codec(t, 0)
+	if got := call(t, c, "try_parse", Args{"text": text(`{"a": [1, 2]}`)}); got.Kind != value.KindRecord {
+		t.Errorf("good JSON = %s", got.Display())
+	}
+	for _, bad := range []string{`Sure! Here is the JSON: {"a": 1}`, `{"a": `, ``, `1 2`} {
+		if got := call(t, c, "try_parse", Args{"text": text(bad)}); got.Kind != value.KindNothing {
+			t.Errorf("%q gave %s", bad, got.Display())
+		}
+	}
+	fail(t, c, "try_parse", Args{}, "needs a text")
+	fail(t, codec(t, 10), "try_parse", Args{"text": text(strings.Repeat("1", 50))}, "passes the 10 bytes")
+}
+
+func TestTheMeterTellsHowMuchOfTheModelWasUsed(t *testing.T) {
+	use := &ModelUse{}
+	meter := NewMeter(&lang.ToolDecl{Name: "meter", Kind: lang.ToolMeter}, use)
+	got, err := meter.Call(context.Background(), "model", Args{})
+	if err != nil || got.Record["calls"].Number != 0 || got.Record["tokens"].Number != 0 {
+		t.Fatalf("at the start: %s, %v", got.Display(), err)
+	}
+	use.Add(120)
+	use.Add(30)
+	got, _ = meter.Call(context.Background(), "model", Args{})
+	if got.Record["calls"].Number != 2 || got.Record["tokens"].Number != 150 {
+		t.Errorf("after two requests: %s", got.Display())
+	}
+	if _, err := meter.Call(context.Background(), "reset", Args{}); err == nil || !strings.Contains(rendered(t, err), "has no action called `reset`") {
+		t.Errorf("another action: %v", err)
+	}
+	if actions, _ := meter.Actions(context.Background()); len(actions) != 1 || meter.Name() != "meter" {
+		t.Errorf("actions = %v, name = %s", actions, meter.Name())
+	}
+	if NewMeter(&lang.ToolDecl{Name: "meter"}, nil).use == nil {
+		t.Error("a meter without a count must make its own")
+	}
+}
+
+func TestPickKeepsOnlyTheRecordsInTheShapeWanted(t *testing.T) {
+	c := codec(t, 0)
+	rec := func(fields map[string]value.Value) value.Value { return value.Record(fields) }
+	rows := value.List([]value.Value{
+		rec(map[string]value.Value{"id": value.Number(1), "category": text("gift"), "extra": text("x")}),
+		rec(map[string]value.Value{"id": value.Number(2)}),                              // no category
+		rec(map[string]value.Value{"id": value.Number(3), "category": value.List(nil)}), // not a scalar
+		text("not a record"), // not a record
+		rec(map[string]value.Value{"id": value.Number(4), "category": value.Nothing}), // nothing
+		rec(map[string]value.Value{"id": text("5"), "category": value.Bool(true)}),
+	})
+	got := call(t, c, "pick", Args{"rows": rows, "fields": names("id", "category")})
+	if len(got.List) != 2 || got.List[0].Record["id"].Number != 1 || got.List[1].Record["id"].Text != "5" {
+		t.Fatalf("picked = %s", got.Display())
+	}
+	if _, has := got.List[0].Record["extra"]; has {
+		t.Error("a field that was not named stayed")
+	}
+	for _, anything := range []value.Value{value.Nothing, text("[]"), value.Number(3), rec(nil)} {
+		if got := call(t, c, "pick", Args{"rows": anything, "fields": names("id")}); got.Kind != value.KindList || len(got.List) != 0 {
+			t.Errorf("%s gave %s", anything.Describe(), got.Display())
+		}
+	}
+	fail(t, c, "pick", Args{"rows": rows, "fields": value.List(nil)}, "list of names")
 }

@@ -42,6 +42,8 @@ type Options struct {
 	ContextID string
 	// Proxy is the web proxy of [network] for `tool http`, or nil.
 	Proxy *url.URL
+	// ModelUse is what `tool meter` reads: the requests to the language model of the conversation.
+	ModelUse *ModelUse
 	// SQL is what the tools `from sql` need.
 	SQL    SQLOptions
 	Broker BrokerOptions
@@ -65,6 +67,8 @@ func Build(def *lang.AgentDef, opts Options) (Registry, error) {
 			registry[decl.Name] = NewClock(decl, opts.MaxWaitSeconds)
 		case lang.ToolEnv:
 			registry[decl.Name] = NewEnv(decl, opts.HiddenEnv)
+		case lang.ToolMeter:
+			registry[decl.Name] = NewMeter(decl, opts.ModelUse)
 		case lang.ToolCodec:
 			registry[decl.Name] = NewCodec(decl, opts.Limits)
 		case lang.ToolSQL:

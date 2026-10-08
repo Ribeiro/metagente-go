@@ -235,6 +235,8 @@ metagente run my-agent.ag    # an agent with `tool http`
   by `metagente trust`. A connection with `mode = "write"` may also run named `INSERT`, `UPDATE` and
   `DELETE` statements, a list of rows in one transaction, and transactions of several statements (never
   DDL), approved as a database that is changed. See `docs/LANGUAGE.md`.
+- `tool meter`: how much of the language model a conversation has used (`meter.model`), for an agent that keeps
+  a budget for it. See `docs/LANGUAGE.md`.
 - `tool codec`: JSON, gzip, SHA-256, UUID v7 and records made from values, for the agents of a pipeline that
   move rows through a broker; it touches nothing outside its values, with a limit of bytes
   (`limits.max_data_bytes`). See `docs/LANGUAGE.md`.

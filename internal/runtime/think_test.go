@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Ribeiro/metagente-go/internal/config"
+	"github.com/Ribeiro/metagente-go/internal/diag"
 	"github.com/Ribeiro/metagente-go/internal/lang"
 	"github.com/Ribeiro/metagente-go/internal/llm"
 	"github.com/Ribeiro/metagente-go/internal/tools"
@@ -479,5 +480,38 @@ func TestTheDefaultAddressNeedsNoApprovalAndAFileWithoutThinkNeverAsks(t *testin
 	}
 	if needs := rt.Needs(plain); len(needs) != 0 {
 		t.Errorf("a file that never thinks was asked to approve a model: %v", needs)
+	}
+}
+
+func TestTheMeterCountsTheRequestsAndTheTokensOfTheModel(t *testing.T) {
+	model := llm.NewScripted(llm.Say("one"), llm.Say("two"))
+	rt := thinkRT(t, model, nil)
+	source := "agent A\n  goal \"g\"\n  tool meter\n  accepts go\n  on go\n" +
+		"    first = meter.model\n    a = think \"x\"\n    second = meter.model\n    b = think \"y\"\n    third = meter.model\n" +
+		"    reply \"{first.calls}/{first.tokens} {second.calls}/{second.tokens} {third.calls}/{third.tokens}\"\n"
+	got, err := askThink(t, rt, source)
+	if err != nil || got.Text != "0/0 1/15 2/30" { // each answer of the scripted model costs 15
+		t.Fatalf("got %q, %v", got.Display(), err)
+	}
+}
+
+func TestAFailureOfTheModelThatMayPassIsMarkedAsSuch(t *testing.T) {
+	for name, c := range map[string]struct {
+		model llm.Llm
+		want  bool
+	}{
+		"limit of rate":    {llm.NewScripted(llm.Fail(&llm.Error{Message: "answered 429", Status: 429, Retry: true})), true},
+		"connection":       {llm.NewScripted(llm.Fail(&llm.Error{Message: "I could not reach it", Retry: true})), true},
+		"a wrong key":      {llm.NewScripted(llm.Fail(&llm.Error{Message: "answered 401", Status: 401})), false},
+		"too long to wait": {waitingModel{}, true},
+	} {
+		rt := thinkRT(t, c.model, func(cfg *config.Config) { cfg.Runtime.ThinkTimeoutSeconds = 1 })
+		_, err := askThink(t, rt, thinkSource(nil, `think "x"`))
+		if err == nil {
+			t.Fatalf("%s: no problem", name)
+		}
+		if _, may := diag.RetryOf(err); may != c.want {
+			t.Errorf("%s: may pass = %v, want %v", name, may, c.want)
+		}
 	}
 }

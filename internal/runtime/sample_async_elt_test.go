@@ -148,7 +148,7 @@ func checkBatch(t *testing.T, i int, msg broker.Message, first int) int {
 	if e.Seq != i+1 || msg.ID != fmt.Sprintf("%s:%d", e.JobID, e.Seq) || e.V != 1 || e.Encoding != "json+gzip" || e.RowCount != len(table) {
 		t.Fatalf("batch %d: %+v (id %s)", i+1, e, msg.ID)
 	}
-	if strings.Join(e.Columns, ",") != "id,customer,document,total" {
+	if strings.Join(e.Columns, ",") != "id,customer,document,total,note" {
 		t.Errorf("columns = %v", e.Columns)
 	}
 	if e.After != first-1 {

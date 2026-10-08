@@ -116,6 +116,7 @@ func (t *thinking) run(ctx context.Context, prompt string) (value.Value, error) 
 			return value.Nothing, t.agent.thinkError(t.expr.Span, ctx, err)
 		}
 		total += resp.Usage.Total()
+		t.agent.Used.Add(resp.Usage.Total())
 		if err := t.checkBudget(total); err != nil {
 			return value.Nothing, err
 		}
@@ -179,7 +180,7 @@ func (a *Agent) thinkError(span lang.Span, ctx context.Context, err error) error
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded):
 		return a.diag(span, "the language model took too long to answer").
-			Fix("try again in a moment, or raise think_timeout_seconds in the [runtime] section of metagente.toml")
+			Fix("try again in a moment, or raise think_timeout_seconds in the [runtime] section of metagente.toml").WithRetry(0)
 	case errors.Is(err, context.Canceled):
 		return a.diag(span, "the run was stopped before this line finished")
 	}
@@ -189,7 +190,11 @@ func (a *Agent) thinkError(span lang.Span, ctx context.Context, err error) error
 		if failure.Hint != "" {
 			fix = failure.Hint
 		}
-		return a.diag(span, "the language model could not answer: "+failure.Message).Fix(fix)
+		d := a.diag(span, "the language model could not answer: "+failure.Message).Fix(fix)
+		if failure.Retry {
+			d.WithRetry(0) // a limit of rate, a server that is busy, a connection that dropped: it may pass
+		}
+		return d
 	}
 	return a.located(err, span)
 }

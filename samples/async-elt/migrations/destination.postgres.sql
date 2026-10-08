@@ -12,12 +12,16 @@ CREATE TABLE etl_meta (
 INSERT INTO etl_meta (schema_version) VALUES (1);
 
 CREATE TABLE etl_jobs (
-  job_id        TEXT PRIMARY KEY,
-  state         TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'paused', 'done', 'failed', 'mismatch')),
-  total_batches BIGINT,
-  total_rows    BIGINT,
-  started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  finished_at   TIMESTAMPTZ
+  job_id           TEXT PRIMARY KEY,
+  state            TEXT NOT NULL DEFAULT 'running' CHECK (state IN ('running', 'paused', 'done', 'failed', 'mismatch')),
+  pause_reason     TEXT,
+  total_batches    BIGINT,
+  total_rows       BIGINT,
+  max_model_calls  BIGINT,
+  max_model_tokens BIGINT,
+  budget_warned    INTEGER NOT NULL DEFAULT 0,
+  started_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at      TIMESTAMPTZ
 );
 
 CREATE TABLE etl_batches (
@@ -32,6 +36,9 @@ CREATE TABLE etl_batches (
   done_at           TIMESTAMPTZ,
   transform_version TEXT,
   last_error_code   TEXT,
+  enrich_version    TEXT,
+  model_calls       BIGINT NOT NULL DEFAULT 0,
+  model_tokens      BIGINT NOT NULL DEFAULT 0,
   PRIMARY KEY (job_id, seq)
 );
 
@@ -50,6 +57,10 @@ CREATE TABLE stg_orders (
   customer   TEXT,
   document   TEXT,
   total      DOUBLE PRECISION,
+  note       TEXT,
+  note_category  TEXT,
+  enrich_version TEXT,
+  enrich_tries   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (job_id, seq, source_key)
 );
 
@@ -58,6 +69,7 @@ CREATE TABLE orders_final (
   customer      TEXT   NOT NULL,
   document_tail TEXT   NOT NULL,
   total_cents   BIGINT NOT NULL,
+  note_category TEXT,
   loaded_job    TEXT   NOT NULL,
   loaded_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
