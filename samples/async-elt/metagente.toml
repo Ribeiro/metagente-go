@@ -36,6 +36,50 @@ plan = "INSERT INTO outbox (job_id, seq, after_key, upto_key, row_count, state) 
 confirm = "UPDATE outbox SET state = 'published', published_at = CURRENT_TIMESTAMP WHERE job_id = :job AND seq = :seq AND state = 'planned'"
 totals = { sql = "SELECT count(*) AS batches, coalesce(sum(row_count), 0) AS rows FROM outbox WHERE job_id = :job", result = "row" }
 
+# ---- the destination: written by the Worker (worker.ag). The demo is a SQLite file; the same statements are
+# in metagente.postgres.toml for PostgreSQL. The tables are made by migrations/destination.*.sql. ----
+[sql.dest]
+driver = "sqlite"
+path = "dest/warehouse.db"
+mode = "write"
+
+[sql.dest.statements]
+version = { sql = "SELECT schema_version FROM etl_meta", result = "value" }
+batch_state = { sql = "SELECT state FROM etl_batches WHERE job_id = :job AND seq = :seq", result = "value" }
+batch_counts = { sql = "SELECT rows_read, rows_loaded, rows_rejected FROM etl_batches WHERE job_id = :job AND seq = :seq", result = "row" }
+job_state = { sql = "SELECT state FROM etl_jobs WHERE job_id = :job", result = "value" }
+
+# Transaction 1, "land": the rows go to staging and the batch is marked, all or nothing. A copy of a row is harmless.
+open_job = "INSERT INTO etl_jobs (job_id) VALUES (:job) ON CONFLICT (job_id) DO NOTHING"
+land = { sql = "INSERT INTO stg_orders (job_id, seq, source_key, customer, document, total) VALUES (:job, :seq, :id, :customer, :document, :total) ON CONFLICT (job_id, seq, source_key) DO NOTHING", each = "rows", columns = ["id", "customer", "document", "total"] }
+mark_landed = "INSERT INTO etl_batches (job_id, seq, state, rows_read) VALUES (:job, :seq, 'landed', :row_count) ON CONFLICT (job_id, seq) DO NOTHING"
+
+# The rules of the transformation. A row that breaks one goes to etl_rejects with a code, and the batch goes on.
+# `reject_share` counts the same rules, to tell the brake how much of a batch would be rejected.
+reject_share = { sql = "SELECT coalesce(100.0 * sum(CASE WHEN total < 0 OR trim(customer) = '' THEN 1 ELSE 0 END) / count(*), 0) FROM stg_orders WHERE job_id = :job AND seq = :seq", result = "value" }
+
+# Transaction 2, "transform": rejects, the upsert into the final table, and the batch marked done, all or nothing.
+reject_negative = "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, source_key, 'TOTAL_NEGATIVE' FROM stg_orders WHERE job_id = :job AND seq = :seq AND total < 0 ON CONFLICT DO NOTHING"
+reject_customer = "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, source_key, 'CUSTOMER_EMPTY' FROM stg_orders WHERE job_id = :job AND seq = :seq AND trim(customer) = '' ON CONFLICT DO NOTHING"
+load_orders = "INSERT INTO orders_final (id, customer, document_tail, total_cents, loaded_job) SELECT source_key, trim(customer), substr(document, -4), CAST(round(total * 100) AS INTEGER), job_id FROM stg_orders WHERE job_id = :job AND seq = :seq AND total >= 0 AND trim(customer) <> '' ON CONFLICT (id) DO UPDATE SET customer = excluded.customer, document_tail = excluded.document_tail, total_cents = excluded.total_cents, loaded_job = excluded.loaded_job, loaded_at = CURRENT_TIMESTAMP"
+finish_batch = "UPDATE etl_batches SET state = 'done', rows_rejected = (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), rows_loaded = rows_read - (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), done_at = CURRENT_TIMESTAMP, transform_version = :version, last_error_code = NULL WHERE job_id = :job AND seq = :seq"
+
+# A batch that a brake stopped.
+fail_batch = "UPDATE etl_batches SET state = 'failed', attempts = attempts + 1, last_error_code = :code WHERE job_id = :job AND seq = :seq AND state <> 'done'"
+
+# The end of a job: the totals the Extractor announced, and the one conditional UPDATE that closes it (two Workers
+# that try at the same time close it once). It is `done` when every batch is done and the rows add up.
+set_totals = "UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows WHERE job_id = :job"
+try_close = "UPDATE etl_jobs SET state = CASE WHEN (SELECT coalesce(sum(rows_loaded + rows_rejected), 0) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_rows THEN 'done' ELSE 'mismatch' END, finished_at = CURRENT_TIMESTAMP WHERE job_id = :job AND state = 'running' AND total_batches IS NOT NULL AND (SELECT count(*) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_batches"
+
+# Staging holds the rows as they came, so it is cleaned: the batches done more than N days ago.
+purge = "DELETE FROM stg_orders WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = stg_orders.job_id AND b.seq = stg_orders.seq AND b.state = 'done' AND b.done_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days'))"
+
+[sql.dest.transactions]
+land_batch = ["open_job", "land", "mark_landed"]
+transform_batch = ["reject_negative", "reject_customer", "load_orders", "finish_batch"]
+register_totals = ["open_job", "set_totals"]
+
 # ---- the broker: a NATS server with JetStream. ----
 [broker.main]
 driver = "jetstream"

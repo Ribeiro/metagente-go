@@ -632,9 +632,10 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
 8. **Being built, in steps:** [an asynchronous ELT between two databases](docs/design-async-elt.md), with
    one agent that extracts and others that load and transform, joined by a broker that keeps the events
    so a failed batch can be tried again. The pieces are done (a `sql` tool that reads and, for the
-   destination, writes; a `broker` tool; `metagente consume`; `fail ... retry`; `tool codec`), and so is the
-   Extractor, the first half of [the sample](samples/async-elt/). The Worker is next; the page has the
-   design, the failures it covers and the decisions taken.
+   destination, writes; a `broker` tool; `metagente consume`; `fail ... retry`; `tool codec`), and so are the
+   Extractor and the Worker of [the sample](samples/async-elt/), for SQLite and PostgreSQL. The step with a
+   language model, its budget and the brake of a whole job are next; the page has the design, the failures
+   it covers and the decisions taken.
 
 ### Not verified yet
 
