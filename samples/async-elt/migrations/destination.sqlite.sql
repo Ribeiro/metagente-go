@@ -25,6 +25,7 @@ CREATE TABLE etl_jobs (
   max_model_calls  INTEGER,
   max_model_tokens INTEGER,
   budget_warned    INTEGER NOT NULL DEFAULT 0,
+  totals_at        TEXT,             -- when the Extractor said how many batches to expect: the sweeper waits after it
   started_at       TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   finished_at      TEXT
 );
@@ -40,6 +41,7 @@ CREATE TABLE etl_batches (
   rows_rejected     INTEGER,
   attempts          INTEGER NOT NULL DEFAULT 0,
   landed_at         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  failed_at         TEXT,
   done_at           TEXT,
   transform_version TEXT,
   last_error_code   TEXT,
@@ -83,4 +85,30 @@ CREATE TABLE orders_final (
   note_category TEXT,
   loaded_job   TEXT    NOT NULL,
   loaded_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- What the sweeper (sweeper.ag) keeps: the alerts it already sent (one for each cause, so that a problem is told
+-- once and not at every sweep), the events the Worker refused for what they are (a damaged event, a version it
+-- does not know: a code and a place, never the content), and how many times it asked for a batch to be sent again.
+CREATE TABLE etl_alerts (
+  job_id     TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  ref        TEXT NOT NULL,
+  alerted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (job_id, kind, ref)
+);
+
+CREATE TABLE etl_incidents (
+  job_id TEXT    NOT NULL,
+  seq    INTEGER NOT NULL,
+  code   TEXT    NOT NULL,
+  at     TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (job_id, seq, code)
+);
+
+CREATE TABLE etl_resends (
+  job_id   TEXT    NOT NULL,
+  seq      INTEGER NOT NULL,
+  requests INTEGER NOT NULL,
+  PRIMARY KEY (job_id, seq)
 );

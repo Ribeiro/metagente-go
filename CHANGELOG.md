@@ -9,6 +9,15 @@ minor versions.
 
 ### Added
 
+- `samples/async-elt`, the sweeper (phase 4 of `docs/design-async-elt.md`): `sweeper.ag`, run from time to time, which
+  heals a job that lost an event and tells the team what needs a person. It posts alerts to a webhook once for each
+  cause (a job paused by a brake, rows that do not add up, a budget at 80 percent, a batch stopped, an event refused,
+  a batch stuck), always with codes and counts and never a row; it asks the Worker to transform again a batch that
+  stayed landed or failed (`etl.<job>.retransform`, three times at most); and it asks the Extractor to send again a
+  batch that never arrived (`etl.<job>.resend`, five times at most), which the Extractor builds again from the edges in
+  its outbox. The Worker records the events it refuses (`etl_incidents`), the control tables have the columns and
+  tables the sweeper needs (SQLite and PostgreSQL), and all this is tried at every change, and against real JetStream and
+  PostgreSQL in `integration/`.
 - `samples/async-elt`, the end of phase 3: the model step of the Worker, with its budget, and the brake of a whole
   job. A job that has a budget (the message `budget`: a number of requests and of tokens) has its notes labelled by
   a language model, in small groups, by an agent of its own (`enricher.ag`) that has no tool but the counting of

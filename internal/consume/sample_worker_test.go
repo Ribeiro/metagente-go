@@ -7,6 +7,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -68,9 +71,13 @@ func newPipeline(t *testing.T) *pipeline {
 		}
 		db.Close()
 	}
-	for _, name := range []string{"extractor.ag", "worker.ag", "enricher.ag"} {
+	for _, name := range []string{"extractor.ag", "worker.ag", "enricher.ag", "sweeper.ag"} {
 		p.file[name] = filepath.Join(dir, name)
-		if err := os.WriteFile(p.file[name], []byte(sampleText(t, name)), 0o644); err != nil {
+		text := sampleText(t, name)
+		if name == "sweeper.ag" {
+			text = strings.Replace(text, `allow "hooks.example.com"`, "allow private", 1) // the webhook of the tests is on this computer
+		}
+		if err := os.WriteFile(p.file[name], []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -135,18 +142,23 @@ func (p *pipeline) extract(job, size string) {
 
 // work runs the Worker on one kind of event until the broker has nothing more for it.
 func (p *pipeline) work(message, subject string) Stats {
+	return p.workAs("worker.ag", message, subject)
+}
+
+// workAs runs one of the agents of the sample as a consumer of one kind of event.
+func (p *pipeline) workAs(file, message, subject string) Stats {
 	p.t.Helper()
-	agents, err := runtime.LoadAgents(p.file["worker.ag"])
+	agents, err := runtime.LoadAgents(p.file[file])
 	if err != nil {
 		p.t.Fatal(err)
 	}
 	p.rt.Linker.Register(agents)
-	if err := p.rt.AuthorizeWith(agents, nil, p.file["worker.ag"], func([]trust.Item) bool { return true }); err != nil {
+	if err := p.rt.AuthorizeWith(agents, nil, p.file[file], func([]trust.Item) bool { return true }); err != nil {
 		p.t.Fatal(err)
 	}
 	cfg := Config{
 		Runtime: p.rt, Agent: agents[0], Message: message, Broker: p.mem,
-		Spec: broker.ConsumerSpec{Durable: "worker-" + message, Subject: subject, AckWait: 5 * time.Second},
+		Spec: broker.ConsumerSpec{Durable: file + "-" + message, Subject: subject, AckWait: 5 * time.Second},
 		Dead: "etl.dead", Backoff: []time.Duration{5 * time.Millisecond}, MaxDeliver: 3, BreakerAfter: 100,
 		FetchWait: 20 * time.Millisecond, IdleExit: 200 * time.Millisecond,
 	}
@@ -635,5 +647,245 @@ func TestSeveralBatchesInARowStoppedByTheBrakePauseTheWholeJob(t *testing.T) {
 	}
 	if n := p.number(db, "SELECT count(*) FROM orders_final"); n != 2500 {
 		t.Errorf("orders_final has %d rows", n)
+	}
+}
+
+// ---------- the sweeper ----------
+
+// webhook is the channel of the team: it keeps what it was told.
+type webhook struct {
+	mu     sync.Mutex
+	bodies []string
+}
+
+func newWebhook(t *testing.T) *webhook {
+	t.Helper()
+	w := &webhook{}
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		w.mu.Lock()
+		w.bodies = append(w.bodies, string(raw))
+		w.mu.Unlock()
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("ALERT_URL", server.URL)
+	return w
+}
+
+func (w *webhook) told() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.bodies...)
+}
+
+// sweep runs the sweeper once.
+func (p *pipeline) sweep(minutes string) string {
+	p.t.Helper()
+	opts := runtime.Options{File: p.file["sweeper.ag"], Message: "sweep", Params: []string{"minutes=" + minutes}, Confirm: func([]trust.Item) bool { return true }}
+	got, err := runtime.RunFile(context.Background(), p.rt, opts)
+	if err != nil {
+		p.t.Fatalf("sweep: %v", err)
+	}
+	return got.Text
+}
+
+func (p *pipeline) messagesOn(subject string) (out []broker.Message) {
+	for _, m := range p.mem.Messages() {
+		if m.Subject == subject {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+const longAgo = "2020-01-01 00:00:00"
+
+func TestTheSweeperAsksForAStuckBatchToBeTransformedAgainAndTellsTheTeamOnlyOnce(t *testing.T) {
+	hook := newWebhook(t)
+	p := newPipeline(t)
+	p.extract("s1", "1000")
+	p.batches()
+	db := "dest/warehouse.db"
+	// Batch 2 stayed landed: its event was lost after the first transaction, a long time ago.
+	p.exec(db, "UPDATE etl_batches SET state = 'landed', rows_loaded = NULL, rows_rejected = NULL, done_at = NULL, landed_at = ? WHERE seq = 2", longAgo)
+	p.exec(db, "DELETE FROM orders_final WHERE id > 1000 AND id <= 2000")
+
+	if got := p.sweep("5"); got != "1 causes looked at, 1 batches stuck, 0 jobs with batches missing" {
+		t.Errorf("sweep = %q", got)
+	}
+	notices := p.messagesOn("etl.s1.retransform")
+	if len(notices) != 1 || notices[0].ID != "s1:2:retransform:0" {
+		t.Fatalf("notices = %+v", notices)
+	}
+	if told := hook.told(); len(told) != 1 || !strings.Contains(told[0], "ETL BATCH_STUCK job s1 2") {
+		t.Fatalf("the team was told %v", told)
+	}
+	// A second sweep, before the Worker did anything: another notice (it counts the tries), and the team is not told again.
+	p.sweep("5")
+	if len(hook.told()) != 1 {
+		t.Errorf("the team was told again: %v", hook.told())
+	}
+	if n := len(p.messagesOn("etl.s1.retransform")); n != 2 {
+		t.Errorf("%d notices after two sweeps", n)
+	}
+
+	// The Worker takes the notices: the batch is transformed again, and the copy of the notice only confirms.
+	if s := p.work("retransform", "etl.*.retransform"); s.Done != 2 || s.Dead != 0 {
+		t.Fatalf("retransform: %+v", s)
+	}
+	if state := p.text(db, "SELECT state FROM etl_batches WHERE seq = 2"); state != "done" {
+		t.Errorf("batch 2 = %s", state)
+	}
+	if n := p.number(db, "SELECT count(*) FROM orders_final"); n != 2500 {
+		t.Errorf("orders_final has %d rows", n)
+	}
+	// Nothing is stuck now, and nothing new is told.
+	if got := p.sweep("5"); !strings.Contains(got, "0 batches stuck") || len(hook.told()) != 1 {
+		t.Errorf("after: %q, told %v", got, hook.told())
+	}
+}
+
+func TestTheSweeperAsksTheExtractorForABatchThatNeverArrivedAndTheJobCloses(t *testing.T) {
+	newWebhook(t)
+	p := newPipeline(t)
+	p.extract("s2", "1000")
+	p.mem.Lose("s2:2") // the broker lost an event
+	if s := p.batches(); s.Done != 2 {
+		t.Fatalf("batches: %+v", s)
+	}
+	p.controls()
+	db := "dest/warehouse.db"
+	if state := p.text(db, "SELECT state FROM etl_jobs WHERE job_id = 's2'"); state != "running" {
+		t.Fatalf("job = %s with a batch missing", state)
+	}
+	// Not yet: the totals were announced just now, and the batch may still be on its way.
+	if got := p.sweep("5"); !strings.Contains(got, "0 jobs with batches missing") {
+		t.Errorf("sweep = %q", got)
+	}
+	p.exec(db, "UPDATE etl_jobs SET totals_at = ?", longAgo)
+	if got := p.sweep("5"); !strings.Contains(got, "1 jobs with batches missing") {
+		t.Errorf("sweep = %q", got)
+	}
+	asks := p.messagesOn("etl.s2.resend")
+	if len(asks) != 1 || asks[0].ID != "s2:2:resend:1" {
+		t.Fatalf("requests = %+v", asks)
+	}
+
+	// The window of copies of the broker has passed; the Extractor builds batch 2 again from its outbox and sends it.
+	p.mem.Advance(10 * time.Minute)
+	if s := p.workAs("extractor.ag", "resend", "etl.*.resend"); s.Done != 1 || s.Dead != 0 {
+		t.Fatalf("resend: %+v", s)
+	}
+	if s := p.batches(); s.Done != 1 || s.Dead != 0 {
+		t.Fatalf("batch 2 again: %+v", s)
+	}
+	if state := p.text(db, "SELECT state FROM etl_jobs WHERE job_id = 's2'"); state != "done" {
+		t.Errorf("job = %s", state)
+	}
+	if n := p.number(db, "SELECT count(*) FROM orders_final"); n != 2500 {
+		t.Errorf("orders_final has %d rows", n)
+	}
+}
+
+func TestAskingForABatchAgainHasALimitAfterWhichAPersonLooks(t *testing.T) {
+	newWebhook(t)
+	p := newPipeline(t)
+	p.extract("s3", "1000")
+	p.mem.Lose("s3:3")
+	p.batches()
+	p.controls()
+	p.exec("dest/warehouse.db", "UPDATE etl_jobs SET totals_at = ?", longAgo)
+	for i := 0; i < 8; i++ {
+		p.sweep("5")
+	}
+	if n := len(p.messagesOn("etl.s3.resend")); n != 5 {
+		t.Errorf("%d requests for a batch that does not come, and 5 are the limit", n)
+	}
+	ids := map[string]bool{}
+	for _, m := range p.messagesOn("etl.s3.resend") {
+		ids[m.ID] = true
+	}
+	if len(ids) != 5 {
+		t.Errorf("the requests share ids: %v", ids)
+	}
+}
+
+func TestEveryCauseIsToldOnceWithCodesAndCountsAndNeverWithRows(t *testing.T) {
+	hook := newWebhook(t)
+	p := newPipeline(t)
+	db := "dest/warehouse.db"
+	p.extract("a1", "1000")
+	p.batches() // so that the staging table has rows, and there is something to leak
+	p.exec(db, "INSERT INTO etl_jobs (job_id, state, pause_reason) VALUES ('a2', 'paused', 'QUALITY')")
+	p.exec(db, "INSERT INTO etl_jobs (job_id, state) VALUES ('a3', 'mismatch')")
+	p.exec(db, "UPDATE etl_jobs SET budget_warned = 1 WHERE job_id = 'a1'")
+	p.exec(db, "INSERT INTO etl_batches (job_id, seq, state, rows_read) VALUES ('a2', 7, 'failed', 10)")
+	p.exec(db, "INSERT INTO etl_incidents (job_id, seq, code) VALUES ('a1', 9, 'HASH_MISMATCH')")
+
+	p.sweep("5")
+	told := hook.told()
+	want := []string{"ETL BUDGET_80_PERCENT job a1", "ETL EVENT_REFUSED job a1 9 HASH_MISMATCH", "ETL BATCH_FAILED job a2 7", "ETL JOB_PAUSED job a2 QUALITY", "ETL JOB_MISMATCH job a3"}
+	if len(told) != len(want) {
+		t.Fatalf("the team was told %d things: %v", len(told), told)
+	}
+	for _, w := range want {
+		found := false
+		for _, body := range told {
+			found = found || strings.Contains(body, w)
+		}
+		if !found {
+			t.Errorf("not told: %q in %v", w, told)
+		}
+	}
+	for _, body := range told {
+		if strings.Contains(body, "Customer") || regexp.MustCompile(`\*\*\*\d{4}`).MatchString(body) {
+			t.Errorf("an alert carries rows: %s", body)
+		}
+	}
+	p.sweep("5")
+	if len(hook.told()) != len(want) {
+		t.Errorf("the second sweep told again: %d", len(hook.told()))
+	}
+
+	// A person resumes the job that was paused; when it is paused again, that is a new cause and the team is told.
+	p.message("resume", "job=a2")
+	p.exec(db, "UPDATE etl_jobs SET state = 'paused', pause_reason = 'MODEL_BUDGET' WHERE job_id = 'a2'")
+	p.sweep("5")
+	if told := hook.told(); len(told) != len(want)+2 { // the pause, and the batch that is still failed, are told again after a resume
+		t.Errorf("after the resume: %d things told: %v", len(told), told)
+	}
+}
+
+func TestADamagedEventIsToldAndTheBatchComesBackByTheSweeper(t *testing.T) {
+	hook := newWebhook(t)
+	p := newPipeline(t)
+	p.extract("s4", "1000")
+	// The first event is lost, and a damaged copy of it reaches the Worker under another id.
+	first := p.mem.Messages()[0]
+	var damaged map[string]any
+	if err := json.Unmarshal(first.Data, &damaged); err != nil {
+		t.Fatal(err)
+	}
+	damaged["sha256"] = strings.Repeat("0", 64)
+	raw, _ := json.Marshal(damaged)
+	p.mem.Lose("s4:1")
+	p.publish("etl.s4.batch", "s4:1:damaged", raw)
+	if s := p.batches(); s.Done != 2 || s.Dead != 1 {
+		t.Fatalf("batches: %+v", s)
+	}
+	p.controls()
+	db := "dest/warehouse.db"
+	p.exec(db, "UPDATE etl_jobs SET totals_at = ?", longAgo)
+	p.sweep("5")
+	if told := hook.told(); len(told) != 1 || !strings.Contains(told[0], "ETL EVENT_REFUSED job s4 1 HASH_MISMATCH") {
+		t.Fatalf("the team was told %v", told)
+	}
+	p.mem.Advance(10 * time.Minute)
+	p.workAs("extractor.ag", "resend", "etl.*.resend")
+	if s := p.batches(); s.Done != 1 {
+		t.Fatalf("the batch again: %+v", s)
+	}
+	if state := p.text(db, "SELECT state FROM etl_jobs WHERE job_id = 's4'"); state != "done" {
+		t.Errorf("job = %s", state)
 	}
 }

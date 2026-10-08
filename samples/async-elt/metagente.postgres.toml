@@ -48,15 +48,28 @@ reject_customer = "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code
 load_orders = "INSERT INTO orders_final (id, customer, document_tail, total_cents, note_category, loaded_job) SELECT source_key, trim(customer), right(document, 4), CAST(round(CAST(total * 100 AS numeric)) AS BIGINT), note_category, job_id FROM stg_orders WHERE job_id = :job AND seq = :seq AND total >= 0 AND trim(customer) <> '' ON CONFLICT (id) DO UPDATE SET customer = EXCLUDED.customer, document_tail = EXCLUDED.document_tail, total_cents = EXCLUDED.total_cents, note_category = EXCLUDED.note_category, loaded_job = EXCLUDED.loaded_job, loaded_at = now()"
 finish_batch = "UPDATE etl_batches SET state = 'done', rows_rejected = (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), rows_loaded = rows_read - (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), done_at = now(), transform_version = CAST(:version AS text), last_error_code = NULL WHERE job_id = :job AND seq = :seq"
 
-fail_batch = "UPDATE etl_batches SET state = 'failed', attempts = attempts + 1, last_error_code = CAST(:code AS text) WHERE job_id = :job AND seq = :seq AND state <> 'done'"
+fail_batch = "UPDATE etl_batches SET state = 'failed', failed_at = now(), attempts = attempts + 1, last_error_code = CAST(:code AS text) WHERE job_id = :job AND seq = :seq AND state <> 'done'"
 pause_if_failing = "UPDATE etl_jobs SET state = 'paused', pause_reason = 'QUALITY' WHERE job_id = :job AND state = 'running' AND (SELECT count(*) FROM (SELECT state FROM etl_batches WHERE job_id = :job ORDER BY seq DESC LIMIT 3) last_three WHERE state = 'failed') = 3"
 pause_job = "UPDATE etl_jobs SET state = 'paused', pause_reason = CAST(:reason AS text) WHERE job_id = :job AND state = 'running'"
 resume_job = "UPDATE etl_jobs SET state = 'running', pause_reason = NULL WHERE job_id = :job AND state = 'paused'"
 
-set_totals = "UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows WHERE job_id = :job"
+set_totals = "UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows, totals_at = now() WHERE job_id = :job"
 try_close = "UPDATE etl_jobs SET state = CASE WHEN (SELECT coalesce(sum(rows_loaded + rows_rejected), 0) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_rows THEN 'done' ELSE 'mismatch' END, finished_at = now() WHERE job_id = :job AND state = 'running' AND total_batches IS NOT NULL AND (SELECT count(*) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_batches"
 
 purge = "DELETE FROM stg_orders s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = s.job_id AND b.seq = s.seq AND b.state = 'done' AND b.done_at < now() - make_interval(days => CAST(CAST(:days AS text) AS integer)))"
+
+record_incident = "INSERT INTO etl_incidents (job_id, seq, code) VALUES (:job, :seq, CAST(:code AS text)) ON CONFLICT DO NOTHING"
+
+# ---- for the sweeper (sweeper.ag) ----
+alert_candidates = "SELECT job_id AS job, 'JOB_PAUSED' AS kind, coalesce(pause_reason, '') AS ref FROM etl_jobs WHERE state = 'paused' UNION ALL SELECT job_id, 'JOB_MISMATCH', '' FROM etl_jobs WHERE state = 'mismatch' UNION ALL SELECT job_id, 'BUDGET_80_PERCENT', '' FROM etl_jobs WHERE budget_warned = 1 UNION ALL SELECT job_id, 'BATCH_FAILED', CAST(seq AS text) FROM etl_batches WHERE state = 'failed' UNION ALL SELECT job_id, 'EVENT_REFUSED', CAST(seq AS text) || ' ' || code FROM etl_incidents UNION ALL SELECT job_id, 'BATCH_STUCK', CAST(seq AS text) FROM etl_batches WHERE state = 'landed' AND landed_at < now() - make_interval(mins => CAST(CAST(:minutes AS text) AS integer)) ORDER BY job, kind, ref LIMIT 200"
+remember_alert = "INSERT INTO etl_alerts (job_id, kind, ref) VALUES (:job, CAST(:kind AS text), CAST(:ref AS text)) ON CONFLICT DO NOTHING"
+forget_alerts = "DELETE FROM etl_alerts WHERE job_id = :job AND kind IN ('JOB_PAUSED', 'BATCH_FAILED', 'BATCH_STUCK')"
+stuck_batches = "SELECT b.job_id AS job, b.seq AS seq, b.attempts AS attempts FROM etl_batches b JOIN etl_jobs j ON j.job_id = b.job_id WHERE j.state = 'running' AND b.attempts < 3 AND ((b.state = 'landed' AND b.landed_at < now() - make_interval(mins => CAST(CAST(:minutes AS text) AS integer))) OR (b.state = 'failed' AND b.failed_at < now() - make_interval(mins => CAST(CAST(:minutes AS text) AS integer)))) ORDER BY b.job_id, b.seq LIMIT 50"
+bump_attempts = "UPDATE etl_batches SET attempts = attempts + 1 WHERE job_id = :job AND seq = :seq AND state IN ('landed', 'failed')"
+lost_jobs = "SELECT j.job_id AS job FROM etl_jobs j WHERE j.state = 'running' AND j.total_batches IS NOT NULL AND j.totals_at < now() - make_interval(mins => CAST(CAST(:minutes AS text) AS integer)) AND (SELECT count(*) FROM etl_batches b WHERE b.job_id = j.job_id) < j.total_batches ORDER BY j.job_id LIMIT 50"
+missing_batches = "SELECT s AS seq FROM generate_series(1, (SELECT total_batches FROM etl_jobs WHERE job_id = :job)) s WHERE s NOT IN (SELECT seq FROM etl_batches WHERE job_id = :job) ORDER BY s LIMIT 50"
+request_resend = "INSERT INTO etl_resends (job_id, seq, requests) VALUES (:job, :seq, 1) ON CONFLICT (job_id, seq) DO UPDATE SET requests = etl_resends.requests + 1 WHERE etl_resends.requests < 5"
+resend_number = { sql = "SELECT requests FROM etl_resends WHERE job_id = :job AND seq = :seq", result = "value" }
 
 [sql.dest.transactions]
 land_batch = ["open_job", "land", "mark_landed"]
@@ -64,6 +77,7 @@ save_enrichment = ["answer_rows", "bump_tries", "count_model"]
 transform_batch = ["reject_negative", "reject_customer", "load_orders", "finish_batch"]
 register_totals = ["open_job", "set_totals"]
 open_budget = ["open_job", "set_budget"]
+resume = ["resume_job", "forget_alerts"]
 
 [broker.main]
 driver = "jetstream"

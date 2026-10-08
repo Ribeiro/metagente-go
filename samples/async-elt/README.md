@@ -15,9 +15,9 @@ it covers and the decisions are in [`docs/design-async-elt.md`](../../docs/desig
 ```
 
 This folder has **the Extractor** (`extractor.ag`), **the Worker** (`worker.ag`) and the agent of the optional
-step with a language model (`enricher.ag`), their configuration (`metagente.toml`, and `metagente.postgres.toml`
-for a Worker with a PostgreSQL destination), and the migrations of the databases. The sweeper that heals a job
-that lost an event is the next part of the design.
+step with a language model (`enricher.ag`), **the sweeper** (`sweeper.ag`), which heals a job that lost an event
+and tells the team what needs a person, their configuration (`metagente.toml`, and `metagente.postgres.toml`
+for a Worker with a PostgreSQL destination), and the migrations of the databases.
 
 ## What the Extractor does
 
@@ -96,6 +96,7 @@ metagente trust worker.ag --from main --subject 'etl.*.batch'   --dead etl.dead
 metagente trust worker.ag --from main --subject 'etl.*.control' --dead etl.dead
 metagente consume worker.ag --from main --subject 'etl.*.batch'   --dead etl.dead --message batch   --in-flight 2
 metagente consume worker.ag --from main --subject 'etl.*.control' --dead etl.dead --message control
+metagente consume worker.ag --from main --subject 'etl.*.retransform' --dead etl.dead --message retransform   # asks of the sweeper
 metagente run worker.ag purge days=7        # from time to time, from cron or a timer
 ```
 
@@ -162,10 +163,55 @@ metagente run worker.ag resume job=orders-2026-10                               
   provider and under which contract** (questions 2, 3 and 4 of the appendix of the design). Until then, use
   synthetic or masked data.
 
+## The sweeper
+
+The control tables are the truth, and the events of the broker are only a notice that there is work, so a job can heal
+itself even if the broker loses an event. `sweeper.ag` is an agent that you run **from time to time** (every 5 or 10
+minutes, from `cron` or a timer of `systemd`) on the side of the Worker. It is safe to run twice at once: each thing it
+does is checked against the tables first.
+
+```sh
+ALERT_URL=https://hooks.example.com/services/... metagente run sweeper.ag sweep minutes=10
+metagente consume worker.ag --from main --subject 'etl.*.retransform' --dead etl.dead --message retransform   # beside the other consumers
+metagente consume extractor.ag --from main --subject 'etl.*.resend'   --dead etl.dead --message resend       # on the machine of the Extractor
+```
+
+`minutes` is how long something may stay as it is before the sweeper acts. In one sweep it does three things:
+
+1. **Tells the team**, once for each cause (`etl_alerts` remembers), with a post to the webhook at `ALERT_URL` (the
+   domain is the one `tool http allow` names in `sweeper.ag`: change it to yours). The text has a code, the job and a
+   place, and **never a row**: `ETL JOB_PAUSED job orders-2026-10 QUALITY`. The causes are `JOB_PAUSED` (a brake: the
+   reason is `QUALITY` or `MODEL_BUDGET`), `JOB_MISMATCH` (the batches are done and the rows do not add up),
+   `BUDGET_80_PERCENT`, `BATCH_FAILED` (a batch that the brake of rejected rows stopped), `EVENT_REFUSED` (an event the
+   Worker refused for what it is, such as a damaged one: the batch and a code) and `BATCH_STUCK`. When a person resumes a
+   job, the alerts of its pause, its failed batches and its stuck batches are forgotten, so a new pause is told again.
+2. **Asks for a stuck batch to be transformed again.** A batch of a running job that stayed `landed`, or `failed`, for
+   more than `minutes` gets a notice on `etl.<job>.retransform`; the Worker transforms it again from the rows that are in
+   staging. Each batch gets at most three notices (`attempts`), so a batch that keeps failing waits for a person. A batch
+   that was not landed has no rows here: the Worker says so, and step 3 asks the Extractor.
+3. **Asks for a batch that never arrived to be sent again.** When the Extractor announced `total_batches` more than
+   `minutes` ago and fewer batches are in `etl_batches`, the sweeper finds the numbers that are missing (the batches
+   that the broker lost, or that were refused as damaged) and publishes `etl.<job>.resend` for each, with an id that
+   counts the asks. The Extractor builds the batch again **from the edges in its outbox**, so it carries the same rows,
+   and publishes it with the same id; the Worker lands it and the job closes. A batch is asked for five times at most
+   (`etl_resends`), and then it is for a person. If the stream still remembers the id (its window of copies), the broker
+   drops the copy: the sweep comes again after `minutes`.
+
+**What the sweeper does not see:** the circuit breaker of `consume` (the destination down for long) lives in that process,
+and the dead letters live in the broker, so neither is in the control tables. The first shows in the log of `consume`;
+alert on it from the supervisor that runs `consume`. A dead letter with a cause that the tables know (a stopped batch, a
+damaged event) is told; any other is in `etl.dead`, with the reason in the header `Metagente-Dead-Reason`.
+
+**Credentials:** the sweeper publishes, so its machine needs the password of the broker under the name of the tool
+(`events`) in `[credentials]`, and the user of the broker for the sweeper may publish only on `etl.*.retransform` and
+`etl.*.resend`. `metagente trust sweeper.ag` shows it all, with the domain it may post to.
+
 What happens when something goes wrong, with the commands above:
 
 | What fails | What happens |
 |---|---|
+| An event is lost by the broker, or refused as damaged | The totals say a batch is missing; the sweeper asks the Extractor to send it again from its outbox |
+| A batch stays `landed` or `failed` for long | The sweeper asks the Worker to transform it again from staging, three times at most |
 | The destination is down or deadlocked | The failure may pass: the event is asked for again later (10 s, 1, 5, 15 min), and the circuit breaker of `consume` stops taking batches while it lasts |
 | The Worker stops after transaction 1 | The batch stays `landed`; the event comes again and goes straight to transaction 2 |
 | A copy of an event | The batch is `done`: only confirmed |
@@ -220,7 +266,9 @@ The rows may hold personal data, so the sample treats every job as if they did (
 > this folder, the migrations and a broker in memory: the whole table, a page that is halved, a stop in the
 > middle and a restart, bad rows, the brake and a retransform, a copy of an event, a damaged event, a batch
 > that was landed and stopped, a version of the tables that the Worker does not know, the close of a job, the
-> purge, and the model step (what leaves for the model, no budget, an answer in the wrong shape, a failure that
-> may pass, a budget that is spent and then raised, the warning, the pause by quality). The integration tests (`integration/sample_async_elt_test.go` and `sample_worker_test.go`) run the
+> purge, the model step (what leaves for the model, no budget, an answer in the wrong shape, a failure that
+> may pass, a budget that is spent and then raised, the warning, the pause by quality) and the sweeper (a stuck batch,
+> a batch the broker lost and the Extractor sends again, the limit of asks, every cause told once and never with rows, a
+> damaged event). The integration tests (`integration/sample_async_elt_test.go` and `sample_worker_test.go`) run the
 > Extractor against a real JetStream server, and the Extractor and the Worker through real JetStream and
 > PostgreSQL, with the PostgreSQL configuration.

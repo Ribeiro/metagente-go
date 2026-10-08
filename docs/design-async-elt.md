@@ -377,6 +377,9 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
    PostgreSQL), the model step with its budget (the job pauses when it is spent) and the brake of a whole job
    (three batches in a row stopped by the brake of rejected rows pause it). Phase 3 is done.
 4. **The sweeper with its alerts and the resend of lost batches,** and more dialects (SQL Server, Oracle).
+   *Status:* the sweeper is done (`samples/async-elt/sweeper.ag`: alerts once for each cause with codes and counts, the
+   notice to transform a stuck batch again, the ask to the Extractor to send a lost batch again). It does not see the
+   circuit breaker of `consume`, which is in that process. SQL Server and Oracle are next.
 
 ## 16. Tests
 

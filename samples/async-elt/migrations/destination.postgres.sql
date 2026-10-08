@@ -20,6 +20,7 @@ CREATE TABLE etl_jobs (
   max_model_calls  BIGINT,
   max_model_tokens BIGINT,
   budget_warned    INTEGER NOT NULL DEFAULT 0,
+  totals_at        TIMESTAMPTZ,
   started_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at      TIMESTAMPTZ
 );
@@ -33,6 +34,7 @@ CREATE TABLE etl_batches (
   rows_rejected     BIGINT,
   attempts          INTEGER NOT NULL DEFAULT 0,
   landed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  failed_at         TIMESTAMPTZ,
   done_at           TIMESTAMPTZ,
   transform_version TEXT,
   last_error_code   TEXT,
@@ -72,4 +74,28 @@ CREATE TABLE orders_final (
   note_category TEXT,
   loaded_job    TEXT   NOT NULL,
   loaded_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- What the sweeper (sweeper.ag) keeps; see destination.sqlite.sql.
+CREATE TABLE etl_alerts (
+  job_id     TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  ref        TEXT NOT NULL,
+  alerted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (job_id, kind, ref)
+);
+
+CREATE TABLE etl_incidents (
+  job_id TEXT   NOT NULL,
+  seq    BIGINT NOT NULL,
+  code   TEXT   NOT NULL,
+  at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (job_id, seq, code)
+);
+
+CREATE TABLE etl_resends (
+  job_id   TEXT   NOT NULL,
+  seq      BIGINT NOT NULL,
+  requests INTEGER NOT NULL,
+  PRIMARY KEY (job_id, seq)
 );
