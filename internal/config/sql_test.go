@@ -376,3 +376,13 @@ func TestTheCeilingOfAListIsASetting(t *testing.T) {
 		t.Errorf("limit = %d, %v", cfg.Limits.MaxSQLWriteRows, err)
 	}
 }
+
+func TestTheCeilingOfCodecIsASetting(t *testing.T) {
+	cfg := Default()
+	if err := cfg.apply("metagente.toml", "[limits]\nmax_data_bytes = 4096\n"); err != nil || cfg.Limits.MaxDataBytes != 4096 {
+		t.Errorf("limit = %d, %v", cfg.Limits.MaxDataBytes, err)
+	}
+	if shown := problemText(t, Default().apply("metagente.toml", "[limits]\nmax_data_bytes = 0\n")); !strings.Contains(shown, "max_data_bytes") {
+		t.Errorf("shown:\n%s", shown)
+	}
+}

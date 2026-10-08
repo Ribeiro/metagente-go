@@ -29,6 +29,7 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `at` | the address of a `remote` | [remote](#remote) |
 | `broker` | a message broker: `tool name from broker "connection" publish "subject"` | [A message broker](#a-message-broker-tool-from-broker) |
 | `clock.now`, `clock.wait` | the time, and waiting | [tool](#tool) |
+| `codec` | JSON, gzip, SHA-256, UUIDs and records: `tool codec` | [Moving rows](#moving-rows-tool-codec) |
 | `contains` | a text has a piece, or a list has an item | [Conditions](#conditions) |
 | `env` | `tool env "NAME"`, or the variables given to a tool server | [tool](#tool) |
 | `env.get` | reads a variable that `tool env` names | [tool](#tool) |
@@ -158,6 +159,7 @@ The tools an agent may use. An agent can only call what it declared.
 | `tool env "HOME" "LANG"` | read those environment variables, and no other |
 | `tool state` | remember values within a conversation |
 | `tool clock` | the time, and waiting |
+| `tool codec` | JSON, gzip, SHA-256, UUIDs, and records made from values (see [Moving rows](#moving-rows-tool-codec)) |
 | `tool weather from mcp "npx -y weather-mcp@1.2.0"` | a tool server (MCP) started by that command |
 | `tool search from mcp "https://mcp.example.com/mcp"` | a tool server at that address |
 | `tool weather from mcp "..." env "HTTPS_PROXY"` | give the program these variables too |
@@ -341,6 +343,40 @@ agent Lander
   of the statements and of the transactions; it is another approval than the one for reading the same
   database.
 
+### Moving rows (`tool codec`)
+
+`tool codec` is for the agents of a pipeline that move rows from one program to another, through a message
+broker. It reads and writes values only: it touches no file, no network and no database, so it needs no
+approval. A record cannot be written in an agent, only received from a tool, and `codec.record` makes one.
+
+```
+agent Courier
+  goal "Pack a page of rows into an event"
+  tool orders from sql "orders-db"
+  tool events from broker "main" publish "etl.orders.batch"
+  tool codec
+  accepts send job
+  on send
+    page = orders.next_page after: 0 size: 1000
+    rows = codec.table rows: page columns: ["id", "customer"]
+    body = codec.json value: rows
+    payload = codec.gzip text: body
+    hash = codec.sha256 text: body
+    event = codec.record v: 1 job_id: job seq: 1 columns: ["id", "customer"] payload: payload sha256: hash
+    events.publish subject: "etl.orders.batch" id: "{job}:1" data: event
+    reply "sent"
+```
+
+- The names of the columns are said once (`table`), and each row is a list of values: it is much smaller
+  than a record for each row. `records` goes back.
+- `gzip` gives the packed text in base64, to travel as a text. The hash is taken of the text before it is
+  packed, so a reader checks it after `gunzip`. A damaged text, or one that is not base64 or gzip, is a
+  problem.
+- Every text that `codec` reads or writes is limited to `max_data_bytes` (8 MiB) in `[limits]`. `gunzip`
+  counts the bytes once unpacked, because a small packed text can hide a huge one.
+- A problem names the row and the field, never what the rows hold: they may hold personal data.
+- The name of the tool is `codec`, and `data` stays free to be the name of a value, as many agents have it.
+
 ### A message broker (`tool from broker`)
 
 `tool events from broker "main" publish "etl.orders.batch"` lets the agent publish messages to a message
@@ -410,6 +446,16 @@ The actions of the built in tools:
 | `state.get` | `key` | the value, or `nothing` if it was never set |
 | `clock.now` | none | a record: `text` (the time in UTC, RFC 3339) and `unix` (seconds) |
 | `clock.wait` | `seconds` | waits, up to `max_wait_seconds` |
+| `codec.record` | any `name: value` pairs | a record with those fields |
+| `codec.table` | `rows` (a list of records), `columns` (a list of names) | a list of lists of values, in the order of the columns |
+| `codec.records` | `rows` (a list of lists), `columns` | a list of records, the opposite of `table` |
+| `codec.json` | `value` | the value written as a text in JSON |
+| `codec.parse` | `text` | the JSON in the text, as a value |
+| `codec.size` | `value` | how many bytes the value takes written as JSON |
+| `codec.gzip` | `text` | the text compressed with gzip, as a text in base64 |
+| `codec.gunzip` | `text` | the text that `gzip` packed, within `max_data_bytes` once unpacked |
+| `codec.sha256` | `text` | the SHA-256 of the text, as 64 letters and digits |
+| `codec.uuid` | none | a new UUID version 7, which sorts by the time it was made |
 
 The actions of a tool server are the ones the server offers, with the values it asks for.
 
@@ -667,6 +713,7 @@ Words that look like a mistake get a suggestion: `acepts` gets "did you mean `ac
 | an answer of `http` | `max_http_bytes` (5 MiB) | `[limits]` |
 | a message to a broker | `max_broker_bytes` (1 MiB) | `[limits]` |
 | an answer of `sql` | `max_sql_rows` (10000), `max_sql_bytes` (5 MiB) | `[limits]` |
+| a text of `codec` | `max_data_bytes` (8 MiB), also once unpacked | `[limits]` |
 | a list given to a statement that changes rows | `max_sql_write_rows` (10000) | `[limits]` |
 | what `state` keeps in a conversation | `max_state_entries` (1000), `max_state_bytes` (256 KiB) | `[limits]` |
 | what a tool gives to `think` | `max_tool_result_bytes` (32 KiB), cut and marked | `[limits]` |
@@ -820,7 +867,7 @@ remote        = "remote" NAME "at" TEXT NEWLINE ;
 accepts       = "accepts" NAME { NAME } [ COMMENT ] NEWLINE ;          (* the comment describes it *)
 handler       = "on" NAME NEWLINE block ;                               (* "on start" runs first *)
 
-tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | server_tool | sql_tool | broker_tool ) NEWLINE ;
+tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | "codec" | server_tool | sql_tool | broker_tool ) NEWLINE ;
 file_tool     = "file" [ TEXT ] { "readonly" } ;
 http_tool     = "http" { "readonly" | "allow" ( "private" | TEXT { TEXT } ) } ;
 env_tool      = "env" TEXT { TEXT } ;

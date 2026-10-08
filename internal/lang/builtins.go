@@ -15,6 +15,8 @@ type ActionInfo struct {
 	// Mutates is true for actions that change something. `readonly` removes
 	// them (requirement L7).
 	Mutates bool
+	// Open is true for an action that takes any values, with names of the author's choosing.
+	Open bool
 	// Schema is the JSON schema of the values the action takes, when the tool
 	// publishes one (tool servers do). It is what a language model is shown.
 	Schema any
@@ -46,6 +48,27 @@ var builtinTable = map[ToolKind][]ActionInfo{
 	ToolBroker: {
 		{Name: "publish", Description: "Publish a message to a subject of the broker, with an id that makes a copy recognizable",
 			Params: []ParamInfo{{"subject", true}, {"id", true}, {"data", true}}, Mutates: true},
+	},
+	ToolCodec: {
+		{Name: "record", Description: "Make a record from the values given, each under the name it was given",
+			Open: true},
+		{Name: "table", Description: "Turn a list of records into a list of lists of values, in the order of the columns named",
+			Params: []ParamInfo{{"rows", true}, {"columns", true}}},
+		{Name: "records", Description: "Turn a list of lists of values into a list of records, naming the columns",
+			Params: []ParamInfo{{"rows", true}, {"columns", true}}},
+		{Name: "json", Description: "Write a value as text in JSON",
+			Params: []ParamInfo{{"value", true}}},
+		{Name: "parse", Description: "Read text in JSON as a value",
+			Params: []ParamInfo{{"text", true}}},
+		{Name: "size", Description: "How many bytes a value takes when written as JSON",
+			Params: []ParamInfo{{"value", true}}},
+		{Name: "gzip", Description: "Compress a text with gzip and give the result as text in base64",
+			Params: []ParamInfo{{"text", true}}},
+		{Name: "gunzip", Description: "Undo gzip: read a text in base64 and give the text that was compressed",
+			Params: []ParamInfo{{"text", true}}},
+		{Name: "sha256", Description: "The SHA-256 of a text, as 64 letters and digits",
+			Params: []ParamInfo{{"text", true}}},
+		{Name: "uuid", Description: "A new UUID version 7, which sorts by the time it was made"},
 	},
 	ToolClock: {
 		{Name: "now", Description: "The current date and time"},

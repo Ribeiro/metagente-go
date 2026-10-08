@@ -74,8 +74,10 @@ type Serve struct {
 // Limits is the [limits] section: ceilings that keep one agent from using all
 // the memory of the machine.
 type Limits struct {
-	MaxFileBytes       int64 // F2
-	MaxHTTPBytes       int64 // H3
+	MaxFileBytes int64 // F2
+	MaxHTTPBytes int64 // H3
+	// MaxDataBytes is the most bytes that `tool data` reads, writes or unpacks in one action.
+	MaxDataBytes       int64
 	MaxToolResultBytes int64 // L3
 	MaxMCPCalls        int   // E3
 	MaxMCPResultBytes  int64 // what one tool server answer may hold
@@ -160,6 +162,7 @@ func Default() *Config {
 		Limits: Limits{
 			MaxFileBytes:       1 << 20,
 			MaxHTTPBytes:       5 << 20,
+			MaxDataBytes:       8 << 20,
 			MaxToolResultBytes: 32 << 10,
 			MaxMCPCalls:        8,
 			MaxMCPResultBytes:  5 << 20,
@@ -284,6 +287,7 @@ var settings = map[string]setter{
 	"serve.auth_failures_per_minute":    setInt(func(c *Config) *int { return &c.Serve.AuthFailuresPerMinute }, 1),
 
 	"limits.max_file_bytes":        setInt64(func(c *Config) *int64 { return &c.Limits.MaxFileBytes }, 1),
+	"limits.max_data_bytes":        setInt64(func(c *Config) *int64 { return &c.Limits.MaxDataBytes }, 1),
 	"limits.max_http_bytes":        setInt64(func(c *Config) *int64 { return &c.Limits.MaxHTTPBytes }, 1),
 	"limits.max_tool_result_bytes": setInt64(func(c *Config) *int64 { return &c.Limits.MaxToolResultBytes }, 1),
 	"limits.max_mcp_calls":         setInt(func(c *Config) *int { return &c.Limits.MaxMCPCalls }, 1),

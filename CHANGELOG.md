@@ -9,6 +9,12 @@ minor versions.
 
 ### Added
 
+- `tool codec`, the small pieces that a pipeline needs to move rows between two programs (phase 3 of
+  `docs/design-async-elt.md`): `codec.record` (a record made from the values given), `table` and `records`
+  (rows as lists of values with the names of the columns said once, and back), `json` and `parse`, `size`,
+  `gzip` and `gunzip` (as text in base64, with a limit on what is unpacked), `sha256` and `uuid` (version 7).
+  It touches nothing outside its values, so it needs no approval; every text is limited by the new
+  `limits.max_data_bytes` (8 MiB).
 - `mode = "write"` in a `[sql.NAME]` section, for the side of the asynchronous ELT that lands data
   (phase 3 of `docs/design-async-elt.md`). Its named statements may begin with `INSERT`, `UPDATE` or
   `DELETE` and give how many rows they changed; `each` and `columns` run a statement once for each item of
