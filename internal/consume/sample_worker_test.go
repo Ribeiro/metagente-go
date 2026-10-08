@@ -430,9 +430,9 @@ func TestPurgeControlCleansOnlyTheJobsThatAreDoneOldAndOutOfStaging(t *testing.T
 		if n := p.number(db, "SELECT count(*) FROM "+table+" WHERE job_id = 'c1'"); n != 0 {
 			t.Errorf("%s still has %d rows of the job that was cleaned", table, n)
 		}
-		if n := p.number(db, "SELECT count(*) FROM "+table+" WHERE job_id = 'c3'"); table == "etl_batches" && n == 0 {
-			t.Errorf("%s lost the rows of a job that ended just now", table)
-		}
+	}
+	if n := p.number(db, "SELECT count(*) FROM etl_batches WHERE job_id = 'c3'"); n == 0 {
+		t.Error("etl_batches lost the rows of a job that ended just now")
 	}
 	if n := p.number(db, "SELECT count(*) FROM orders_final"); n != finalRows {
 		t.Errorf("the final table changed: %d rows, and %d were expected", n, finalRows)
