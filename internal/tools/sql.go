@@ -49,6 +49,9 @@ type sqlDriver struct {
 	readOnlyStart string
 	// prepare asks the database to prepare each statement, which is how some drivers give numbers as numbers.
 	prepare bool
+	// numberType is the name that the driver gives to the columns of numbers that it hands over as text, if it does:
+	// the numbers are made numbers again when the rows are read. It is empty for a driver that gives numbers as numbers.
+	numberType string
 	// transient says whether an error of this driver is one that may pass: a connection that dropped, a
 	// deadlock, a server that is starting. It may be nil.
 	transient func(error) bool
@@ -641,6 +644,7 @@ func (s *SQL) collect(ctx context.Context, st *sqlStatement, rows *sql.Rows) (va
 	if err := s.checkColumns(st, columns); err != nil {
 		return value.Nothing, err
 	}
+	numeric := s.textNumbers(rows)
 	maxRows := s.limits.MaxSQLRows
 	if st.result != config.ResultRows {
 		maxRows = 1
@@ -659,6 +663,7 @@ func (s *SQL) collect(ctx context.Context, st *sqlStatement, rows *sql.Rows) (va
 		if err := rows.Scan(pointers...); err != nil {
 			return value.Nothing, s.failure(ctx, st, err)
 		}
+		numbersFromText(cells, numeric)
 		fields := make(map[string]value.Value, len(columns))
 		for i, column := range columns {
 			v, bytes, err := cellValue(column, cells[i])
@@ -679,6 +684,39 @@ func (s *SQL) collect(ctx context.Context, st *sqlStatement, rows *sql.Rows) (va
 		return value.Nothing, s.failure(ctx, st, err)
 	}
 	return shape(st, columns, list), nil
+}
+
+// textNumbers says, for each column, whether the driver hands over its numbers as text. It is nil when no column does.
+func (s *SQL) textNumbers(rows *sql.Rows) []bool {
+	name := sqlDrivers[s.conn.Driver].numberType
+	if name == "" {
+		return nil
+	}
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return nil
+	}
+	numeric := make([]bool, len(types))
+	for i, t := range types {
+		numeric[i] = t.DatabaseTypeName() == name
+	}
+	return numeric
+}
+
+// numbersFromText turns the text of the columns of numbers into numbers: a whole number stays whole (and a very large
+// one is told as text later), and the rest is a number with a fraction. Whatever is not a number is left as it is.
+func numbersFromText(cells []any, numeric []bool) {
+	for i, flag := range numeric {
+		text, ok := cells[i].(string)
+		if !flag || !ok {
+			continue
+		}
+		if n, err := strconv.ParseInt(text, 10, 64); err == nil {
+			cells[i] = n
+		} else if f, err := strconv.ParseFloat(text, 64); err == nil {
+			cells[i] = f
+		}
+	}
 }
 
 func (s *SQL) checkColumns(st *sqlStatement, columns []string) error {

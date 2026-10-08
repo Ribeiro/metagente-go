@@ -15,6 +15,8 @@ import (
 func init() {
 	sqlDrivers["oracle"] = sqlDriver{
 		name: "oracle", connect: oracleDSN, transient: oracleTransient,
+		// The driver hands over the columns of numbers as text.
+		numberType: "NUMBER",
 		// The driver cannot ask for a transaction that only reads, so the statement that does it runs first.
 		readOnlyStart: "SET TRANSACTION READ ONLY",
 	}

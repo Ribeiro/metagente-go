@@ -636,8 +636,8 @@ version is in [CHANGELOG.md](CHANGELOG.md), and how to take part is in [CONTRIBU
    so a failed batch can be tried again. The pieces are done (a `sql` tool that reads and, for the
    destination, writes; a `broker` tool; `metagente consume`; `fail ... retry`; `tool codec`; `tool meter`), and
    so are the Extractor, the Worker (with an optional step with a language model, a budget and brakes) and the
-   sweeper of [the sample](samples/async-elt/), for SQLite and PostgreSQL. The `sql` tool also speaks SQL Server
-   and Oracle (the sample's statements are not written for them yet); the
+   sweeper of [the sample](samples/async-elt/), for SQLite and PostgreSQL as the destination, and also for SQL Server
+   and Oracle (the Worker and the sweeper; the Extractor reads a SQLite source); the
    page has the design, the failures it covers and the decisions taken.
 
 ### Not verified yet

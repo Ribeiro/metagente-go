@@ -142,9 +142,9 @@ func seed(t *testing.T, driver string) string {
 	for i := 1; i <= 25; i++ {
 		fmt.Fprintf(&sb, "INSERT INTO orders VALUES (%d, 'Customer %d', %d.50, 9007199254740993);\n", i, i, i)
 	}
-	if driver == "postgres" {
+	if driver == "postgres" || driver == "sqlserver" || driver == "oracle" {
 		// The control tables of the Worker of the sample, so that its test needs no second database.
-		raw, err := os.ReadFile(filepath.Join("..", "samples", "async-elt", "migrations", "destination.postgres.sql"))
+		raw, err := os.ReadFile(filepath.Join("..", "samples", "async-elt", "migrations", "destination."+driver+".sql"))
 		if err != nil {
 			t.Fatal(err)
 		}

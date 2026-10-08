@@ -30,6 +30,8 @@ type fakeDriver struct {
 	prepared []string
 	queried  []string
 	executed []string
+	// textNumber makes the fake database hand over its number as the text "7" of a column called NUMBER, as Oracle does.
+	textNumber bool
 }
 
 var fake = &fakeDriver{}
@@ -114,9 +116,15 @@ func (r *fakeRows) Next(dest []driver.Value) error {
 		return io.EOF
 	}
 	r.done = true
+	if fake.textNumber {
+		dest[0] = "7"
+		return nil
+	}
 	dest[0] = int64(7)
 	return nil
 }
+
+func (r *fakeRows) ColumnTypeDatabaseTypeName(int) string { return "NUMBER" }
 
 // fakeTool is a tool on a network database that is the fake one.
 func fakeTool(t *testing.T, readOnlyTx, prepare bool, password string, host string) *SQL {
@@ -341,5 +349,22 @@ func TestADriverThatCannotAskForAReadOnlyTransactionIsToldFirstInsideOne(t *test
 	}
 	if fake.prepared[0] != "SET TRANSACTION READ ONLY" {
 		t.Errorf("the first thing said was %q", fake.prepared[0])
+	}
+}
+
+func TestTheRowsOfADriverThatHandsOverNumbersAsTextHaveNumbers(t *testing.T) {
+	fake.reset()
+	fake.textNumber = true
+	t.Cleanup(func() { fake.textNumber = false })
+	tool := fakeTool(t, true, false, "pw", "h")
+	driver := sqlDrivers["fake"]
+	driver.numberType = "NUMBER"
+	sqlDrivers["fake"] = driver
+	got, err := tool.Call(context.Background(), "one", Args{})
+	if err != nil {
+		t.Fatal(rendered(t, err))
+	}
+	if id := got.List[0].Record["id"]; id.Kind != value.KindNumber || id.Number != 7 {
+		t.Errorf("id = %s (%v)", id.Display(), id.Kind)
 	}
 }

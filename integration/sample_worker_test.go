@@ -21,8 +21,8 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-// The Worker of the asynchronous ELT (samples/async-elt) with the PostgreSQL configuration of the sample,
-// against a real PostgreSQL and a real JetStream server. The Extractor fills the stream from a SQLite source,
+// The Worker of the asynchronous ELT (samples/async-elt) with the configuration of the sample for each database,
+// against a real PostgreSQL, SQL Server and Oracle, and a real JetStream server. The Extractor fills the stream from a SQLite source,
 // then the Worker lands the batches, transforms them and closes the job, through the commands a person types.
 
 const checkAgent = `agent Check
@@ -109,16 +109,10 @@ const ageAgent = `agent Age
     reply "old {one}"
 `
 
-func (s natsServer) postgresWorkerProject(t *testing.T, extractor string, pg server, model string) {
-	t.Helper()
-	toml := sampleText(t, "metagente.postgres.toml")
-	toml = strings.Replace(toml, `host = "db.example.com"`, fmt.Sprintf("host = %q\nport = %d\ntls = \"disable\"", pg.host, pg.port), 1)
-	toml = strings.Replace(toml, `database = "warehouse"`, fmt.Sprintf("database = %q", dbName), 1)
-	toml = regexp.MustCompile(`(?m)^user = "worker"$`).ReplaceAllString(toml, fmt.Sprintf("user = %q", dbUser))
-	toml = strings.Replace(toml, `url = "nats://127.0.0.1:4222"`, fmt.Sprintf("url = \"nats://%s:%d\"\nuser = %q\ntls = \"disable\"", s.host, s.port, natsUser), 1)
-	toml = regexp.MustCompile(`(?m)^# events = .*\n`).ReplaceAllString(toml, "main = \"BROKER_PASSWORD\"\nevents = \"BROKER_PASSWORD\"\n") // to consume, and to publish (the sweeper)
-	toml = strings.Replace(toml, `api_key_env = "ANTHROPIC_API_KEY"`, "api_key_env = \"ANTHROPIC_API_KEY\"\nbase_url = \""+model+"\"", 1)
-	toml = strings.Replace(toml, "[sql.dest.transactions]", `loaded = { sql = "SELECT count(*) FROM orders_final", result = "value" }
+// ageStatements are the statements that only a test has, in the dialect of each database: how the Worker finds what
+// it wrote, and how a batch and the totals of a job look old.
+var ageStatements = map[string]string{
+	"postgres": `loaded = { sql = "SELECT count(*) FROM orders_final", result = "value" }
 rejected = { sql = "SELECT count(*) FROM etl_rejects", result = "value" }
 state = { sql = "SELECT state FROM etl_jobs WHERE job_id = 'j1'", result = "value" }
 reason = { sql = "SELECT coalesce(pause_reason, 'none') FROM etl_jobs WHERE job_id = 'j1'", result = "value" }
@@ -128,9 +122,44 @@ asked = { sql = "SELECT CAST(coalesce(sum(model_calls), 0) AS BIGINT) FROM etl_b
 
 stick_batch = "UPDATE etl_batches SET state = 'landed', rows_loaded = NULL, rows_rejected = NULL, done_at = NULL, landed_at = now() - interval '1 day' WHERE job_id = 'j1' AND seq = 1"
 age_totals = "UPDATE etl_jobs SET totals_at = now() - interval '1 day' WHERE job_id = 'j1'"
+`,
+	"sqlserver": `loaded = { sql = "SELECT count(*) FROM orders_final", result = "value" }
+rejected = { sql = "SELECT count(*) FROM etl_rejects", result = "value" }
+state = { sql = "SELECT state FROM etl_jobs WHERE job_id = 'j1'", result = "value" }
+reason = { sql = "SELECT coalesce(pause_reason, 'none') FROM etl_jobs WHERE job_id = 'j1'", result = "value" }
+done_batches = { sql = "SELECT count(*) FROM etl_batches WHERE state = 'done'", result = "value" }
+labelled = { sql = "SELECT count(*) FROM orders_final WHERE note_category IS NOT NULL", result = "value" }
+asked = { sql = "SELECT coalesce(sum(model_calls), 0) FROM etl_batches", result = "value" }
 
-[sql.dest.transactions]`, 1)
-	write(t, filepath.Join(extractor, "worker.postgres.toml"), toml)
+stick_batch = "UPDATE etl_batches SET state = 'landed', rows_loaded = NULL, rows_rejected = NULL, done_at = NULL, landed_at = DATEADD(day, -1, SYSUTCDATETIME()) WHERE job_id = 'j1' AND seq = 1"
+age_totals = "UPDATE etl_jobs SET totals_at = DATEADD(day, -1, SYSUTCDATETIME()) WHERE job_id = 'j1'"
+`,
+	"oracle": `loaded = { sql = "SELECT count(*) FROM orders_final", result = "value" }
+rejected = { sql = "SELECT count(*) FROM etl_rejects", result = "value" }
+state = { sql = "SELECT state FROM etl_jobs WHERE job_id = 'j1'", result = "value" }
+reason = { sql = "SELECT coalesce(pause_reason, 'none') FROM etl_jobs WHERE job_id = 'j1'", result = "value" }
+done_batches = { sql = "SELECT count(*) FROM etl_batches WHERE state = 'done'", result = "value" }
+labelled = { sql = "SELECT count(*) FROM orders_final WHERE note_category IS NOT NULL", result = "value" }
+asked = { sql = "SELECT coalesce(sum(model_calls), 0) FROM etl_batches", result = "value" }
+
+stick_batch = "UPDATE etl_batches SET state = 'landed', rows_loaded = NULL, rows_rejected = NULL, done_at = NULL, landed_at = SYSTIMESTAMP - INTERVAL '1' DAY WHERE job_id = 'j1' AND seq = 1"
+age_totals = "UPDATE etl_jobs SET totals_at = SYSTIMESTAMP - INTERVAL '1' DAY WHERE job_id = 'j1'"
+`,
+}
+
+// destinationProject writes the project of the Worker for the database of a server, from the configuration of the sample
+// for that database.
+func (s natsServer) destinationProject(t *testing.T, extractor string, db server, model string) {
+	t.Helper()
+	toml := sampleText(t, "metagente."+db.driver+".toml")
+	toml = strings.Replace(toml, `host = "db.example.com"`, fmt.Sprintf("host = %q\nport = %d\ntls = \"disable\"", db.host, db.port), 1)
+	toml = regexp.MustCompile(`(?m)^database = ".*"`).ReplaceAllString(toml, fmt.Sprintf("database = %q", db.database()))
+	toml = regexp.MustCompile(`(?m)^user = "worker"$`).ReplaceAllString(toml, fmt.Sprintf("user = %q", db.user()))
+	toml = strings.Replace(toml, `url = "nats://127.0.0.1:4222"`, fmt.Sprintf("url = \"nats://%s:%d\"\nuser = %q\ntls = \"disable\"", s.host, s.port, natsUser), 1)
+	toml = regexp.MustCompile(`(?m)^# events = .*\n`).ReplaceAllString(toml, "main = \"BROKER_PASSWORD\"\nevents = \"BROKER_PASSWORD\"\n") // to consume, and to publish (the sweeper)
+	toml = strings.Replace(toml, `api_key_env = "ANTHROPIC_API_KEY"`, "api_key_env = \"ANTHROPIC_API_KEY\"\nbase_url = \""+model+"\"", 1)
+	toml = strings.Replace(toml, "[sql.dest.transactions]", ageStatements[db.driver]+"\n[sql.dest.transactions]", 1)
+	write(t, filepath.Join(extractor, "worker.dest.toml"), toml)
 	write(t, filepath.Join(extractor, "worker.ag"), sampleText(t, "worker.ag"))
 	write(t, filepath.Join(extractor, "enricher.ag"), sampleText(t, "enricher.ag"))
 	write(t, filepath.Join(extractor, "check.ag"), checkAgent)
@@ -139,27 +168,30 @@ age_totals = "UPDATE etl_jobs SET totals_at = now() - interval '1 day' WHERE job
 	write(t, filepath.Join(extractor, "age.ag"), ageAgent)
 }
 
-// pipelineInPostgreSQL starts the servers and writes the project of both agents: the Extractor with a SQLite source,
-// and the Worker with the configuration for PostgreSQL.
-func pipelineInPostgreSQL(t *testing.T) string {
+// databases are the destinations of the Worker that the sample has the statements for.
+var databases = []string{"postgres", "sqlserver", "oracle"}
+
+// pipelineIn starts the servers and writes the project of both agents: the Extractor with a SQLite source,
+// and the Worker with the configuration for the database.
+func pipelineIn(t *testing.T, driver string) string {
 	t.Helper()
-	dir, _, _ := pipelineWithServers(t)
+	dir, _, _ := pipelineWithServers(t, driver)
 	return dir
 }
 
-// pipelineWithServers is pipelineInPostgreSQL, and also gives the broker and the stream. The window of copies of
+// pipelineWithServers is pipelineIn, and also gives the broker and the stream. The window of copies of
 // the stream is short, so that a batch that is sent again a few seconds later is not taken for a copy.
-func pipelineWithServers(t *testing.T) (string, natsServer, jetstream.Stream) {
+func pipelineWithServers(t *testing.T, driver string) (string, natsServer, jetstream.Stream) {
 	t.Helper()
 	nats := startNATS(t)
 	stream := nats.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: 1000, Duplicates: time.Second})
-	pg := start(t, "postgres")
+	db := start(t, driver)
 	dir := nats.extractorProject(t)
-	nats.postgresWorkerProject(t, dir, pg, fakeModel(t).URL)
-	if out, err := worker(t, dir, "trust", "worker.ag", "--config", "worker.postgres.toml", "--yes"); err != nil {
+	nats.destinationProject(t, dir, db, fakeModel(t).URL)
+	if out, err := worker(t, dir, "trust", "worker.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
 		t.Fatalf("trust worker: %v\n%s", err, out)
 	}
-	if out, err := worker(t, dir, "trust", "check.ag", "--config", "worker.postgres.toml", "--yes"); err != nil {
+	if out, err := worker(t, dir, "trust", "check.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
 		t.Fatalf("trust check: %v\n%s", err, out)
 	}
 	if out, err := metagente(t, dir, natsSecret, "trust", "extractor.ag", "--yes"); err != nil {
@@ -171,7 +203,7 @@ func pipelineWithServers(t *testing.T) (string, natsServer, jetstream.Stream) {
 func send(t *testing.T, dir string, message string, params ...string) string {
 	t.Helper()
 	args := append([]string{"run", "worker.ag", message}, params...)
-	out, err := worker(t, dir, append(args, "--config", "worker.postgres.toml")...)
+	out, err := worker(t, dir, append(args, "--config", "worker.dest.toml")...)
 	if err != nil {
 		t.Fatalf("%s: %v\n%s", message, err, out)
 	}
@@ -188,11 +220,11 @@ func extract(t *testing.T, dir string) {
 // consumeOn runs the Worker on one kind of event until the stream has nothing more for it.
 func consumeOn(t *testing.T, dir, subject, message string, extra ...string) string {
 	t.Helper()
-	approve := []string{"trust", "worker.ag", "--config", "worker.postgres.toml", "--from", "main", "--subject", subject, "--dead", "etl.dead", "--yes"}
+	approve := []string{"trust", "worker.ag", "--config", "worker.dest.toml", "--from", "main", "--subject", subject, "--dead", "etl.dead", "--yes"}
 	if out, err := worker(t, dir, approve...); err != nil {
 		t.Fatalf("trust: %v\n%s", err, out)
 	}
-	args := []string{"consume", "worker.ag", "--config", "worker.postgres.toml", "--from", "main",
+	args := []string{"consume", "worker.ag", "--config", "worker.dest.toml", "--from", "main",
 		"--subject", subject, "--dead", "etl.dead", "--message", message, "--idle-exit", "3", "--durable", "it-" + message}
 	out, err := worker(t, dir, append(args, extra...)...)
 	if err != nil {
@@ -203,15 +235,21 @@ func consumeOn(t *testing.T, dir, subject, message string, extra ...string) stri
 
 func check(t *testing.T, dir string) string {
 	t.Helper()
-	out, err := worker(t, dir, "run", "check.ag", "count", "start=x", "--config", "worker.postgres.toml")
+	out, err := worker(t, dir, "run", "check.ag", "count", "start=x", "--config", "worker.dest.toml")
 	if err != nil {
 		t.Fatalf("check: %v\n%s", err, out)
 	}
 	return out
 }
 
-func TestTheWorkerLandsTransformsAndClosesAJobInPostgreSQL(t *testing.T) {
-	dir := pipelineInPostgreSQL(t)
+func TestTheWorkerLandsTransformsAndClosesAJobInEveryDatabase(t *testing.T) {
+	for _, driver := range databases {
+		t.Run(driver, func(t *testing.T) { landsAndClosesAJob(t, driver) })
+	}
+}
+
+func landsAndClosesAJob(t *testing.T, driver string) {
+	dir := pipelineIn(t, driver)
 	// The job has a budget for the model step.
 	if out := send(t, dir, "budget", "job=j1", "max_calls=1000", "max_tokens=1000000"); !strings.Contains(out, "job j1 may use 1000 requests") {
 		t.Fatalf("budget:\n%s", out)
@@ -238,8 +276,14 @@ func TestTheWorkerLandsTransformsAndClosesAJobInPostgreSQL(t *testing.T) {
 
 // A budget that is spent pauses the job, with the reason; the events wait; raising the budget and resuming the job
 // lets them go on, and nothing the model already labelled is asked again.
-func TestAJobWhoseBudgetIsSpentIsPausedAndGoesOnWhenItIsResumedInPostgreSQL(t *testing.T) {
-	dir := pipelineInPostgreSQL(t)
+func TestAJobWhoseBudgetIsSpentIsPausedAndGoesOnWhenItIsResumedInEveryDatabase(t *testing.T) {
+	for _, driver := range databases {
+		t.Run(driver, func(t *testing.T) { pausesAJobWithoutBudget(t, driver) })
+	}
+}
+
+func pausesAJobWithoutBudget(t *testing.T, driver string) {
+	dir := pipelineIn(t, driver)
 	send(t, dir, "budget", "job=j1", "max_calls=5", "max_tokens=1000000")
 	extract(t, dir)
 	out := consumeOn(t, dir, "etl.*.batch", "batch", "--max-deliver", "3", "--backoff", "200ms,200ms", "--breaker-after", "10")
@@ -283,15 +327,21 @@ func (w *webhook) told() []string {
 	return append([]string(nil), w.bodies...)
 }
 
-// The sweeper, against PostgreSQL and a real JetStream: a batch that stayed landed is transformed again, a batch that
+// The sweeper, against each database and a real JetStream: a batch that stayed landed is transformed again, a batch that
 // the stream lost is sent again by the Extractor, the team is told once, and the job closes.
-func TestTheSweeperHealsAJobInPostgreSQL(t *testing.T) {
-	dir, nats, stream := pipelineWithServers(t)
+func TestTheSweeperHealsAJobInEveryDatabase(t *testing.T) {
+	for _, driver := range databases {
+		t.Run(driver, func(t *testing.T) { sweepsAJob(t, driver) })
+	}
+}
+
+func sweepsAJob(t *testing.T, driver string) {
+	dir, nats, stream := pipelineWithServers(t, driver)
 	hook := newWebhook(t)
-	if out, err := worker(t, dir, "trust", "sweeper.ag", "--config", "worker.postgres.toml", "--yes"); err != nil {
+	if out, err := worker(t, dir, "trust", "sweeper.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
 		t.Fatalf("trust sweeper: %v\n%s", err, out)
 	}
-	if out, err := worker(t, dir, "trust", "age.ag", "--config", "worker.postgres.toml", "--yes"); err != nil {
+	if out, err := worker(t, dir, "trust", "age.ag", "--config", "worker.dest.toml", "--yes"); err != nil {
 		t.Fatalf("trust age: %v\n%s", err, out)
 	}
 	extract(t, dir)
@@ -304,11 +354,11 @@ func TestTheSweeperHealsAJobInPostgreSQL(t *testing.T) {
 	}
 	consumeOn(t, dir, "etl.*.control", "control")
 	// Batch 1 also stayed landed, long ago, and the totals were announced long ago.
-	worker(t, dir, "run", "age.ag", "stick", "start=x", "--config", "worker.postgres.toml")
-	worker(t, dir, "run", "age.ag", "old", "start=x", "--config", "worker.postgres.toml")
+	worker(t, dir, "run", "age.ag", "stick", "start=x", "--config", "worker.dest.toml")
+	worker(t, dir, "run", "age.ag", "old", "start=x", "--config", "worker.dest.toml")
 
 	sweep := func() string {
-		cmd := exec.Command(binary, "run", "sweeper.ag", "sweep", "minutes=5", "--config", "worker.postgres.toml")
+		cmd := exec.Command(binary, "run", "sweeper.ag", "sweep", "minutes=5", "--config", "worker.dest.toml")
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "DEST_DB_PASSWORD="+dbSecret, "BROKER_PASSWORD="+natsSecret, "ALERT_URL="+hook.URL, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
 		out, err := cmd.CombinedOutput()
