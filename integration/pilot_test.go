@@ -198,6 +198,7 @@ type pilotResult struct {
 	again, dead                  int
 	final, duplicates            int
 	job                          string
+	harmed                       bool // the harm of the run (the kill or the freeze) was done while it went on
 	problems                     []string
 }
 
@@ -306,7 +307,7 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 		disturbed.Add(1)
 		go func() {
 			defer disturbed.Done()
-			p.disturb(t, r, dest, nats, crew, batches, stop)
+			p.disturb(t, r, res, dest, nats, crew, batches, stop)
 		}()
 	}
 
@@ -339,7 +340,7 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 }
 
 // disturb waits until a share of the batches is done and then does the harm of the run.
-func (p *pilot) disturb(t *testing.T, r pilotRun, dest server, nats natsServer, crew *fleet, batches int, stop <-chan struct{}) {
+func (p *pilot) disturb(t *testing.T, r pilotRun, res *pilotResult, dest server, nats natsServer, crew *fleet, batches int, stop <-chan struct{}) {
 	enough := batches / 4
 	if r.kill {
 		enough = batches / 3
@@ -353,7 +354,7 @@ wait:
 		case <-stop:
 			t.Logf("the run ended before %d batches were done, so nothing was disturbed", enough)
 			return
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(200 * time.Millisecond):
 		}
 		out, err := dest.psql("SELECT count(*) FROM etl_batches WHERE state = 'done'")
 		if n, _ := strconv.Atoi(out); err == nil && n >= enough {
@@ -370,6 +371,7 @@ wait:
 	case r.freezeBroker:
 		freeze(t, nats.ctr, p.pause)
 	}
+	res.harmed = true
 }
 
 // close sends the control event to the Worker that closes the job, and waits for it to be taken.
@@ -415,6 +417,9 @@ func (p *pilot) measure(t *testing.T, dest server, res *pilotResult) {
 // judge says what the pilot approves: the books close, there is no duplicate after a kill, and each failure ends as the
 // design says.
 func (r *pilotResult) judge(rows, unbalanced int) {
+	if (r.run.kill || r.run.freezeDest || r.run.freezeBroker) && !r.harmed {
+		r.problem("the run ended before the harm was done, so it proves nothing: use more rows")
+	}
 	if r.duplicates != 0 {
 		r.problem("%d rows came to staging twice", r.duplicates)
 	}
@@ -448,6 +453,17 @@ func (r *pilotResult) judgeEnd(rows int) {
 	}
 }
 
+// harmText says whether the harm of a run was done: "-" for the runs that have none.
+func harmText(r *pilotResult) string {
+	switch {
+	case !r.run.kill && !r.run.freezeDest && !r.run.freezeBroker:
+		return "-"
+	case r.harmed:
+		return "yes"
+	}
+	return "no"
+}
+
 func rate(rows int, seconds float64) string {
 	if seconds <= 0 {
 		return "-"
@@ -459,16 +475,16 @@ func rate(rows int, seconds float64) string {
 func writePilotReport(t *testing.T, p *pilot) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Pilot of the asynchronous ELT\n\n%d rows, batches of at most %d rows aiming at %d bytes, PostgreSQL source and destination, a freeze of %s.\n\n", p.rows, p.batchRows, p.batchBytes, p.pause)
-	b.WriteString("| Run | Workers | Extractor (s) | rows/s read | Batches | Done | p50 (s) | p95 (s) | p99 (s) | Longest (s) | Workers span (s) | rows/s landed | Tries | Asked again | Dead | Rejected | Job | Result |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| Run | Workers | Extractor (s) | rows/s read | Batches | Done | p50 (s) | p95 (s) | p99 (s) | Longest (s) | Workers span (s) | rows/s landed | Tries | Asked again | Dead | Rejected | Harm | Job | Result |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, r := range p.results {
 		verdict := "approved"
 		if len(r.problems) > 0 {
 			verdict = "**failed**"
 		}
-		fmt.Fprintf(&b, "| %s | %d | %.1f | %s | %d | %d | %.2f | %.2f | %.2f | %.2f | %.1f | %s | %d | %d | %d | %d | %s | %s |\n",
+		fmt.Fprintf(&b, "| %s | %d | %.1f | %s | %d | %d | %.2f | %.2f | %.2f | %.2f | %.1f | %s | %d | %d | %d | %d | %s | %s | %s |\n",
 			r.run.name(), r.run.workers, r.extractSeconds, rate(p.rows, r.extractSeconds), r.batches, r.done, r.p50, r.p95, r.p99, r.longest,
-			r.spanSeconds, rate(r.loaded+r.rejected, r.spanSeconds), r.attempts, r.again, r.dead, r.rejected, r.job, verdict)
+			r.spanSeconds, rate(r.loaded+r.rejected, r.spanSeconds), r.attempts, r.again, r.dead, r.rejected, harmText(r), r.job, verdict)
 	}
 	b.WriteString("\n")
 	for _, r := range p.results {
