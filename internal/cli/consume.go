@@ -21,6 +21,9 @@ import (
 	"github.com/Ribeiro/metagente-go/internal/trust"
 )
 
+// consumeExample is how a command is written, in the advice of the problems with it.
+const consumeExample = "write it like: metagente consume worker.ag --from main --subject etl.orders.batch --dead etl.orders.dead"
+
 // consumeArgs are the words of `metagente consume`.
 type consumeArgs struct {
 	file, agent, message, configPath string
@@ -44,7 +47,7 @@ func parseConsumeArgs(args []string) (*consumeArgs, error) {
 		}
 		if !strings.HasPrefix(arg, "--") {
 			if c.file != "" {
-				return nil, badUsage("`consume` takes one file.", "write it like: metagente consume worker.ag --from main --subject etl.orders.batch --dead etl.orders.dead")
+				return nil, badUsage("`consume` takes one file.", consumeExample)
 			}
 			c.file = arg
 			continue
@@ -151,10 +154,10 @@ func parseWaits(text string) ([]time.Duration, error) {
 func (c *consumeArgs) check() error {
 	switch {
 	case c.file == "":
-		return badUsage("`consume` needs the name of a file.", "write it like: metagente consume worker.ag --from main --subject etl.orders.batch --dead etl.orders.dead")
+		return badUsage("`consume` needs the name of a file.", consumeExample)
 	case c.from == "" || c.subject == "" || c.dead == "":
 		return badUsage("`consume` needs --from (a broker of metagente.toml), --subject (what to read) and --dead (where the events that are given up on go).",
-			"write it like: metagente consume worker.ag --from main --subject etl.orders.batch --dead etl.orders.dead")
+			consumeExample)
 	}
 	return nil
 }

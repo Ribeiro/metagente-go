@@ -153,52 +153,66 @@ type run struct {
 func (r *run) loop(ctx context.Context) (Stats, error) {
 	var fatal error
 	for ctx.Err() == nil {
-		r.mu.Lock()
-		running, taken := r.running, r.stats.Taken
-		r.mu.Unlock()
-		if r.cfg.MaxEvents > 0 && taken >= r.cfg.MaxEvents {
-			break
-		}
-		slots := r.cfg.InFlight - running
-		if slots <= 0 {
-			r.waitForWorker(ctx)
-			continue
-		}
-		n, wait := r.breaker.gate(running, slots)
-		if n == 0 {
-			r.sleepOrWorker(ctx, wait)
-			continue
-		}
-		if r.cfg.MaxEvents > 0 {
-			n = min(n, r.cfg.MaxEvents-taken)
-		}
-		deliveries, err := r.consumer.Fetch(ctx, n, r.cfg.FetchWait)
+		stop, err := r.step(ctx)
 		if err != nil {
-			if ctx.Err() != nil {
-				break
-			}
-			if !broker.MayPass(err) {
-				fatal = brokerProblem("the broker refused to give events", err)
-				break
-			}
-			r.cfg.Log("the broker did not answer: " + clip.Collapse(err.Error(), maxReason) + "; waiting")
-			r.sleepOrWorker(ctx, 2*time.Second)
-			continue
+			fatal = err
 		}
-		if len(deliveries) == 0 {
-			if r.idle() {
-				break
-			}
-			continue
-		}
-		for _, d := range deliveries {
-			r.start(ctx, d)
+		if stop || err != nil {
+			break
 		}
 	}
 	r.wg.Wait()
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.stats, fatal
+}
+
+// step takes the next events, if there is room and the breaker allows, or waits. It says whether the run is over.
+func (r *run) step(ctx context.Context) (stop bool, err error) {
+	r.mu.Lock()
+	running, taken := r.running, r.stats.Taken
+	r.mu.Unlock()
+	if r.cfg.MaxEvents > 0 && taken >= r.cfg.MaxEvents {
+		return true, nil
+	}
+	slots := r.cfg.InFlight - running
+	if slots <= 0 {
+		r.waitForWorker(ctx)
+		return false, nil
+	}
+	n, wait := r.breaker.gate(running, slots)
+	if n == 0 {
+		r.sleepOrWorker(ctx, wait)
+		return false, nil
+	}
+	if r.cfg.MaxEvents > 0 {
+		n = min(n, r.cfg.MaxEvents-taken)
+	}
+	deliveries, err := r.consumer.Fetch(ctx, n, r.cfg.FetchWait)
+	if err != nil {
+		return r.fetchFailed(ctx, err)
+	}
+	if len(deliveries) == 0 {
+		return r.idle(), nil
+	}
+	for _, d := range deliveries {
+		r.start(ctx, d)
+	}
+	return false, nil
+}
+
+// fetchFailed is what a request for events that failed means: the run was told to stop, the broker does not
+// answer for the moment (wait and ask again), or it will not give events at all.
+func (r *run) fetchFailed(ctx context.Context, err error) (stop bool, fatal error) {
+	switch {
+	case ctx.Err() != nil:
+		return true, nil
+	case !broker.MayPass(err):
+		return true, brokerProblem("the broker refused to give events", err)
+	}
+	r.cfg.Log("the broker did not answer: " + clip.Collapse(err.Error(), maxReason) + "; waiting")
+	r.sleepOrWorker(ctx, 2*time.Second)
+	return false, nil
 }
 
 // idle says whether the run was told to end when nothing happens, and nothing has for long enough.
@@ -301,7 +315,7 @@ func (r *run) ack(ctx context.Context, d broker.Delivery, label, line string) {
 
 // retry asks for the event again after a wait, or gives up on it when this was the last delivery.
 func (r *run) retry(ctx context.Context, d broker.Delivery, label string, suggested time.Duration, reason string) {
-	if opened := r.breaker.failure(); opened {
+	if r.breaker.failure() {
 		r.account(func(s *Stats) { s.BreakerOpened++ })
 		r.cfg.Log(fmt.Sprintf("the destination failed %d times in a row: no more events are taken for %s", r.cfg.BreakerAfter, r.breaker.currentWait().Round(time.Millisecond)))
 	}
@@ -404,7 +418,7 @@ func (r *run) heartbeat(ctx context.Context, d broker.Delivery, stop <-chan stru
 // check said.
 func (r *run) give(ctx context.Context, m broker.Message) (result outcome, retry time.Duration, reason string) {
 	defer func() {
-		if p := recover(); p != nil {
+		if recover() != nil {
 			result, reason = failed, "the agent stopped with an unexpected error"
 		}
 	}()

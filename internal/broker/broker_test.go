@@ -196,7 +196,7 @@ func TestAMessageThatIsNotConfirmedComesAgainAfterTheWaitAndAGivenBackOneAfterIt
 	if d == nil {
 		t.Fatal("no message")
 	}
-	if again := fetchOne(t, c); again != nil {
+	if fetchOne(t, c) != nil {
 		t.Error("a message that is being worked on was given again")
 	}
 	m.Advance(2 * time.Minute) // the wait of the confirmation ends

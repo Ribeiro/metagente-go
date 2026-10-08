@@ -13,8 +13,11 @@ func TestTheBreakerOpensAfterFailuresInARowLetsOneEventTestAndGrowsItsWait(t *te
 	if n, _ := b.gate(0, 4); n != 4 {
 		t.Fatalf("closed: n = %d", n)
 	}
-	if b.failure() || b.failure() {
-		t.Fatal("opened before the third failure")
+	if b.failure() {
+		t.Fatal("opened at the first failure")
+	}
+	if b.failure() {
+		t.Fatal("opened at the second failure")
 	}
 	if !b.failure() {
 		t.Fatal("did not open at the third failure")
