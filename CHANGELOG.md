@@ -7,6 +7,11 @@ minor versions.
 
 ## [Unreleased]
 
+### Security
+
+- Built with Go 1.26.9 (`toolchain go1.26.9` in `go.mod`): Go 1.26.8 has ten known vulnerabilities in the standard library
+  (`net/http`, `crypto/tls`, `mime/multipart`, `os`) that the program reaches, and `govulncheck` found them.
+
 ### Added
 
 - The pilot of the asynchronous ELT (`integration/pilot_test.go`, workflow `Pilot`): from the Actions tab, with the rows
