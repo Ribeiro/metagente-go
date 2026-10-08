@@ -276,7 +276,7 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(dir, "metagente.toml"), strings.Replace(string(raw), "timeout_seconds = 60", "timeout_seconds = 7200", 1)) // a big table has many pages
+	write(t, filepath.Join(dir, "metagente.toml"), strings.Replace(string(raw), "timeout_seconds = 60", "timeout_seconds = 3600", 1)) // a big table has many pages
 	nats.destinationProject(t, dir, dest, fakeModel(t).URL)
 	for _, file := range []string{"worker.ag", "check.ag"} {
 		if out, err := worker(t, dir, "trust", file, "--config", "worker.dest.toml", "--yes"); err != nil {
