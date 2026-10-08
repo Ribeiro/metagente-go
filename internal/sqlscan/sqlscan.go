@@ -21,10 +21,11 @@ type Kind int
 const (
 	// Read is a SELECT or a WITH: it gives rows.
 	Read Kind = iota
-	// Insert, Update and Delete change rows and give how many.
+	// Insert, Update, Delete and Merge change rows and give how many.
 	Insert
 	Update
 	Delete
+	Merge
 )
 
 // Writes says whether the statement changes rows.
@@ -51,8 +52,8 @@ type use struct {
 func Parse(text string) (*Statement, error) { return parse(text, false) }
 
 // ParseWrite reads a statement for a database that may be changed: it may also begin with INSERT, UPDATE
-// or DELETE. An UPDATE or a DELETE has to have a WHERE, so that no statement changes every row of a table
-// by a slip. Nothing that changes the shape of the database (CREATE, DROP, ALTER) is accepted.
+// DELETE or MERGE. An UPDATE or a DELETE has to have a WHERE, and a MERGE has to have an ON, so that no
+// statement changes every row of a table by a slip. Nothing that changes the shape of the database (CREATE, DROP, ALTER) is accepted.
 func ParseWrite(text string) (*Statement, error) { return parse(text, true) }
 
 func parse(text string, write bool) (*Statement, error) {
@@ -74,6 +75,9 @@ func parse(text string, write bool) (*Statement, error) {
 	if (kind == Update || kind == Delete) && !sc.where {
 		return nil, fmt.Errorf("it is an %s with no WHERE, which would change every row", strings.ToUpper(sc.first))
 	}
+	if kind == Merge && !sc.on {
+		return nil, errors.New("it is a MERGE with no ON, which would not say which rows match")
+	}
 	s.Kind = kind
 	end := len(text)
 	if sc.semicolon >= 0 {
@@ -83,11 +87,11 @@ func parse(text string, write bool) (*Statement, error) {
 	return s, nil
 }
 
-var kinds = map[string]Kind{"select": Read, "with": Read, "insert": Insert, "update": Update, "delete": Delete}
+var kinds = map[string]Kind{"select": Read, "with": Read, "insert": Insert, "update": Update, "delete": Delete, "merge": Merge}
 
 func allowedWords(write bool) string {
 	if write {
-		return "SELECT, WITH, INSERT, UPDATE or DELETE"
+		return "SELECT, WITH, INSERT, UPDATE, DELETE or MERGE"
 	}
 	return "SELECT or WITH"
 }
@@ -114,6 +118,7 @@ type scanner struct {
 	s         *Statement
 	first     string // the first word, in lower case
 	where     bool   // a WHERE was seen
+	on        bool   // an ON was seen
 	semicolon int    // where the final ; is, or -1
 	seen      map[string]bool
 }
@@ -161,6 +166,9 @@ func (sc *scanner) step(i int) (int, error) {
 		}
 		if strings.EqualFold(t[i:end], "where") {
 			sc.where = true
+		}
+		if strings.EqualFold(t[i:end], "on") {
+			sc.on = true
 		}
 		return end, nil
 	}

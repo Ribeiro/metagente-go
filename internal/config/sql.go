@@ -315,10 +315,16 @@ func addStatements(conn *SQLConn, value any) error {
 		if err != nil {
 			return fmt.Errorf("has a problem in the statement `%s`: %s", name, err.Error())
 		}
+		if statement.Parsed.Kind == sqlscan.Merge && !mergeDrivers[conn.Driver] {
+			return fmt.Errorf("has a MERGE in the statement `%s`, and %s has no MERGE; write it as an UPDATE and an INSERT", name, conn.Driver)
+		}
 		conn.Statements[name] = statement
 	}
 	return nil
 }
+
+// mergeDrivers are the databases that have a MERGE.
+var mergeDrivers = map[string]bool{"postgres": true, "sqlserver": true, "oracle": true}
 
 func readStatement(name string, value any, write bool) (*SQLStatement, error) {
 	statement := &SQLStatement{Name: name}

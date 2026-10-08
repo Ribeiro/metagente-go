@@ -25,6 +25,7 @@ import (
 	"github.com/Ribeiro/metagente-go/internal/diag"
 	"github.com/Ribeiro/metagente-go/internal/lang"
 	"github.com/Ribeiro/metagente-go/internal/secret"
+	"github.com/Ribeiro/metagente-go/internal/sqlscan"
 	"github.com/Ribeiro/metagente-go/internal/value"
 )
 
@@ -235,6 +236,9 @@ func NewSQL(decl *lang.ToolDecl, opts SQLOptions, limits config.Limits) (*SQL, e
 	for _, name := range spec.Statements {
 		st := conn.Statements[name]
 		query, order := st.Parsed.Rewrite(place)
+		if st.Parsed.Kind == sqlscan.Merge && conn.Driver == "sqlserver" {
+			query += ";" // SQL Server wants a MERGE to end with a semicolon; the others refuse one
+		}
 		s.stmts[name] = &sqlStatement{
 			name: name, query: query, order: order, params: st.Parsed.Params, result: st.Result, description: st.Description,
 			writes: st.Parsed.Kind.Writes(), each: st.Each, columns: st.Columns,

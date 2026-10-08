@@ -9,6 +9,9 @@ minor versions.
 
 ### Added
 
+- `tool … from sql`: a connection with `mode = "write"` accepts `MERGE` (PostgreSQL 15+, SQL Server, Oracle). It has to
+  have an `ON`, so that it says which rows match; MySQL, MariaDB and SQLite have no `MERGE` and the connection says
+  so. SQL Server gets the closing semicolon that it asks for. Tried against real servers in `integration/`.
 - `samples/async-elt`: the Worker and the sweeper also work with a SQL Server or an Oracle destination
   (`metagente.sqlserver.toml`, `metagente.oracle.toml`, and the tables in `migrations/destination.sqlserver.sql` and
   `destination.oracle.sql`). The statements have the same names and values as in PostgreSQL, so the agents do not

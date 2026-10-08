@@ -264,7 +264,7 @@ agent Pager
   empty text as nothing. For SQL Server and Oracle the `database` is the database, and the name of the
   service for Oracle; `ca_file` is for SQL Server (and the others) but not for Oracle, which trusts the
   certificates of the computer. To insert a row only when it is not there, write `INSERT … SELECT … WHERE NOT
-  EXISTS (…)`; `MERGE` is not accepted.
+  EXISTS (…)`, or a `MERGE` where the database has one (see below).
 
 A database reached over the network says where it is, and who reads it, instead of a `path`:
 
@@ -342,7 +342,8 @@ agent Lander
   stays. `[sql.NAME.transactions]` groups several of them so that they stand or fall together; a call of
   one gives a record with how many rows each statement changed. A name that two steps share is one value.
 - An `UPDATE` or a `DELETE` without a `WHERE` is refused, so that a slip cannot change every row of a
-  table. `CREATE`, `DROP`, `ALTER` and the like are refused too: Metagente does not change the shape of a
+  table; a `MERGE` has to have an `ON`. `MERGE` exists in PostgreSQL 15+, SQL Server and Oracle; for MySQL,
+  MariaDB and SQLite the connection refuses it, and an update followed by an insert does the same. `CREATE`, `DROP`, `ALTER` and the like are refused too: Metagente does not change the shape of a
   database, the tables are made by the migrations of the user. Give the user of the connection only the
   rights that the statements need: that is the protection that does not depend on this program.
 - A statement that only reads still runs in a read only transaction, on a connection that writes.
