@@ -218,7 +218,7 @@ func metagente(t *testing.T, dir, password string, args ...string) (string, erro
 	t.Helper()
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "DB_PASSWORD="+password, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
+	cmd.Env = append(os.Environ(), "DB_PASSWORD="+password, "BROKER_PASSWORD="+password, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

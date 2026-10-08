@@ -41,6 +41,8 @@ const (
 	KindModel Kind = "model"
 	// KindSQL is a database an agent reads, with the statements it may run on it.
 	KindSQL Kind = "sql"
+	// KindBroker is a message broker an agent publishes to, with the subjects it may publish to.
+	KindBroker Kind = "broker"
 )
 
 // Item is one thing that needs approval.
@@ -91,6 +93,16 @@ func SQLItem(driver, target, connection string, statements []string, fingerprint
 		Kind:   KindSQL,
 		Target: strings.TrimSpace(driver + " " + target),
 		Detail: fmt.Sprintf("connection %s, statements %s, fingerprint %s", connection, strings.Join(statements, ", "), fingerprint),
+	}
+}
+
+// BrokerItem is a message broker an agent publishes to. The subjects it may publish to are part of what is
+// approved, and the fingerprint covers the settings of the connection.
+func BrokerItem(driver, target, connection string, subjects []string, fingerprint string) Item {
+	return Item{
+		Kind:   KindBroker,
+		Target: strings.TrimSpace(driver + " " + target),
+		Detail: fmt.Sprintf("connection %s, subjects %s, fingerprint %s", connection, strings.Join(subjects, ", "), fingerprint),
 	}
 }
 
@@ -148,6 +160,8 @@ func (i Item) Describe() string {
 		return "sends your key and what the agent asks the language model to: " + i.Target
 	case KindSQL:
 		return "reads the database: " + i.Target + " (" + i.Detail + ")"
+	case KindBroker:
+		return "publishes to the broker: " + i.Target + " (" + i.Detail + ")"
 	default:
 		text := "connects to: " + i.Target
 		if i.Credential != "" {

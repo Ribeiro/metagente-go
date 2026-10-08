@@ -32,6 +32,16 @@ minor versions.
   `retryAfterSeconds`, and a remote agent called by Metagente passes the mark on. `check` warns about a wait
   that is not above 0 or is longer than 3600 seconds. This is the first part of phase 2 of the asynchronous
   ELT (`docs/design-async-elt.md`); `metagente consume` will use it.
+- `tool events from broker "main" publish "etl.orders.batch"`, to publish messages to a message broker
+  (JetStream), only to the subjects the agent declared (`*` and `>` allowed). The broker is a
+  `[broker.main]` section of `metagente.toml` (`url`, `user`, `tls`, `ca_file`, `stream`); the password or
+  the token comes from `[credentials]`. `events.publish subject: … id: … data: …` needs an id, so the
+  broker drops a copy of a message, and answers with the stream, the place and whether it was a copy. A
+  full stream and a broker that cannot be reached are failures that may pass (`fail … retry`); `check`
+  refuses a subject the tool did not declare; the broker, the subjects and the settings of the connection
+  are approved by `metagente trust`. `limits.max_broker_bytes` (1 MiB) limits a message. JetStream can be
+  left out of a build with `-tags nojetstream`; `driver = "memory"` is a broker in the process, for tests.
+  Second part of phase 2 of `docs/design-async-elt.md`.
 - `tool … from sql` reads PostgreSQL (`driver = "postgres"`), MySQL and MariaDB (`"mysql"`, `"mariadb"`) too.
   A network database is written with `host`, `port`, `database`, `user`, `tls` (`verify`, `require`,
   `disable`) and `ca_file`; the password comes from `[credentials]`. Every statement runs in a read only

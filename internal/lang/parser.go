@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/Ribeiro/metagente-go/internal/broker"
 	"github.com/Ribeiro/metagente-go/internal/diag"
 )
 
@@ -486,6 +487,9 @@ func (p *parser) serverTool(c *cursor, span Span, name string) (*ToolDecl, error
 	if c.peekWord("sql") {
 		return p.sqlTool(c, span, name)
 	}
+	if c.peekWord("broker") {
+		return p.brokerTool(c, span, name)
+	}
 	if !c.peekWord("mcp") {
 		return nil, p.missing(c, "after `from` I expected `mcp`",
 			`write: tool weather from mcp "command or address"`)
@@ -540,6 +544,48 @@ func (p *parser) sqlTool(c *cursor, span Span, name string) (*ToolDecl, error) {
 		return nil, err
 	}
 	return &ToolDecl{Name: name, Kind: ToolSQL, Span: span, Command: connection}, nil
+}
+
+// brokerTool reads `tool name from broker "connection" publish "subject" ...`, with the cursor at `broker`.
+func (p *parser) brokerTool(c *cursor, span Span, name string) (*ToolDecl, error) {
+	const example = `write: tool events from broker "main" publish "etl.orders.batch"`
+	c.i++ // broker
+	parts, err := p.text(c, "the name of the broker must be in quotes", example)
+	if err != nil {
+		return nil, err
+	}
+	connection := strings.TrimSpace(joinLit(parts))
+	if !ValidConnectionName(connection) {
+		return nil, p.err(c.line, c.tokens[c.i-1].Col,
+			"the name of a broker is made of letters, digits, `_` and `-`", example)
+	}
+	decl := &ToolDecl{Name: name, Kind: ToolBroker, Span: span, Command: connection}
+	for c.peekWord("publish") {
+		c.i++
+		col := 0
+		if t := c.peek(); t != nil {
+			col = t.Col
+		}
+		subjects := p.readNames(c)
+		if len(subjects) == 0 {
+			return nil, p.missing(c, "`publish` needs the subjects the agent may publish to, in quotes", example)
+		}
+		for _, subject := range subjects {
+			if !broker.ValidPattern(subject) {
+				return nil, p.err(c.line, col,
+					fmt.Sprintf("`%s` is not a subject: it is names made of letters, digits, `_` and `-`, joined by dots, and a name may be `*` or the last `>`", subject),
+					`write it like: "etl.orders.batch", or "etl.*.batch", or "etl.>"`)
+			}
+		}
+		decl.Allow = append(decl.Allow, subjects...)
+	}
+	if len(decl.Allow) == 0 {
+		return nil, p.missing(c, "a broker needs `publish` and the subjects the agent may publish to", example)
+	}
+	if err := p.finish(c); err != nil {
+		return nil, err
+	}
+	return decl, nil
 }
 
 // ValidConnectionName says whether text can name a connection to a database: it is also the name of

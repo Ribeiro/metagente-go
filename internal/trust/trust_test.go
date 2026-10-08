@@ -420,3 +420,18 @@ func TestADatabaseIsKeyedByItsStatementsAndTheOldKeysDoNotChange(t *testing.T) {
 		t.Errorf("an item without detail changed its key: %q", plain.Key())
 	}
 }
+
+func TestABrokerIsKeyedByItsSubjectsAndSaysWhereItPublishes(t *testing.T) {
+	a := BrokerItem("jetstream", "tls://b:4222 (tls verify)", "main", []string{"etl.>"}, "aaa")
+	b := BrokerItem("jetstream", "tls://b:4222 (tls verify)", "main", []string{"etl.>"}, "bbb")
+	if a.Key() == b.Key() {
+		t.Error("other subjects must need another approval")
+	}
+	if a.Kind != KindBroker || !strings.Contains(a.Describe(), "publishes to the broker: jetstream tls://b:4222") ||
+		!strings.Contains(a.Describe(), "subjects etl.>") {
+		t.Errorf("describe = %q", a.Describe())
+	}
+	if a.WithCredential("PW").Key() == a.Key() {
+		t.Error("the variable of the password is part of what is approved")
+	}
+}

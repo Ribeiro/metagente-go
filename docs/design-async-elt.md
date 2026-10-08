@@ -362,7 +362,9 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
    `[sql.NAME]`, results `rows`/`row`/`value`), and for PostgreSQL, MySQL and MariaDB, with the
    `integration/` module that tests them in containers. Phase 1 is done; phase 2 is next.
 2. **`tool broker` and `metagente consume`,** with JetStream and the rules of section 8.
-   *Status:* `fail … retry` is done (see [the language](LANGUAGE.md#fail)); `tool broker` and `consume` are next.
+   *Status:* `fail … retry` is done (see [the language](LANGUAGE.md#fail)), and so is `tool broker` for
+   publishing (JetStream, with a broker in memory for tests); the interface still has to grow the pull side
+   (confirm, ask again later, end, in progress) for `metagente consume`, which is next.
 3. **The sample `samples/async-elt`:** the Extractor, the Worker, the SQL files of one or two dialects,
    the control tables, the purge, the closing of a job, the budget of the model step and the brakes.
 4. **The sweeper with its alerts and the resend of lost batches,** and more dialects (SQL Server, Oracle).
