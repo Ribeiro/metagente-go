@@ -22,14 +22,15 @@ func init() {
 
 // oracleTransient is an error that may pass: a listener that does not know the service yet (12514, 12528,
 // 12541), a shutdown or a start (1033, 1034, 3113, 3114), too many sessions (18, 20, 12516, 12519, 12520), or
-// a deadlock or a lock that waited too long (60, 30006).
+// a deadlock or a lock that waited too long (60, 30006), or a table that was changed a moment before a transaction
+// that only reads began (1466).
 func oracleTransient(err error) bool {
 	var ora *network.OracleError
 	if !errors.As(err, &ora) {
 		return false
 	}
 	switch ora.ErrCode {
-	case 18, 20, 60, 1033, 1034, 3113, 3114, 12514, 12516, 12519, 12520, 12528, 12541, 30006:
+	case 18, 20, 60, 1466, 1033, 1034, 3113, 3114, 12514, 12516, 12519, 12520, 12528, 12541, 30006:
 		return true
 	}
 	return false

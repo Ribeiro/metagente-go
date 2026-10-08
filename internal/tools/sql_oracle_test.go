@@ -44,7 +44,7 @@ func TestOracleAddressFollowsTheTLSMode(t *testing.T) {
 }
 
 func TestOracleErrorsThatMayPassAreTold(t *testing.T) {
-	for code, want := range map[int]bool{12514: true, 12541: true, 1033: true, 3113: true, 60: true, 1: false, 942: false, 1017: false} {
+	for code, want := range map[int]bool{1466: true, 12514: true, 12541: true, 1033: true, 3113: true, 60: true, 1: false, 942: false, 1017: false} {
 		if got := oracleTransient(network.NewOracleError(code)); got != want {
 			t.Errorf("ORA-%05d: %v", code, got)
 		}

@@ -223,6 +223,8 @@ func start(t *testing.T, driver string) server {
 			testcontainers.WithFiles(testcontainers.ContainerFile{HostFilePath: path, ContainerFilePath: "/container-entrypoint-initdb.d/seed.sql", FileMode: 0o644}),
 			testcontainers.WithWaitStrategy(wait.ForLog("DATABASE IS READY TO USE!").WithStartupTimeout(5*time.Minute)))
 		ctr, port = c, "1521/tcp"
+		// A transaction that only reads is refused (ORA-01466) while the tables are only seconds old.
+		time.Sleep(10 * time.Second)
 	}
 	if ctr != nil {
 		testcontainers.CleanupContainer(t, ctr)
