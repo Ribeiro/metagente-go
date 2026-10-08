@@ -92,8 +92,17 @@ func freeze(t *testing.T, ctr testcontainers.Container, d time.Duration) {
 		return
 	}
 	time.Sleep(d)
-	if out, err := exec.Command("docker", "unpause", id).CombinedOutput(); err != nil {
-		t.Errorf("thawing the container: %v\n%s", err, out)
+	// A container that stays frozen would stop the whole run, so the thaw is tried a few times.
+	for attempt := 1; ; attempt++ {
+		out, err := exec.Command("docker", "unpause", id).CombinedOutput()
+		if err == nil {
+			return
+		}
+		if attempt == 5 {
+			t.Errorf("thawing the container: %v\n%s", err, out)
+			return
+		}
+		time.Sleep(time.Second)
 	}
 }
 
@@ -109,6 +118,7 @@ func startWorkerProc(t *testing.T, dir string, args ...string) *workerProc {
 	w.cmd.Dir = dir
 	w.cmd.Env = append(os.Environ(), "DEST_DB_PASSWORD="+dbSecret, "BROKER_PASSWORD="+natsSecret, "ANTHROPIC_API_KEY=test-key", "METAGENTE_CONFIG_DIR="+approvals(t, dir))
 	w.cmd.Stdout, w.cmd.Stderr = &w.out, &w.out
+	w.cmd.WaitDelay = 10 * time.Second // a Worker that is killed must not keep the test waiting for its pipes
 	if err := w.cmd.Start(); err != nil {
 		t.Fatalf("starting a Worker: %v", err)
 	}
@@ -142,13 +152,40 @@ func (f *fleet) killOne() {
 	}
 }
 
-func (f *fleet) wait() {
+// wait waits until every Worker has left. When the run takes longer than it should, the Workers are killed and the answer
+// is false.
+func (f *fleet) wait(ctx context.Context) bool {
 	f.mu.Lock()
 	procs := append([]*workerProc(nil), f.procs...)
 	f.mu.Unlock()
-	for _, w := range procs {
-		_ = w.cmd.Wait()
+	done := make(chan struct{})
+	go func() {
+		for _, w := range procs {
+			_ = w.cmd.Wait()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		for _, w := range procs {
+			_ = w.cmd.Process.Kill()
+		}
+		<-done
+		return false
 	}
+}
+
+// extractorRunBefore is extractorRun that gives up when the context ends.
+func extractorRunBefore(ctx context.Context, t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = dir
+	cmd.WaitDelay = 10 * time.Second
+	cmd.Env = append(os.Environ(), "DB_PASSWORD="+dbSecret, "BROKER_PASSWORD="+natsSecret, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 var takenLine = regexp.MustCompile(`Taken (\d+): done (\d+), asked for again (\d+), dead letters (\d+)`)
@@ -311,11 +348,17 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 		}()
 	}
 
+	// No run may take for ever: past this time the Extractor and the Workers are stopped and the run fails, with the rest
+	// of the report still written.
+	limit := 5*time.Minute + time.Duration(p.rows/100)*time.Second + 3*p.pause
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+
 	// The Extractor starts again where it stopped, the way an operator would, when the broker was away.
 	started := time.Now()
 	var out string
 	for attempt := 1; attempt <= 6; attempt++ {
-		out, err = extractorRun(t, dir, "run", "extractor.ag", "extract", "job=j1", fmt.Sprintf("size=%d", p.batchRows), fmt.Sprintf("bytes=%d", p.batchBytes))
+		out, err = extractorRunBefore(ctx, t, dir, "run", "extractor.ag", "extract", "job=j1", fmt.Sprintf("size=%d", p.batchRows), fmt.Sprintf("bytes=%d", p.batchBytes))
 		if err == nil {
 			break
 		}
@@ -332,7 +375,9 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 	if !strings.Contains(out, fmt.Sprintf("%d rows", p.rows)) {
 		res.problem("the Extractor says %q, and the source has %d rows", strings.TrimSpace(out), p.rows)
 	}
-	crew.wait()
+	if !crew.wait(ctx) {
+		res.problem("the Workers were still working after %s: they were stopped", limit)
+	}
 	res.again, res.dead = crew.tally()
 	p.close(t, dir)
 	p.measure(t, dest, res)

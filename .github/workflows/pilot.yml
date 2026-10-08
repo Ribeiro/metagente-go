@@ -43,7 +43,8 @@ jobs:
   pilot:
     name: Pilot
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    # A run by hand may be long; the one on a pull request is short.
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 150 || 40 }}
     env:
       METAGENTE_IT_REGISTRY: mirror.gcr.io/
       # On a pull request the table is small, but big enough for the kill and the freezes to happen while the Workers work.
@@ -60,7 +61,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Pilot
-        run: cd integration && go test -tags 'integration pilot' -run '^TestThePilot$' -count=1 -timeout 140m -v ./...
+        run: cd integration && go test -tags 'integration pilot' -run '^TestThePilot$' -count=1 -timeout ${{ github.event_name == 'workflow_dispatch' && '140m' || '35m' }} -v ./...
       - name: Report
         if: ${{ always() }}
         run: |
