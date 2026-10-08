@@ -7,10 +7,10 @@
 
 CREATE TABLE orders (
   id       BIGINT PRIMARY KEY,
-  customer VARCHAR(100) NOT NULL,
-  document VARCHAR(20) NOT NULL,
+  customer NVARCHAR(100) NOT NULL,
+  document NVARCHAR(20) NOT NULL,
   total    DECIMAL(12,2) NOT NULL,
-  note     VARCHAR(500)      -- what the customer wrote on the order: free text, and it may hold personal data
+  note     NVARCHAR(500)      -- what the customer wrote on the order: free text, and it may hold personal data
 );
 
 WITH n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2500)

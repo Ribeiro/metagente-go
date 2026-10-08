@@ -7,10 +7,10 @@
 
 CREATE TABLE orders (
   id       BIGINT PRIMARY KEY,
-  customer VARCHAR(100) NOT NULL,
-  document VARCHAR(20) NOT NULL,
+  customer TEXT NOT NULL,
+  document TEXT NOT NULL,
   total    NUMERIC(12,2) NOT NULL,
-  note     VARCHAR(500)      -- what the customer wrote on the order: free text, and it may hold personal data
+  note     TEXT      -- what the customer wrote on the order: free text, and it may hold personal data
 );
 
 INSERT INTO orders (id, customer, document, total, note)
