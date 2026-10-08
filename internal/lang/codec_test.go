@@ -17,7 +17,7 @@ func TestACodecToolIsDeclaredWithNothingElse(t *testing.T) {
 	if res := Check(agents); len(res.Problems) != 0 {
 		t.Errorf("problems: %v", res.Problems)
 	}
-	if msg := parseError(t, "agent A\n  goal \"g\"\n  tool codec readonly\n  accepts go\n  on go\n    reply \"x\"\n"); msg == "" {
+	if parseError(t, "agent A\n  goal \"g\"\n  tool codec readonly\n  accepts go\n  on go\n    reply \"x\"\n") == "" {
 		t.Error("`tool codec readonly` must not be accepted")
 	}
 }
