@@ -42,6 +42,8 @@ last_upto = { sql = "SELECT coalesce(max(upto_key), 0) FROM outbox WHERE job_id 
 next_planned = { sql = "SELECT seq, after_key, upto_key FROM outbox WHERE job_id = :job AND state = 'planned' ORDER BY seq LIMIT 1", result = "row" }
 plan = "INSERT INTO outbox (job_id, seq, after_key, upto_key, row_count, state) VALUES (:job, :seq, :after_key, :upto_key, :row_count, 'planned')"
 confirm = "UPDATE outbox SET state = 'published', published_at = CURRENT_TIMESTAMP WHERE job_id = :job AND seq = :seq AND state = 'planned'"
+# The edges of a batch that was sent, to build it again when the destination asks.
+edges = { sql = "SELECT after_key, upto_key FROM outbox WHERE job_id = :job AND seq = :seq", result = "row" }
 totals = { sql = "SELECT count(*) AS batches, coalesce(sum(row_count), 0) AS rows FROM outbox WHERE job_id = :job", result = "row" }
 
 # ---- the destination: written by the Worker (worker.ag). The demo is a SQLite file; the same statements are
@@ -88,18 +90,37 @@ finish_batch = "UPDATE etl_batches SET state = 'done', rows_rejected = (SELECT c
 
 # A batch that a brake stopped, and the brake of the whole job: when the last three batches (by their number) are
 # all stopped, the job is paused, because a rate of rejection that high is a change in the source and not bad luck.
-fail_batch = "UPDATE etl_batches SET state = 'failed', attempts = attempts + 1, last_error_code = :code WHERE job_id = :job AND seq = :seq AND state <> 'done'"
+fail_batch = "UPDATE etl_batches SET state = 'failed', failed_at = CURRENT_TIMESTAMP, attempts = attempts + 1, last_error_code = :code WHERE job_id = :job AND seq = :seq AND state <> 'done'"
 pause_if_failing = "UPDATE etl_jobs SET state = 'paused', pause_reason = 'QUALITY' WHERE job_id = :job AND state = 'running' AND (SELECT count(*) FROM (SELECT state FROM etl_batches WHERE job_id = :job ORDER BY seq DESC LIMIT 3) last_three WHERE state = 'failed') = 3"
 pause_job = "UPDATE etl_jobs SET state = 'paused', pause_reason = :reason WHERE job_id = :job AND state = 'running'"
 resume_job = "UPDATE etl_jobs SET state = 'running', pause_reason = NULL WHERE job_id = :job AND state = 'paused'"
 
 # The end of a job: the totals the Extractor announced, and the one conditional UPDATE that closes it (two Workers
 # that try at the same time close it once). It is `done` when every batch is done and the rows add up.
-set_totals = "UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows WHERE job_id = :job"
+set_totals = "UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows, totals_at = CURRENT_TIMESTAMP WHERE job_id = :job"
 try_close = "UPDATE etl_jobs SET state = CASE WHEN (SELECT coalesce(sum(rows_loaded + rows_rejected), 0) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_rows THEN 'done' ELSE 'mismatch' END, finished_at = CURRENT_TIMESTAMP WHERE job_id = :job AND state = 'running' AND total_batches IS NOT NULL AND (SELECT count(*) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_batches"
 
 # Staging holds the rows as they came, so it is cleaned: the batches done more than N days ago.
 purge = "DELETE FROM stg_orders WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = stg_orders.job_id AND b.seq = stg_orders.seq AND b.state = 'done' AND b.done_at < datetime('now', '-' || CAST(:days AS INTEGER) || ' days'))"
+
+# An event the Worker refused for what it is (a code and a place, never the content): the sweeper tells the team.
+record_incident = "INSERT INTO etl_incidents (job_id, seq, code) VALUES (:job, :seq, :code) ON CONFLICT DO NOTHING"
+
+# ---- for the sweeper (sweeper.ag), which reads these tables from time to time ----
+# What a person should know about: a job that a brake paused, a job whose rows do not add up, a budget at 80 percent,
+# a batch that was stopped, an event that was refused, and a batch that stayed landed for more than N minutes.
+alert_candidates = "SELECT job_id AS job, 'JOB_PAUSED' AS kind, coalesce(pause_reason, '') AS ref FROM etl_jobs WHERE state = 'paused' UNION ALL SELECT job_id, 'JOB_MISMATCH', '' FROM etl_jobs WHERE state = 'mismatch' UNION ALL SELECT job_id, 'BUDGET_80_PERCENT', '' FROM etl_jobs WHERE budget_warned = 1 UNION ALL SELECT job_id, 'BATCH_FAILED', CAST(seq AS TEXT) FROM etl_batches WHERE state = 'failed' UNION ALL SELECT job_id, 'EVENT_REFUSED', CAST(seq AS TEXT) || ' ' || code FROM etl_incidents UNION ALL SELECT job_id, 'BATCH_STUCK', CAST(seq AS TEXT) FROM etl_batches WHERE state = 'landed' AND landed_at < datetime('now', '-' || CAST(:minutes AS INTEGER) || ' minutes') ORDER BY job, kind, ref LIMIT 200"
+remember_alert = "INSERT INTO etl_alerts (job_id, kind, ref) VALUES (:job, :kind, :ref) ON CONFLICT DO NOTHING"
+forget_alerts = "DELETE FROM etl_alerts WHERE job_id = :job AND kind IN ('JOB_PAUSED', 'BATCH_FAILED', 'BATCH_STUCK')"
+# The batches of a running job that stayed landed or failed for more than N minutes, and were tried less than 3 times.
+stuck_batches = "SELECT b.job_id AS job, b.seq AS seq, b.attempts AS attempts FROM etl_batches b JOIN etl_jobs j ON j.job_id = b.job_id WHERE j.state = 'running' AND b.attempts < 3 AND ((b.state = 'landed' AND b.landed_at < datetime('now', '-' || CAST(:minutes AS INTEGER) || ' minutes')) OR (b.state = 'failed' AND b.failed_at < datetime('now', '-' || CAST(:minutes AS INTEGER) || ' minutes'))) ORDER BY b.job_id, b.seq LIMIT 50"
+bump_attempts = "UPDATE etl_batches SET attempts = attempts + 1 WHERE job_id = :job AND seq = :seq AND state IN ('landed', 'failed')"
+# The jobs that announced more batches than arrived, a while ago, and which numbers are missing.
+lost_jobs = "SELECT j.job_id AS job FROM etl_jobs j WHERE j.state = 'running' AND j.total_batches IS NOT NULL AND j.totals_at < datetime('now', '-' || CAST(:minutes AS INTEGER) || ' minutes') AND (SELECT count(*) FROM etl_batches b WHERE b.job_id = j.job_id) < j.total_batches ORDER BY j.job_id LIMIT 50"
+missing_batches = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < (SELECT total_batches FROM etl_jobs WHERE job_id = :job)) SELECT i AS seq FROM n WHERE i NOT IN (SELECT seq FROM etl_batches WHERE job_id = :job) AND (SELECT total_batches FROM etl_jobs WHERE job_id = :job) IS NOT NULL ORDER BY i LIMIT 50"
+# Asking for a batch to be sent again is limited: five times, and then a person looks.
+request_resend = "INSERT INTO etl_resends (job_id, seq, requests) VALUES (:job, :seq, 1) ON CONFLICT (job_id, seq) DO UPDATE SET requests = requests + 1 WHERE etl_resends.requests < 5"
+resend_number = { sql = "SELECT requests FROM etl_resends WHERE job_id = :job AND seq = :seq", result = "value" }
 
 [sql.dest.transactions]
 land_batch = ["open_job", "land", "mark_landed"]
@@ -107,6 +128,7 @@ save_enrichment = ["answer_rows", "bump_tries", "count_model"]
 transform_batch = ["reject_negative", "reject_customer", "load_orders", "finish_batch"]
 register_totals = ["open_job", "set_totals"]
 open_budget = ["open_job", "set_budget"]
+resume = ["resume_job", "forget_alerts"]
 
 # ---- the broker: a NATS server with JetStream. ----
 [broker.main]

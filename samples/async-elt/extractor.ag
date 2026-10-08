@@ -9,6 +9,8 @@ agent Extractor
   # job is the name of the job (a new one starts it, the same one starts it again where it stopped);
   # size is the most rows of a page; bytes is the size a batch aims at before it is packed.
   accepts extract job size bytes  # copy the table, and say how many batches and rows went out
+  # What the destination asks for when a batch never arrived (the sweeper of the destination asks).
+  accepts resend v job_id seq  # build a batch again from the edges in the outbox, and publish it again
   on extract
     version = outbox.version
     if version is not 1
@@ -63,3 +65,19 @@ agent Extractor
     control = codec.record v: 1 job_id: job kind: "planned" batches: totals.batches rows: totals.rows
     events.publish subject: "etl.{job}.control" id: "{job}:control" data: control
     reply "job {job}: {totals.batches} batches, {totals.rows} rows"
+
+  on resend
+    edges = outbox.edges job: job_id seq: seq
+    if edges is nothing
+      reply "batch {seq} of {job_id} is not in this outbox"
+    batch_rows = source.range after: edges.after_key upto: edges.upto_key
+    count = codec.count value: batch_rows
+    table = codec.table rows: batch_rows columns: ["id", "customer", "document", "total", "note"]
+    body = codec.json value: table
+    hash = codec.sha256 text: body
+    payload = codec.gzip text: body
+    event_id = codec.uuid
+    read_at = clock.now
+    event = codec.record v: 1 event_id: event_id job_id: job_id seq: seq table: "orders" key: "id" after: edges.after_key upto: edges.upto_key read_at: read_at.text columns: ["id", "customer", "document", "total", "note"] row_count: count encoding: "json+gzip" payload: payload sha256: hash
+    events.publish subject: "etl.{job_id}.batch" id: "{job_id}:{seq}" data: event
+    reply "batch {seq} of {job_id} sent again with {count} rows"

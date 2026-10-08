@@ -13,6 +13,8 @@ agent Worker
   # The model step is for the jobs that have a budget. Without one it is off.
   accepts budget job max_calls max_tokens  # give a job a budget of requests and tokens for the model step
   accepts resume job  # let a paused job go on
+  # What the sweeper asks for: transform again a batch that stayed landed or failed, from the rows in staging.
+  accepts retransform v job_id seq  # transform again a batch whose rows are in staging
 
   on batch
     version = dest.version
@@ -36,6 +38,7 @@ agent Worker
       body = codec.gunzip text: payload
       check = codec.sha256 text: body
       if check is not sha256
+        noted = dest.record_incident job: job_id seq: seq code: "HASH_MISMATCH"
         fail "the hash of batch {seq} of {job_id} does not match: the event is damaged"
       rows = codec.parse text: body
       landed = dest.land_batch job: job_id seq: seq row_count: row_count rows: rows
@@ -87,5 +90,27 @@ agent Worker
     reply "job {job} may use {max_calls} requests and {max_tokens} tokens of the model"
 
   on resume
-    resumed = dest.resume_job job: job
-    reply "job {job}: {resumed} paused job is running again"
+    resumed = dest.resume job: job
+    reply "job {job}: {resumed.resume_job} paused job is running again"
+
+  on retransform
+    version = dest.version
+    if version is not 1
+      fail "the destination has version {version} of the control tables, and this Worker works with version 1"
+    status = dest.job_status job: job_id
+    if status is not nothing and status.state is "paused"
+      fail "job {job_id} is paused ({status.reason}): resume it when the cause is solved" retry in 3600 seconds
+    state = dest.batch_state job: job_id seq: seq
+    if state is nothing
+      reply "batch {seq} of {job_id} has no rows here: it has to be sent again by the Extractor"
+    if state is "done"
+      reply "batch {seq} of {job_id} was already done"
+    share = dest.reject_share job: job_id seq: seq
+    if share is more than 20
+      marked = dest.fail_batch job: job_id seq: seq code: "TOO_MANY_REJECTS"
+      stopped = dest.pause_if_failing job: job_id
+      fail "more than 20 percent of batch {seq} of {job_id} would be rejected: it is probably a change in the source"
+    transformed = dest.transform_batch job: job_id seq: seq version: "v1"
+    closed = dest.try_close job: job_id
+    counts = dest.batch_counts job: job_id seq: seq
+    reply "batch {seq} of {job_id} transformed again: {counts.rows_loaded} loaded, {counts.rows_rejected} rejected"

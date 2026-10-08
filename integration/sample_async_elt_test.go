@@ -37,7 +37,7 @@ func (s natsServer) extractorProject(t *testing.T) string {
 		toml = regexp.MustCompile(line).ReplaceAllString(toml, "")
 	}
 	toml = strings.Replace(toml, "[broker.main]\n", fmt.Sprintf("[broker.main]\ndriver = \"jetstream\"\nurl = \"nats://%s:%d\"\nuser = %q\ntls = \"disable\"\nstream = \"ETL\"\n", s.host, s.port, natsUser), 1)
-	toml += "\n[credentials]\nevents = \"BROKER_PASSWORD\"\n"
+	toml += "\n[credentials]\nevents = \"BROKER_PASSWORD\"\nmain = \"BROKER_PASSWORD\"\n" // to publish, and to consume
 	write(t, filepath.Join(dir, "metagente.toml"), toml)
 	write(t, filepath.Join(dir, "extractor.ag"), sampleText(t, "extractor.ag"))
 	for path, migration := range map[string]string{"demo/source.db": "migrations/demo-source.sql", "state/outbox.db": "migrations/outbox.sql"} {

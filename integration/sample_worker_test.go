@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -91,6 +94,21 @@ func fakeModel(t *testing.T) *httptest.Server {
 	return server
 }
 
+// ageAgent changes the age of what the Worker wrote, to try the sweeper without waiting: it is a test, so it has its
+// own statements, added to the configuration of the test.
+const ageAgent = `agent Age
+  goal "Make a batch and the totals of a job look old"
+  tool dest from sql "dest"
+  accepts stick start
+  on stick
+    one = dest.stick_batch
+    reply "stuck {one}"
+  accepts old start
+  on old
+    one = dest.age_totals
+    reply "old {one}"
+`
+
 func (s natsServer) postgresWorkerProject(t *testing.T, extractor string, pg server, model string) {
 	t.Helper()
 	toml := sampleText(t, "metagente.postgres.toml")
@@ -98,7 +116,7 @@ func (s natsServer) postgresWorkerProject(t *testing.T, extractor string, pg ser
 	toml = strings.Replace(toml, `database = "warehouse"`, fmt.Sprintf("database = %q", dbName), 1)
 	toml = regexp.MustCompile(`(?m)^user = "worker"$`).ReplaceAllString(toml, fmt.Sprintf("user = %q", dbUser))
 	toml = strings.Replace(toml, `url = "nats://127.0.0.1:4222"`, fmt.Sprintf("url = \"nats://%s:%d\"\nuser = %q\ntls = \"disable\"", s.host, s.port, natsUser), 1)
-	toml = regexp.MustCompile(`(?m)^# events = .*\n`).ReplaceAllString(toml, "main = \"BROKER_PASSWORD\"\n")
+	toml = regexp.MustCompile(`(?m)^# events = .*\n`).ReplaceAllString(toml, "main = \"BROKER_PASSWORD\"\nevents = \"BROKER_PASSWORD\"\n") // to consume, and to publish (the sweeper)
 	toml = strings.Replace(toml, `api_key_env = "ANTHROPIC_API_KEY"`, "api_key_env = \"ANTHROPIC_API_KEY\"\nbase_url = \""+model+"\"", 1)
 	toml = strings.Replace(toml, "[sql.dest.transactions]", `loaded = { sql = "SELECT count(*) FROM orders_final", result = "value" }
 rejected = { sql = "SELECT count(*) FROM etl_rejects", result = "value" }
@@ -108,19 +126,33 @@ done_batches = { sql = "SELECT count(*) FROM etl_batches WHERE state = 'done'", 
 labelled = { sql = "SELECT count(*) FROM orders_final WHERE note_category IS NOT NULL", result = "value" }
 asked = { sql = "SELECT CAST(coalesce(sum(model_calls), 0) AS BIGINT) FROM etl_batches", result = "value" }
 
+stick_batch = "UPDATE etl_batches SET state = 'landed', rows_loaded = NULL, rows_rejected = NULL, done_at = NULL, landed_at = now() - interval '1 day' WHERE job_id = 'j1' AND seq = 1"
+age_totals = "UPDATE etl_jobs SET totals_at = now() - interval '1 day' WHERE job_id = 'j1'"
+
 [sql.dest.transactions]`, 1)
 	write(t, filepath.Join(extractor, "worker.postgres.toml"), toml)
 	write(t, filepath.Join(extractor, "worker.ag"), sampleText(t, "worker.ag"))
 	write(t, filepath.Join(extractor, "enricher.ag"), sampleText(t, "enricher.ag"))
 	write(t, filepath.Join(extractor, "check.ag"), checkAgent)
+	text := sampleText(t, "sweeper.ag")
+	write(t, filepath.Join(extractor, "sweeper.ag"), strings.Replace(text, `allow "hooks.example.com"`, "allow private", 1)) // the webhook of the test is here
+	write(t, filepath.Join(extractor, "age.ag"), ageAgent)
 }
 
 // pipelineInPostgreSQL starts the servers and writes the project of both agents: the Extractor with a SQLite source,
 // and the Worker with the configuration for PostgreSQL.
 func pipelineInPostgreSQL(t *testing.T) string {
 	t.Helper()
+	dir, _, _ := pipelineWithServers(t)
+	return dir
+}
+
+// pipelineWithServers is pipelineInPostgreSQL, and also gives the broker and the stream. The window of copies of
+// the stream is short, so that a batch that is sent again a few seconds later is not taken for a copy.
+func pipelineWithServers(t *testing.T) (string, natsServer, jetstream.Stream) {
+	t.Helper()
 	nats := startNATS(t)
-	nats.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: 1000})
+	stream := nats.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: 1000, Duplicates: time.Second})
 	pg := start(t, "postgres")
 	dir := nats.extractorProject(t)
 	nats.postgresWorkerProject(t, dir, pg, fakeModel(t).URL)
@@ -133,7 +165,7 @@ func pipelineInPostgreSQL(t *testing.T) string {
 	if out, err := metagente(t, dir, natsSecret, "trust", "extractor.ag", "--yes"); err != nil {
 		t.Fatalf("trust: %v\n%s", err, out)
 	}
-	return dir
+	return dir, nats, stream
 }
 
 func send(t *testing.T, dir string, message string, params ...string) string {
@@ -215,4 +247,93 @@ func TestAJobWhoseBudgetIsSpentIsPausedAndGoesOnWhenItIsResumedInPostgreSQL(t *t
 	if got := send(t, dir, "resume", "job=j1"); !strings.Contains(got, "1 paused job is running again") {
 		t.Errorf("resume:\n%s", got)
 	}
+}
+
+// webhook is the channel of the team: it keeps what it was told.
+type webhook struct {
+	mu     sync.Mutex
+	bodies []string
+	URL    string
+}
+
+func newWebhook(t *testing.T) *webhook {
+	t.Helper()
+	w := &webhook{}
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		w.mu.Lock()
+		w.bodies = append(w.bodies, string(raw))
+		w.mu.Unlock()
+	}))
+	t.Cleanup(server.Close)
+	w.URL = server.URL
+	return w
+}
+
+func (w *webhook) told() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]string(nil), w.bodies...)
+}
+
+// The sweeper, against PostgreSQL and a real JetStream: a batch that stayed landed is transformed again, a batch that
+// the stream lost is sent again by the Extractor, the team is told once, and the job closes.
+func TestTheSweeperHealsAJobInPostgreSQL(t *testing.T) {
+	dir, nats, stream := pipelineWithServers(t)
+	hook := newWebhook(t)
+	if out, err := worker(t, dir, "trust", "sweeper.ag", "--config", "worker.postgres.toml", "--yes"); err != nil {
+		t.Fatalf("trust sweeper: %v\n%s", err, out)
+	}
+	if out, err := worker(t, dir, "trust", "age.ag", "--config", "worker.postgres.toml", "--yes"); err != nil {
+		t.Fatalf("trust age: %v\n%s", err, out)
+	}
+	extract(t, dir)
+	// The stream loses the second batch (the sequence numbers are 1, 2, 3 for the batches and 4 for the control).
+	if err := stream.DeleteMsg(context.Background(), 2); err != nil {
+		t.Fatalf("losing a message: %v", err)
+	}
+	if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 2: done 2") {
+		t.Fatalf("batches:\n%s", out)
+	}
+	consumeOn(t, dir, "etl.*.control", "control")
+	// Batch 1 also stayed landed, long ago, and the totals were announced long ago.
+	worker(t, dir, "run", "age.ag", "stick", "start=x", "--config", "worker.postgres.toml")
+	worker(t, dir, "run", "age.ag", "old", "start=x", "--config", "worker.postgres.toml")
+
+	sweep := func() string {
+		cmd := exec.Command(binary, "run", "sweeper.ag", "sweep", "minutes=5", "--config", "worker.postgres.toml")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "DEST_DB_PASSWORD="+dbSecret, "BROKER_PASSWORD="+natsSecret, "ALERT_URL="+hook.URL, "METAGENTE_CONFIG_DIR="+approvals(t, dir))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("sweep: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+	if out := sweep(); !strings.Contains(out, "1 causes looked at, 1 batches stuck, 1 jobs with batches missing") {
+		t.Fatalf("sweep:\n%s", out)
+	}
+	if told := hook.told(); len(told) != 1 || !strings.Contains(told[0], "ETL BATCH_STUCK job j1 1") {
+		t.Errorf("the team was told %v", told)
+	}
+	// The Worker transforms batch 1 again; the Extractor sends batch 2 again (after the window of copies); the Worker lands it.
+	if out := consumeOn(t, dir, "etl.*.retransform", "retransform"); !strings.Contains(out, "Taken 1: done 1") {
+		t.Errorf("retransform:\n%s", out)
+	}
+	time.Sleep(2 * time.Second)
+	// The Extractor is on the machine of the source: its own configuration, and its own approval.
+	if out, err := metagente(t, dir, natsSecret, "trust", "extractor.ag", "--from", "main", "--subject", "etl.*.resend", "--dead", "etl.dead", "--yes"); err != nil {
+		t.Fatalf("trust resend: %v\n%s", err, out)
+	}
+	if out, err := metagente(t, dir, natsSecret, "consume", "extractor.ag", "--from", "main", "--subject", "etl.*.resend", "--dead", "etl.dead",
+		"--message", "resend", "--idle-exit", "3", "--durable", "it-resend"); err != nil || !strings.Contains(out, "Taken 1: done 1") {
+		t.Errorf("resend (err = %v):\n%s", err, out)
+	}
+	if out := consumeOn(t, dir, "etl.*.batch", "batch"); !strings.Contains(out, "Taken 1: done 1") {
+		t.Errorf("batch 2 again:\n%s", out)
+	}
+	if out := check(t, dir); !strings.Contains(out, "final 2500; rejected 0; job done; batches done 3") {
+		t.Errorf("check:\n%s", out)
+	}
+	_ = nats
 }

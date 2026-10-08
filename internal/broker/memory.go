@@ -20,6 +20,7 @@ type Memory struct {
 	seen map[string]seenID
 	size int
 	down bool
+	lost map[int]bool // messages that the broker lost, by index: nobody is given them
 	now  func() time.Time
 	// places remembers, for each durable consumer, what happened to each message.
 	places map[string]*place
@@ -39,7 +40,7 @@ type seenID struct {
 
 // NewMemory creates an empty broker.
 func NewMemory() *Memory {
-	return &Memory{seen: map[string]seenID{}, now: time.Now, places: map[string]*place{}}
+	return &Memory{seen: map[string]seenID{}, lost: map[int]bool{}, now: time.Now, places: map[string]*place{}}
 }
 
 // Publish keeps the message, unless its id was seen inside the window, the stream is full, or the broker is
@@ -101,6 +102,22 @@ func (m *Memory) SetDown(down bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.down = down
+}
+
+// Lose makes the broker lose the messages that have this id, as a broker may lose an event that it kept (a
+// disk that failed, a stream that was emptied by mistake): no consumer is given them any more. It is for the
+// tests of what a program does about an event that never arrives.
+func (m *Memory) Lose(id string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lost := 0
+	for i, msg := range m.msgs {
+		if msg.ID == id && !m.lost[i] {
+			m.lost[i] = true
+			lost++
+		}
+	}
+	return lost
 }
 
 // Advance moves the clock of the window of duplicates, for the tests.
@@ -209,7 +226,7 @@ func (c *memConsumer) take(n int) ([]Delivery, error) {
 			break
 		}
 		switch {
-		case !Matches(c.spec.Subject, msg.Subject), c.p.finished[i]:
+		case !Matches(c.spec.Subject, msg.Subject), c.p.finished[i], c.m.lost[i]:
 			continue
 		case c.p.waitUntil[i].After(now), c.p.notBefore[i].After(now):
 			continue

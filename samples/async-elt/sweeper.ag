@@ -1,0 +1,43 @@
+agent Sweeper
+  goal "Look at the control tables of the ETL from time to time, tell the team what needs a person, and ask for what was lost"
+  tool dest from sql "dest"
+  tool events from broker "main" publish "etl.*.retransform" "etl.*.resend"
+  tool http allow "hooks.example.com"
+  tool env "ALERT_URL"
+  tool codec
+
+  # minutes is how long a batch may stay as it is before it counts as stuck, or a batch that was announced as lost.
+  accepts sweep minutes  # tell the team, ask for batches to be transformed or sent again; safe to run twice
+  on sweep
+    url = env.get name: "ALERT_URL"
+
+    # 1. What a person should know about, once for each cause. An alert has codes and counts, never the rows.
+    news = dest.alert_candidates minutes: minutes
+    for item in news
+      fresh = dest.remember_alert job: item.job kind: item.kind ref: item.ref
+      if fresh is 1
+        note = codec.record text: "ETL {item.kind} job {item.job} {item.ref}"
+        posted = http.post url: url body: note
+
+    # 2. The batches that stayed landed or failed in a job that runs: ask the Worker to transform them again.
+    stuck = dest.stuck_batches minutes: minutes
+    for batch in stuck
+      notice = codec.record v: 1 job_id: batch.job seq: batch.seq
+      events.publish subject: "etl.{batch.job}.retransform" id: "{batch.job}:{batch.seq}:retransform:{batch.attempts}" data: notice
+      bumped = dest.bump_attempts job: batch.job seq: batch.seq
+
+    # 3. The batches that were announced and never arrived: ask the Extractor to send them again, five times at most.
+    lost = dest.lost_jobs minutes: minutes
+    for job in lost
+      gaps = dest.missing_batches job: job.job
+      for gap in gaps
+        allowed = dest.request_resend job: job.job seq: gap.seq
+        if allowed is 1
+          times = dest.resend_number job: job.job seq: gap.seq
+          request = codec.record v: 1 job_id: job.job seq: gap.seq
+          events.publish subject: "etl.{job.job}.resend" id: "{job.job}:{gap.seq}:resend:{times}" data: request
+
+    told = codec.count value: news
+    waiting = codec.count value: stuck
+    missing = codec.count value: lost
+    reply "{told} causes looked at, {waiting} batches stuck, {missing} jobs with batches missing"
