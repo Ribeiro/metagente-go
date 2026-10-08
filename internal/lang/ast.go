@@ -208,13 +208,16 @@ type (
 	}
 )
 
-func (*AssignStmt) stmtNode()    {}
-func (*ExprStmt) stmtNode()      {}
-func (*ReplyStmt) stmtNode()     {}
-func (*IfStmt) stmtNode()        {}
-func (*ForStmt) stmtNode()       {}
-func (*FailStmt) stmtNode()      {}
-func (*FailRetryStmt) stmtNode() {}
+func (*AssignStmt) stmtNode() {}
+func (*ExprStmt) stmtNode()   {}
+func (*ReplyStmt) stmtNode()  {}
+func (*IfStmt) stmtNode()     {}
+func (*ForStmt) stmtNode()    {}
+func (*FailStmt) stmtNode()   {}
+
+func (*FailRetryStmt) stmtNode() {
+	// Only marks FailRetryStmt as a statement.
+}
 
 func (*RepeatStmt) stmtNode() {
 	// Only marks RepeatStmt as a statement.

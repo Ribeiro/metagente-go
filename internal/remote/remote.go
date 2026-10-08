@@ -666,6 +666,16 @@ type taskView struct {
 	RetryAfter time.Duration
 }
 
+// taskMetadata is the metadata of a task that Metagente writes and reads: the mark of a failure that may pass.
+type taskMetadata struct {
+	Metagente retryMark `json:"metagente"`
+}
+
+type retryMark struct {
+	Retry             bool    `json:"retry"`
+	RetryAfterSeconds float64 `json:"retryAfterSeconds"`
+}
+
 // readTask reads a task. The state is written as TASK_STATE_COMPLETED or, by older
 // agents, as completed; both become COMPLETED.
 func readTask(raw json.RawMessage) (taskView, bool) {
@@ -678,12 +688,7 @@ func readTask(raw json.RawMessage) (taskView, bool) {
 		Artifacts []struct {
 			Parts []json.RawMessage `json:"parts"`
 		} `json:"artifacts"`
-		Metadata struct {
-			Metagente struct {
-				Retry             bool    `json:"retry"`
-				RetryAfterSeconds float64 `json:"retryAfterSeconds"`
-			} `json:"metagente"`
-		} `json:"metadata"`
+		Metadata taskMetadata `json:"metadata"`
 	}
 	if json.Unmarshal(raw, &task) != nil {
 		return taskView{}, false
