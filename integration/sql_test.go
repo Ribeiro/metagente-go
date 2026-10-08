@@ -34,7 +34,7 @@ const (
 )
 
 // SQL Server is on the registry of Microsoft, not on Docker Hub, so a mirror of Docker Hub does not have it.
-const sqlserverImage = "mcr.microsoft.com/mssql/server:2022-latest@sha256:f2874938b3ce7a3290887ba13daebd61fbdd790420950d2cf715e3c805d448ae"
+const sqlserverImage = "mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04@sha256:c1aa8afe9b06eab64c9774a4802dcd032205d1be785b1fd51e1c0151e7586b74"
 
 const (
 	dbName   = "orders"
@@ -155,8 +155,8 @@ func seed(t *testing.T, driver string) string {
 	case "sqlserver":
 		text = "CREATE DATABASE orders;\nGO\nUSE orders;\nGO\n" + text
 	case "oracle":
-		// The script may run as the administrator, so the tables are said to belong to the user.
-		text = "ALTER SESSION SET CURRENT_SCHEMA = " + dbUser + ";\n" + text
+		// The script may run as the administrator, so it says who it is: the tables have to be the user's.
+		text = "CONNECT " + dbUser + "/" + dbSecret + "@//localhost:1521/FREEPDB1\n" + text
 	}
 	path := filepath.Join(t.TempDir(), "seed.sql")
 	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
