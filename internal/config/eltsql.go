@@ -26,7 +26,7 @@ type generatedTx struct {
 }
 
 // ELTDestinationDrivers are the databases that the Worker's statements are made for.
-var ELTDestinationDrivers = []string{"sqlite", "postgres"}
+var ELTDestinationDrivers = []string{"sqlite", "postgres", "sqlserver", "oracle"}
 
 // notAccepted is the problem of a statement that a description makes and a connection refuses.
 const notAccepted = "[elt.%s] makes a statement that [sql.%s] does not accept: %s"
@@ -106,8 +106,8 @@ func (cfg *Config) makeELTDestination(e *ELT, fail func(string, ...any) *diag.Di
 		return err
 	}
 	if !contains(ELTDestinationDrivers, dest.Driver) {
-		return fail("the destination of [elt.%s], [sql.%s], is a %s database, and a description makes the statements of %s only", e.Name, d.Connection, dest.Driver, strings.Join(ELTDestinationDrivers, " and ")).
-			Fix("write the statements by hand, as samples/async-elt does for SQL Server and Oracle")
+		return fail("the destination of [elt.%s], [sql.%s], is a %s database, and a description makes the statements of %s only", e.Name, d.Connection, dest.Driver, strings.Join(ELTDestinationDrivers, ", ")).
+			Fix("write the statements by hand, as samples/async-elt does")
 	}
 	if !dest.Writes() {
 		return fail("the destination of [elt.%s], [sql.%s], has to have mode = \"write\"", e.Name, d.Connection).
@@ -238,172 +238,4 @@ func eltOutboxStatements() []generated {
 		{"edges", rowsOf("SELECT after_key, upto_key FROM outbox WHERE job_id = :job AND seq = :seq", ResultRow)},
 		{"totals", rowsOf("SELECT count(*) AS batches, coalesce(sum(row_count), 0) AS rows FROM outbox WHERE job_id = :job", ResultRow)},
 	}
-}
-
-// ---- the destination ----
-
-// eltDialect holds what differs between the databases of a destination.
-type eltDialect struct {
-	postgres bool
-}
-
-// now is the current time.
-func (d eltDialect) now() string {
-	if d.postgres {
-		return "now()"
-	}
-	return "CURRENT_TIMESTAMP"
-}
-
-// text asks for a parameter to be taken as text, which PostgreSQL wants when it cannot tell its type.
-func (d eltDialect) text(param string) string {
-	if d.postgres {
-		return "CAST(" + param + " AS text)"
-	}
-	return param
-}
-
-// excluded is how the row that was not inserted is called in an upsert.
-func (d eltDialect) excluded() string {
-	if d.postgres {
-		return "EXCLUDED"
-	}
-	return "excluded"
-}
-
-// before is the condition "older than N days" (or minutes) for a column.
-func (d eltDialect) older(column, param, unit string) string {
-	if d.postgres {
-		return fmt.Sprintf("%s < now() - make_interval(%s => CAST(CAST(%s AS text) AS integer))", column, unit, param)
-	}
-	return fmt.Sprintf("%s < datetime('now', '-' || CAST(%s AS INTEGER) || ' %s')", column, param, unit)
-}
-
-// deleteFrom is the start of a DELETE of a table with a name for its rows.
-func (d eltDialect) deleteFrom(table, alias string) string {
-	if d.postgres {
-		return fmt.Sprintf("DELETE FROM %s %s", table, alias)
-	}
-	return fmt.Sprintf("DELETE FROM %s AS %s", table, alias)
-}
-
-// rejects is the condition that holds for a row that one of the rules rejects, as 1 or 0, or "" when there
-// are no rules.
-func (e *ELT) rejected() string {
-	if len(e.Destination.Reject) == 0 {
-		return "1 = 0"
-	}
-	parts := make([]string, len(e.Destination.Reject))
-	for i, rule := range e.Destination.Reject {
-		parts[i] = "(" + rule.When + ")"
-	}
-	return strings.Join(parts, " OR ")
-}
-
-// destinationStatements are the statements and the transactions of the Worker.
-func (e *ELT) destinationStatements(driver string) ([]generated, []generatedTx) {
-	d := eltDialect{postgres: driver == "postgres"}
-	dest := e.Destination
-	stg := dest.Staging
-	columns := strings.Join(e.Columns, ", ")
-	params := make([]string, len(e.Columns))
-	for i, column := range e.Columns {
-		params[i] = ":" + column
-	}
-	share := fmt.Sprintf("SELECT coalesce(100.0 * sum(CASE WHEN %s THEN 1 ELSE 0 END) / count(*), 0) FROM %s WHERE job_id = :job AND seq = :seq", e.rejected(), stg)
-	if d.postgres {
-		share = fmt.Sprintf("SELECT CAST(coalesce(100.0 * sum(CASE WHEN %s THEN 1 ELSE 0 END) / count(*), 0) AS DOUBLE PRECISION) FROM %s WHERE job_id = :job AND seq = :seq", e.rejected(), stg)
-	}
-	var out []generated
-	add := func(name string, value any) { out = append(out, generated{name, value}) }
-
-	add("version", rowsOf("SELECT schema_version FROM etl_meta", ResultValue))
-	add("batch_state", rowsOf("SELECT state FROM etl_batches WHERE job_id = :job AND seq = :seq", ResultValue))
-	add("batch_counts", rowsOf("SELECT rows_read, rows_loaded, rows_rejected FROM etl_batches WHERE job_id = :job AND seq = :seq", ResultRow))
-	add("job_state", rowsOf("SELECT state FROM etl_jobs WHERE job_id = :job", ResultValue))
-	// A job that is not known yet gives nothing; a job that a brake stopped says why.
-	add("job_status", rowsOf("SELECT state, coalesce(pause_reason, '') AS reason FROM etl_jobs WHERE job_id = :job", ResultRow))
-
-	// Transaction 1, "land": the rows go to staging and the batch is marked, all or nothing. A copy of a row is harmless.
-	add("open_job", "INSERT INTO etl_jobs (job_id) VALUES (:job) ON CONFLICT (job_id) DO NOTHING")
-	add("land", map[string]any{
-		"sql":  fmt.Sprintf("INSERT INTO %s (job_id, seq, %s) VALUES (:job, :seq, %s) ON CONFLICT (job_id, seq, %s) DO NOTHING", stg, columns, strings.Join(params, ", "), e.Key),
-		"each": "rows", "columns": anyStrings(e.Columns),
-	})
-	add("mark_landed", "INSERT INTO etl_batches (job_id, seq, state, rows_read) VALUES (:job, :seq, 'landed', :row_count) ON CONFLICT (job_id, seq) DO NOTHING")
-
-	// The rules of the transformation. A row that breaks one goes to etl_rejects with a code, and the batch
-	// goes on. `reject_share` counts the same rules, to tell the brake how much of a batch would be rejected.
-	add("reject_share", rowsOf(share, ResultValue))
-	transform := []string{}
-	for i, rule := range dest.Reject {
-		name := fmt.Sprintf("reject_%d", i+1)
-		add(name, fmt.Sprintf("INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, %s, '%s' FROM %s WHERE job_id = :job AND seq = :seq AND (%s) ON CONFLICT DO NOTHING",
-			e.Key, rule.Code, stg, rule.When))
-		transform = append(transform, name)
-	}
-
-	// Transaction 2, "transform": the upsert into the final table, and the batch marked done, all or nothing.
-	targets := make([]string, 0, len(dest.Set))
-	for column := range dest.Set {
-		targets = append(targets, column)
-	}
-	sort.Strings(targets)
-	values := make([]string, len(targets))
-	updates := []string{}
-	for i, column := range targets {
-		values[i] = dest.Set[column]
-		if column != dest.UpsertOn {
-			updates = append(updates, fmt.Sprintf("%s = %s.%s", column, d.excluded(), column))
-		}
-	}
-	conflict := "DO NOTHING"
-	if len(updates) > 0 {
-		conflict = "DO UPDATE SET " + strings.Join(updates, ", ")
-	}
-	add("load", fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s WHERE job_id = :job AND seq = :seq AND CASE WHEN %s THEN 1 ELSE 0 END = 0 ON CONFLICT (%s) %s",
-		dest.Table, strings.Join(targets, ", "), strings.Join(values, ", "), stg, e.rejected(), dest.UpsertOn, conflict))
-	transform = append(transform, "load")
-	counted := "SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq"
-	add("finish_batch", fmt.Sprintf("UPDATE etl_batches SET state = 'done', rows_rejected = (%s), rows_loaded = rows_read - (%s), done_at = %s, transform_version = %s, last_error_code = NULL WHERE job_id = :job AND seq = :seq",
-		counted, counted, d.now(), d.text(":version")))
-	transform = append(transform, "finish_batch")
-
-	// A batch that a brake stopped, and the brake of the whole job: when the last batches (by their number) are
-	// all stopped, the job is paused, because a rate of rejection that high is a change in the source and not bad luck.
-	add("fail_batch", fmt.Sprintf("UPDATE etl_batches SET state = 'failed', failed_at = %s, attempts = attempts + 1, last_error_code = %s WHERE job_id = :job AND seq = :seq AND state <> 'done'",
-		d.now(), d.text(":code")))
-	add("pause_if_failing", fmt.Sprintf("UPDATE etl_jobs SET state = 'paused', pause_reason = 'QUALITY' WHERE job_id = :job AND state = 'running' AND (SELECT count(*) FROM (SELECT state FROM etl_batches WHERE job_id = :job ORDER BY seq DESC LIMIT %d) last_batches WHERE state = 'failed') = %d",
-		dest.PauseAfter, dest.PauseAfter))
-	add("resume_job", "UPDATE etl_jobs SET state = 'running', pause_reason = NULL WHERE job_id = :job AND state = 'paused'")
-	add("forget_alerts", "DELETE FROM etl_alerts WHERE job_id = :job AND kind IN ('JOB_PAUSED', 'BATCH_FAILED', 'BATCH_STUCK')")
-
-	// The end of a job: the totals the Extractor announced, and the one conditional UPDATE that closes it (two Workers
-	// that try at the same time close it once). It is `done` when every batch is done and the rows add up.
-	add("set_totals", fmt.Sprintf("UPDATE etl_jobs SET total_batches = :batches, total_rows = :rows, totals_at = %s WHERE job_id = :job", d.now()))
-	add("try_close", fmt.Sprintf("UPDATE etl_jobs SET state = CASE WHEN (SELECT coalesce(sum(rows_loaded + rows_rejected), 0) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_rows THEN 'done' ELSE 'mismatch' END, finished_at = %s WHERE job_id = :job AND state = 'running' AND total_batches IS NOT NULL AND (SELECT count(*) FROM etl_batches WHERE job_id = :job AND state = 'done') = total_batches", d.now()))
-
-	// An event the Worker refused for what it is (a code and a place, never the content): the sweeper tells the team.
-	add("record_incident", fmt.Sprintf("INSERT INTO etl_incidents (job_id, seq, code) VALUES (:job, :seq, %s) ON CONFLICT DO NOTHING", d.text(":code")))
-
-	// Staging holds the rows as they came, so it is cleaned: the batches done more than N days ago.
-	add("purge", fmt.Sprintf("%s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = s.job_id AND b.seq = s.seq AND b.state = 'done' AND %s)",
-		d.deleteFrom(stg, "s"), d.older("b.done_at", ":days", "days")))
-	// The control tables are cleaned too: the jobs that are `done`, ended more than N days ago and have nothing left in staging.
-	old := fmt.Sprintf("job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND %s AND NOT EXISTS (SELECT 1 FROM %s s WHERE s.job_id = j.job_id))",
-		d.older("j.finished_at", ":days", "days"), stg)
-	purged := []string{}
-	for _, table := range []string{"alerts", "incidents", "resends", "rejects", "batches", "jobs"} {
-		add("old_"+table, fmt.Sprintf("DELETE FROM etl_%s WHERE %s", table, old))
-		purged = append(purged, "old_"+table)
-	}
-
-	transactions := []generatedTx{
-		{"land_batch", []string{"open_job", "land", "mark_landed"}},
-		{"transform_batch", transform},
-		{"register_totals", []string{"open_job", "set_totals"}},
-		{"resume", []string{"resume_job", "forget_alerts"}},
-		{"purge_control", purged},
-	}
-	return out, transactions
 }

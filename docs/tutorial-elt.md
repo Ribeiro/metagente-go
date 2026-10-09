@@ -12,8 +12,7 @@ line.
 
 You should have done [your first agent](tutorial.md) first. The reasons behind each choice are in
 [the design](design-async-elt.md). The files of this tutorial are in [`samples/elt-tutorial`](../samples/elt-tutorial/), and a
-test runs them at every change. A bigger version, with a step with a language model, a sweeper that heals a job, and SQL Server
-and Oracle, is [the sample](../samples/async-elt/README.md), written step by step.
+test runs them at every change. A bigger version, with a step with a language model and a sweeper that heals a job, is [the sample](../samples/async-elt/README.md), written step by step.
 
 ## 1. The idea in one page
 
@@ -435,10 +434,20 @@ ON CONFLICT (id) DO UPDATE SET customer = excluded.customer, document_tail = exc
   loaded_job = excluded.loaded_job, total_cents = excluded.total_cents
 ```
 
-The `[sql.dest]` section has `mode = "write"` because the Worker changes rows. The statements are made for SQLite and for
-PostgreSQL; with PostgreSQL, the place of the database is `host`, `database` and `user`, the password goes in
-`[credentials]` as `dest = "DEST_DB_PASSWORD"`, and the expressions are the ones of PostgreSQL (`right(document, 4)` in place
-of `substr(document, -4)`).
+The `[sql.dest]` section has `mode = "write"` because the Worker changes rows. The statements are made for SQLite, PostgreSQL,
+SQL Server and Oracle. For another database, the place of the database is `host`, `database` and `user`, the password goes in
+`[credentials]` as `dest = "DEST_DB_PASSWORD"`, the tables are the ones of `migrations/control.<database>.sql` and
+`migrations/orders.<database>.sql`, and the expressions are the ones of that database. Compare the line of `set` for
+the document in each:
+
+| Database | `document_tail` |
+|---|---|
+| SQLite, Oracle | `substr(document, -4)` |
+| PostgreSQL, SQL Server | `right(document, 4)` (in SQL Server, `RIGHT`) |
+
+Where the database has no `ON CONFLICT` (SQL Server and Oracle), the upsert is made as an `UPDATE` of the rows that are
+there, followed by an `INSERT` of the ones that are not, as the sample does. You do not write either of them. One difference
+comes from Oracle itself: an empty text is nothing, so the rule that rejects an empty customer is `customer IS NULL` there.
 
 ### 4.3 The Worker
 
@@ -575,7 +584,7 @@ You change the description, and the agents stay as they are.
 | The rules of the transformation | `reject` and `set` in `destination`; the Extractor does not change |
 | The brakes | `reject_share` and `pause_after` |
 | The source database | `[sql.source]`: PostgreSQL, MySQL, MariaDB, SQL Server and Oracle work, with `select` for the casts that each one needs ([`samples/async-elt/sources/`](../samples/async-elt/sources/) has examples that are tried against the real databases) |
-| The destination database | `[sql.dest]`: SQLite and PostgreSQL |
+| The destination database | `[sql.dest]`: SQLite, PostgreSQL, SQL Server and Oracle (with the expressions of each) |
 
 The key must be a whole number that grows. If your table has another key, read it with the name of the key:
 `select = { id = "order_no" }` and `key = "id"`. A column that is called `job`, `seq`, `rows` or `version` (names that the
@@ -591,7 +600,6 @@ The description covers the copy of a table with rules that can be said in a line
 [`samples/async-elt`](../samples/async-elt/README.md) does, when you need:
 
 - **a step with a language model** between landing and transforming, with a budget (the sample has it);
-- **SQL Server or Oracle as the destination** (the description makes the statements of SQLite and PostgreSQL);
 - **another kind of work** that the Worker does for each batch.
 
 An agent written by hand and one made from a description speak the same events and use the same control tables, so they

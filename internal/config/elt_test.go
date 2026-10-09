@@ -257,7 +257,7 @@ func TestAProblemInADescriptionIsToldWithTheLineOfItsSection(t *testing.T) {
 		"outbox not sqlite":           {replace("[sql.outbox]\ndriver = \"sqlite\"\npath = \"outbox.db\"", "[sql.outbox]\ndriver = \"postgres\"\nhost = \"h\"\ndatabase = \"d\"\nuser = \"u\""), "has to be a SQLite file"},
 		"source written to":           {replace("[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"", "[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"\nmode = \"write\""), "is written to"},
 		"destination reads":           {replace("[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\"\nmode = \"write\"", "[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\""), "has to have mode = \"write\""},
-		"destination of another kind": {replace("[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\"", "[sql.dest]\ndriver = \"oracle\"\nhost = \"h\"\ndatabase = \"d\"\nuser = \"u\""), "makes the statements of sqlite and postgres only"},
+		"destination of another kind": {replace("[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\"", "[sql.dest]\ndriver = \"mysql\"\nhost = \"h\"\ndatabase = \"d\"\nuser = \"u\""), "makes the statements of sqlite, postgres, sqlserver, oracle only"},
 		"a rule the database refuses": {replace(`when = "total < 0"`, `when = "total < 0; DROP TABLE orders"`), "does not accept"},
 		"a name clash":                {replace("[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"", "[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"\n[sql.source.statements]\npage = \"SELECT id FROM orders\""), "the description makes one with that name"},
 	} {
@@ -353,5 +353,77 @@ func TestAKeyThatIsReadUnderAnotherNameIsFoundByItsExpression(t *testing.T) {
 	want := "SELECT order_no AS id, customer, document, total, note FROM orders WHERE order_no > :after ORDER BY order_no LIMIT :size"
 	if got := cfg.SQL["source"].Statements["page"].Parsed.Text; got != want {
 		t.Errorf("page is\n%s\nwant\n%s", got, want)
+	}
+}
+
+// The statements that do not depend on the columns of the table are the ones that samples/async-elt tried against real
+// servers: a description has to make the same text for SQL Server and Oracle, and the others have the same shape.
+func TestTheStatementsOfADescriptionForSQLServerAndOracleAreTheOnesOfTheSample(t *testing.T) {
+	same := []string{"version", "batch_state", "batch_counts", "job_state", "job_status", "open_job", "mark_landed", "finish_batch",
+		"fail_batch", "pause_if_failing", "resume_job", "forget_alerts", "set_totals", "try_close", "record_incident", "purge",
+		"old_alerts", "old_incidents", "old_resends", "old_rejects", "old_batches", "old_jobs"}
+	for _, driver := range []string{"sqlserver", "oracle"} {
+		want := loadSample(t, "metagente."+driver+".toml")
+		delete(want.Transactions, "open_budget")
+		delete(want.Transactions, "save_enrichment")
+		cfg, err := loadELT(t, eltSettings(driver))
+		if err != nil {
+			t.Fatalf("%s: %s", driver, problemText(t, err))
+		}
+		got := cfg.SQL["dest"]
+		for _, name := range same {
+			if a, b := want.Statements[name], got.Statements[name]; a == nil || b == nil {
+				t.Errorf("%s: %s is missing (%v, %v)", driver, name, b != nil, a != nil)
+			} else if strings.ReplaceAll(a.Parsed.Text, "last_three", "last_batches") != b.Parsed.Text || a.Result != b.Result {
+				t.Errorf("%s: %s is\n%s\nthe sample has\n%s", driver, name, b.Parsed.Text, a.Parsed.Text)
+			}
+		}
+		sameStatements(t, driver, want, got)
+		sameTransactions(t, driver, want, got)
+		// An upsert is an update and an insert of what is not there.
+		if got.Statements["update_final"] == nil || strings.Join(got.Transactions["transform_batch"].Steps, " ") != "reject_1 reject_2 update_final load finish_batch" {
+			t.Errorf("%s: transform_batch has the steps %v", driver, got.Transactions["transform_batch"].Steps)
+		}
+	}
+}
+
+func TestTheUpdateOfAnUpsertReadsTheRowsAgainstStagingAlone(t *testing.T) {
+	sqlserver, err := loadELT(t, eltSettings("sqlserver"))
+	if err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	want := "UPDATE f SET customer = s.customer, loaded_job = s.loaded_job, total_cents = s.total_cents FROM orders_final f JOIN " +
+		"(SELECT trim(customer) AS customer, id AS id, job_id AS loaded_job, CAST(round(total * 100) AS INTEGER) AS total_cents FROM stg_orders " +
+		"WHERE job_id = :job AND seq = :seq AND CASE WHEN (total < 0) OR (trim(customer) = '') THEN 1 ELSE 0 END = 0) s ON s.id = f.id"
+	if got := sqlserver.SQL["dest"].Statements["update_final"].Parsed.Text; got != want {
+		t.Errorf("SQL Server: update_final is\n%s\nwant\n%s", got, want)
+	}
+	oracle, err := loadELT(t, eltSettings("oracle"))
+	if err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	text := oracle.SQL["dest"].Statements["update_final"].Parsed.Text
+	for _, want := range []string{"UPDATE orders_final f SET (customer, loaded_job, total_cents) = (SELECT s.customer, s.loaded_job, s.total_cents FROM (SELECT", "WHERE s.id = f.id) WHERE f.id IN (SELECT s.id FROM (SELECT"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("Oracle: update_final lacks %q:\n%s", want, text)
+		}
+	}
+	load := oracle.SQL["dest"].Statements["load"].Parsed.Text
+	if !strings.HasSuffix(load, "WHERE NOT EXISTS (SELECT 1 FROM orders_final f WHERE f.id = s.id)") {
+		t.Errorf("Oracle: load is %s", load)
+	}
+}
+
+func TestAnUpsertThatSetsOnlyItsKeyHasNothingToUpdateInSQLServerAndOracle(t *testing.T) {
+	for _, driver := range []string{"sqlserver", "oracle"} {
+		text := strings.Replace(eltSettings(driver), `set = { id = "id", customer = "trim(customer)", total_cents = "CAST(round(total * 100) AS INTEGER)", loaded_job = "job_id" }`, `set = { id = "id" }`, 1)
+		cfg, err := loadELT(t, text)
+		if err != nil {
+			t.Fatal(problemText(t, err))
+		}
+		dest := cfg.SQL["dest"]
+		if dest.Statements["update_final"] != nil || strings.Join(dest.Transactions["transform_batch"].Steps, " ") != "reject_1 reject_2 load finish_batch" {
+			t.Errorf("%s: transform_batch has the steps %v", driver, dest.Transactions["transform_batch"].Steps)
+		}
 	}
 }
