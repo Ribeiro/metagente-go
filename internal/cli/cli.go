@@ -139,6 +139,9 @@ Usage:
 `)
 }
 
+// configEquals is the start of the option that names the settings, written with an equal sign.
+const configEquals = "--config="
+
 func plural(n int, word string) string {
 	if n == 1 {
 		return word
@@ -216,8 +219,8 @@ func parseCheckArgs(args []string) (*checkArgs, error) {
 			}
 			i++
 			c.configPath = args[i]
-		case strings.HasPrefix(arg, "--config="):
-			c.configPath = strings.TrimPrefix(arg, "--config=")
+		case strings.HasPrefix(arg, configEquals):
+			c.configPath = strings.TrimPrefix(arg, configEquals)
 		case len(arg) > 1 && arg[0] == '-':
 			return nil, badUsage(fmt.Sprintf("`check` does not take the option `%s`.", arg), "the options are --strict and --config FILE.")
 		case c.file == "":
@@ -358,8 +361,8 @@ func parseRunArgs(args []string) (*runArgs, error) {
 			}
 		case strings.HasPrefix(arg, "--agent="):
 			r.agent = strings.TrimPrefix(arg, "--agent=")
-		case strings.HasPrefix(arg, "--config="):
-			r.configPath = strings.TrimPrefix(arg, "--config=")
+		case strings.HasPrefix(arg, configEquals):
+			r.configPath = strings.TrimPrefix(arg, configEquals)
 		case strings.HasPrefix(arg, "--"):
 			return nil, badUsage(fmt.Sprintf("`run` does not take the option `%s`.", arg), "the options are --agent NAME and --config FILE.")
 		default:

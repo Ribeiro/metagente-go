@@ -231,11 +231,11 @@ func TestAMachineMayHaveOnlyItsOwnPartOfTheDescription(t *testing.T) {
 
 func TestAProblemInADescriptionIsToldWithTheLineOfItsSection(t *testing.T) {
 	base := eltSettings("sqlite")
-	replace := func(old, new string) string {
+	replace := func(old, with string) string {
 		if !strings.Contains(base, old) {
 			t.Fatalf("the base has no %q", old)
 		}
-		return strings.Replace(base, old, new, 1)
+		return strings.Replace(base, old, with, 1)
 	}
 	for name, c := range map[string]struct{ text, want string }{
 		"no columns":                  {replace(`columns = ["id", "customer", "document", "total", "note"]`, ""), "needs `columns`"},
@@ -282,11 +282,11 @@ func TestADescriptionIsWrittenOnce(t *testing.T) {
 
 func TestTheSettingsOfADescriptionMustBeOfTheKindThatTheyAre(t *testing.T) {
 	base := eltSettings("sqlite")
-	replace := func(old, new string) string {
+	replace := func(old, with string) string {
 		if !strings.Contains(base, old) {
 			t.Fatalf("the base has no %q", old)
 		}
-		return strings.Replace(base, old, new, 1)
+		return strings.Replace(base, old, with, 1)
 	}
 	for name, c := range map[string]struct{ text, want string }{
 		"name":                {strings.Replace(base, "[elt.orders", "[elt.order-s", 3), "is not a name for a description"},

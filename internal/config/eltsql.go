@@ -28,6 +28,9 @@ type generatedTx struct {
 // ELTDestinationDrivers are the databases that the Worker's statements are made for.
 var ELTDestinationDrivers = []string{"sqlite", "postgres"}
 
+// notAccepted is the problem of a statement that a description makes and a connection refuses.
+const notAccepted = "[elt.%s] makes a statement that [sql.%s] does not accept: %s"
+
 // makeELT puts the statements of every description in the connections it names.
 func (cfg *Config) makeELT(file, text string) error {
 	names := make([]string, 0, len(cfg.ELT))
@@ -86,11 +89,11 @@ func (cfg *Config) makeELTSource(e *ELT, fail func(string, ...any) *diag.Diagnos
 			Fix("remove mode = \"write\" from it")
 	}
 	if err := source.addGenerated(e.sourceStatements(source.Driver), nil); err != nil {
-		return fail("[elt.%s] makes a statement that [sql.%s] does not accept: %s", e.Name, s.Connection, err.Error()).
+		return fail(notAccepted, e.Name, s.Connection, err.Error()).
 			Fix("check `columns`, `mask` and `select` in the source of the description")
 	}
 	if err := outbox.addGenerated(eltOutboxStatements(), nil); err != nil {
-		return fail("[elt.%s] makes a statement that [sql.%s] does not accept: %s", e.Name, s.Outbox, err.Error()).
+		return fail(notAccepted, e.Name, s.Outbox, err.Error()).
 			Fix("do not write a statement with the name of one that the description makes")
 	}
 	return nil
@@ -112,7 +115,7 @@ func (cfg *Config) makeELTDestination(e *ELT, fail func(string, ...any) *diag.Di
 	}
 	statements, transactions := e.destinationStatements(dest.Driver)
 	if err := dest.addGenerated(statements, transactions); err != nil {
-		return fail("[elt.%s] makes a statement that [sql.%s] does not accept: %s", e.Name, d.Connection, err.Error()).
+		return fail(notAccepted, e.Name, d.Connection, err.Error()).
 			Fix("check `set`, `reject` and the names of the tables in the destination of the description")
 	}
 	return nil
