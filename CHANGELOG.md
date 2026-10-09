@@ -14,6 +14,9 @@ minor versions.
 
 ### Fixed
 
+- `tool … from sql` (PostgreSQL): a database that was closed to connections for a while (for maintenance, it answers `55000`,
+  "is not currently accepting connections") is now taken for a failure that may pass. Before, the Worker of the asynchronous ELT
+  sent every event that met it to the dead letters and the breaker of `consume` never opened; found by the pilot.
 - `metagente serve --mcp`: stopping the server could return before the conversations of an MCP session that ended at that same moment
   were let go (the session took them out of the list and had not closed them yet). Stopping now waits for them.
 
@@ -21,9 +24,10 @@ minor versions.
 
 - The pilot of the asynchronous ELT (`integration/pilot_test.go`, workflow `Pilot`): from the Actions tab, with the rows
   and the number of Workers you choose, it runs the Extractor and the Workers against real PostgreSQL and NATS in
-  containers, kills a Worker, freezes the destination and the broker, sends invalid rows, and writes in the summary of
-  the run the time of each batch, the throughput, whether the books close, and the starting value of each brake beside
-  what it measured.
+  containers, kills a Worker, freezes the destination, makes it turn its callers away (which opens the breaker of
+  `consume`), freezes the broker while the Extractor publishes, sends invalid rows, and writes in the summary of the run
+  the time of each batch, the throughput, whether the books close, and the starting value of each brake beside what it
+  measured. The time to confirm a batch is a setting of the run.
 - `samples/async-elt`: the Extractor can read from a PostgreSQL, MySQL, MariaDB, SQL Server or Oracle source too:
   `sources/source.<database>.toml` is the section `[sql.source]` with `page` and `range` in the dialect of each (the
   agent does not change), and `migrations/demo-source.<database>.sql` makes the demo orders. Tried against real

@@ -4,6 +4,7 @@ package tools
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"net/url"
@@ -61,6 +62,21 @@ func TestPostgresErrorsThatMayPassAreTold(t *testing.T) {
 	}
 	if postgresTransient(errors.New("plain")) {
 		t.Error("a plain error was taken for one that may pass")
+	}
+}
+
+// A database that is closed to connections for a while says 55000, which also means errors that never pass.
+func TestPostgresTakesADatabaseClosedToConnectionsForAnErrorThatMayPass(t *testing.T) {
+	closed := &pgconn.PgError{Code: "55000", Message: `database "orders" is not currently accepting connections`}
+	if !postgresTransient(closed) {
+		t.Error("a database closed to connections was taken for a final error")
+	}
+	if !postgresTransient(fmt.Errorf("failed to connect: %w", closed)) {
+		t.Error("the same error, wrapped by the driver, was taken for a final error")
+	}
+	other := &pgconn.PgError{Code: "55000", Message: `cannot execute nextval() in a read-only transaction`}
+	if postgresTransient(other) {
+		t.Error("another error of the same code was taken for one that may pass")
 	}
 }
 
