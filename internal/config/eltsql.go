@@ -25,9 +25,6 @@ type generatedTx struct {
 	steps []string
 }
 
-// ELTDestinationDrivers are the databases that the Worker's statements are made for.
-var ELTDestinationDrivers = []string{"sqlite", "postgres", "sqlserver", "oracle"}
-
 // notAccepted is the problem of a statement that a description makes and a connection refuses.
 const notAccepted = "[elt.%s] makes a statement that [sql.%s] does not accept: %s"
 
@@ -104,10 +101,6 @@ func (cfg *Config) makeELTDestination(e *ELT, fail func(string, ...any) *diag.Di
 	dest, err := cfg.eltConn(e, d.Connection, "destination", fail)
 	if err != nil {
 		return err
-	}
-	if !contains(ELTDestinationDrivers, dest.Driver) {
-		return fail("the destination of [elt.%s], [sql.%s], is a %s database, and a description makes the statements of %s only", e.Name, d.Connection, dest.Driver, strings.Join(ELTDestinationDrivers, ", ")).
-			Fix("write the statements by hand, as samples/async-elt does")
 	}
 	if !dest.Writes() {
 		return fail("the destination of [elt.%s], [sql.%s], has to have mode = \"write\"", e.Name, d.Connection).

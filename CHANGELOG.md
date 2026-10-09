@@ -22,6 +22,12 @@ minor versions.
 
 ### Added
 
+- `tool x from elt`: the Worker can load into MySQL and MariaDB too, so a description now makes the statements of the
+  destination for the six databases of the `sql` tool. An upsert there is an `INSERT ... ON DUPLICATE KEY UPDATE` (the
+  columns to change are named with the table, since the rows come from a `SELECT`), "insert if it is not there" is the same
+  statement doing nothing on a duplicate, and the cleaning of the control tables sets the rows aside in a derived table,
+  because MySQL does not let a `DELETE` read the table it deletes from. The tutorial has the tables for them
+  (`samples/elt-tutorial/migrations/*.mysql.sql`, which serve both), and the statements were tried against a real MariaDB.
 - `tool x from elt`: the Worker can load into SQL Server and Oracle too. The statements of the destination for these two are
   made from the description as `samples/async-elt` writes them by hand, which are tried against real servers: "insert if it is not
   there" is an `INSERT ... SELECT ... WHERE NOT EXISTS`, and an upsert is an `UPDATE` followed by such an `INSERT`, both reading
