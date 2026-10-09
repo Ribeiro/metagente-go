@@ -192,7 +192,7 @@ func runConsume(args []string, stdout, stderr io.Writer) int {
 
 // consumeFile checks and approves what is needed, and runs the consumer until it is told to stop.
 func consumeFile(ctx context.Context, rt *runtime.Runtime, cfg *config.Config, c *consumeArgs, stdout, stderr io.Writer) (consume.Stats, error) {
-	agents, err := runtime.LoadAgents(c.file)
+	agents, err := rt.LoadAgents(c.file)
 	if err != nil {
 		return consume.Stats{}, err
 	}

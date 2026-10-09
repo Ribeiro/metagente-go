@@ -19,6 +19,7 @@ import (
 	"github.com/Ribeiro/metagente-go/internal/applog"
 	"github.com/Ribeiro/metagente-go/internal/config"
 	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/elt"
 	"github.com/Ribeiro/metagente-go/internal/lang"
 	"github.com/Ribeiro/metagente-go/internal/llm"
 	"github.com/Ribeiro/metagente-go/internal/mcp"
@@ -67,6 +68,7 @@ func New(cfg *config.Config) *Runtime {
 		Broker: tools.NewBrokerPool(),
 		states: tools.NewStateStore(cfg.Limits),
 	}
+	rt.Linker.Expand = func(agents []*lang.AgentDef) error { return elt.Expand(agents, cfg) }
 	rt.Log = applog.Default().With(rt.secretValues)
 	getenv := func(name string) string { return rt.Getenv(name) }
 	rt.Remote = remote.NewPool(remote.Options{

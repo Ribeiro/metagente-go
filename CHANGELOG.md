@@ -22,6 +22,15 @@ minor versions.
 
 ### Added
 
+- `tool x from elt "name" extract` and `... load`: the Extractor and the Worker of the asynchronous ELT made from a
+  description, the section `[elt.name]` of `metagente.toml`, in place of agents written step by step. The description says
+  the table, its columns, the key, what leaves the source masked, how a column is read, where each part goes, the
+  rules that reject a row (with their codes) and the brakes. The agent is one line; the loop, the outbox, the hash,
+  the two transactions, the totals and the brakes are the ones of `samples/async-elt`, and the events are the same, so
+  an agent made from a description and one written by hand work together. The statements of the source, of the outbox
+  and of the destination (SQLite or PostgreSQL) are made from the description, in the dialect of each database, go
+  through the same reading as a statement written by hand, and are shown by `metagente trust`. The model step stays
+  in the sample, written by hand. `metagente check` takes `--config FILE` for an agent that uses it.
 - `docs/tutorial-elt.md`: a tutorial that builds an Extractor and a Worker of the asynchronous ELT from an empty folder (SQLite
   source and destination, JetStream), step by step, with the failures to try. Its agents are checked by the tests of the documents.
 - The pilot of the asynchronous ELT (`integration/pilot_test.go`, workflow `Pilot`): from the Actions tab, with the rows

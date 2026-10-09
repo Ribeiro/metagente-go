@@ -154,7 +154,7 @@ func trustRevoke(rt *runtime.Runtime, cfg *config.Config, stdout, stderr io.Writ
 
 // trustFile shows what a file needs, and approves the new items once the person says so.
 func trustFile(rt *runtime.Runtime, cfg *config.Config, t *trustArgs, stdout, stderr io.Writer) int {
-	agents, err := runtime.LoadAgents(t.file)
+	agents, err := rt.LoadAgents(t.file)
 	if err != nil {
 		printError(stderr, err)
 		return 1

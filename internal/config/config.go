@@ -116,6 +116,8 @@ type Config struct {
 	SQL map[string]*SQLConn
 	// Broker are the message brokers, by the name that `tool x from broker "NAME"` uses.
 	Broker map[string]*BrokerConn
+	// ELT are the descriptions of the asynchronous ELT, by the name that `tool x from elt "NAME"` uses.
+	ELT map[string]*ELT
 	// Root is the project folder: where metagente.toml was found, or where
 	// Metagente was started.
 	Root string
@@ -175,6 +177,7 @@ func Default() *Config {
 		},
 		SQL:    map[string]*SQLConn{},
 		Broker: map[string]*BrokerConn{},
+		ELT:    map[string]*ELT{},
 	}
 }
 
@@ -303,7 +306,7 @@ var settings = map[string]setter{
 	"network.http_proxy_auth_env": setEnvName(func(c *Config) *string { return &c.Network.HTTPProxyAuthEnv }),
 }
 
-var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "network": true, "credentials": true, "sql": true, "broker": true}
+var knownSections = map[string]bool{"llm": true, "runtime": true, "serve": true, "limits": true, "network": true, "credentials": true, "sql": true, "broker": true, "elt": true}
 
 // Load reads the configuration for a project started in the folder start.
 // When explicit is not empty, that file is read and nothing is searched.
@@ -400,6 +403,14 @@ func (cfg *Config) apply(name, text string) error {
 		return err
 	}
 	warnedSection := map[string]bool{}
+	// The descriptions come first: a connection that one of them names may have no statements of its own.
+	for _, e := range entries {
+		if e.section == "elt" {
+			if err := cfg.addELT(name, text, e); err != nil {
+				return err
+			}
+		}
+	}
 	for _, e := range entries {
 		id := e.section + "." + e.key
 		set, known := settings[id]
@@ -428,6 +439,8 @@ func (cfg *Config) apply(name, text string) error {
 				return err
 			}
 			continue
+		case e.section == "elt":
+			continue // read before the others
 		case !knownSections[e.section]:
 			if !warnedSection[e.section] {
 				warnedSection[e.section] = true
@@ -444,7 +457,7 @@ func (cfg *Config) apply(name, text string) error {
 			return settingProblem(name, text, e, err)
 		}
 	}
-	return nil
+	return cfg.makeELT(name, text)
 }
 
 // addCredential reads one line of [credentials]: the NAME of the variable that holds a token.

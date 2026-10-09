@@ -1,0 +1,34 @@
+# The Worker: takes the batches from the broker, loads them into the destination and closes the job.
+
+[runtime]
+timeout_seconds = 60
+
+[sql.dest]
+driver = "sqlite"
+path = "warehouse.db"
+mode = "write"
+
+# The same key and columns as in extractor.toml: they are what the two machines agree on.
+[elt.orders]
+key = "id"
+columns = ["id", "customer", "document", "total"]
+
+[elt.orders.destination]
+connection = "dest"
+staging = "stg_orders"            # where a batch lands, as it came
+table = "orders_final"
+upsert_on = "id"                  # a batch loaded twice gives the same table
+set = { id = "id", customer = "trim(customer)", document_tail = "substr(document, -4)", total_cents = "CAST(round(total * 100) AS INTEGER)", loaded_job = "job_id" }
+reject = [
+  { when = "total < 0", code = "TOTAL_NEGATIVE" },
+  { when = "trim(customer) = ''", code = "CUSTOMER_EMPTY" },
+]
+reject_share = 20                 # a batch with more rejected rows than this percent is stopped
+pause_after = 3                   # and three stopped in a row pause the job
+
+# Only `metagente consume --from main` reads it: the Worker gets its events from here and puts the ones it
+# cannot do in the dead letters.
+[broker.main]
+driver = "jetstream"
+url = "nats://127.0.0.1:4222"
+stream = "ETL"

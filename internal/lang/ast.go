@@ -82,6 +82,9 @@ const (
 	ToolBroker
 	ToolCodec
 	ToolMeter
+	// ToolELT is `tool x from elt "name" extract` or `... load`: the Extractor or the Worker of the
+	// asynchronous ELT that the section [elt.name] of metagente.toml describes.
+	ToolELT
 )
 
 // ToolDecl is one `tool` line.
@@ -110,6 +113,16 @@ type ToolDecl struct {
 	Allow []string
 	// AllowPrivate is `tool http allow private`.
 	AllowPrivate bool
+}
+
+// ELTRole is the role of a `tool x from elt "name" extract|load`: "extract" for the Extractor and
+// "load" for the Worker. It is kept in Allow, like ConnectionName in Command, so that the record of the
+// language does not change for all the other tools. The name of the section [elt.NAME] is in Command.
+func (t *ToolDecl) ELTRole() string {
+	if len(t.Allow) == 0 {
+		return ""
+	}
+	return t.Allow[0]
 }
 
 // ConnectionName is the name of the connection of a `tool x from sql "name"`: the [sql.name] section of

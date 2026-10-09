@@ -31,13 +31,15 @@ Every word and call of the language, in alphabetical order, with where it is exp
 | `clock.now`, `clock.wait` | the time, and waiting | [tool](#tool) |
 | `codec` | JSON, gzip, SHA-256, UUIDs and records: `tool codec` | [Moving rows](#moving-rows-tool-codec) |
 | `contains` | a text has a piece, or a list has an item | [Conditions](#conditions) |
+| `elt` | an Extractor or a Worker made from a description: `tool name from elt "description" extract` | [An ELT made from a description](#an-asynchronous-elt-made-from-a-description-tool-from-elt) |
 | `env` | `tool env "NAME"`, or the variables given to a tool server | [tool](#tool) |
 | `env.get` | reads a variable that `tool env` names | [tool](#tool) |
+| `extract`, `load` | the Extractor and the Worker of `tool name from elt "..."` | [An ELT made from a description](#an-asynchronous-elt-made-from-a-description-tool-from-elt) |
 | `fail` | ends the section with a failure; `fail "..." retry [in N seconds]` says that it may pass | [fail](#fail) |
 | `retry` | `fail "..." retry`: the failure may pass | [fail](#fail) |
 | `file.read`, `file.write` | reads and writes texts | [tool](#tool) |
 | `for` ... `in` | repeats lines for each item of a list | [for](#for) |
-| `from` | `link Name from "file.ag"`, `tool name from mcp "..."`, `tool name from sql "..."` | [link](#link), [tool](#tool) |
+| `from` | `link Name from "file.ag"`, `tool name from mcp "..."`, `tool name from sql "..."`, `tool name from elt "..."` | [link](#link), [tool](#tool) |
 | `goal` | what the agent is for | [goal](#goal) |
 | `http.get`, `http.post` | web requests | [tool](#tool) |
 | `if`, `otherwise` | choose | [if and otherwise](#if-and-otherwise) |
@@ -167,6 +169,7 @@ The tools an agent may use. An agent can only call what it declared.
 | `tool weather from mcp "..." readonly` | only the actions that the server marks as read only |
 | `tool events from broker "main" publish "etl.>"` | publish to a message broker, only to those subjects (see [A message broker](#a-message-broker-tool-from-broker)) |
 | `tool orders from sql "orders-db"` | read a database, with the statements that `[sql.orders-db]` of `metagente.toml` names (see [A database](#a-database-tool-from-sql)) |
+| `tool orders from elt "orders" extract` | the Extractor (or, with `load`, the Worker) of the asynchronous ELT that `[elt.orders]` of `metagente.toml` describes (see [An ELT made from a description](#an-asynchronous-elt-made-from-a-description-tool-from-elt)) |
 
 The clauses of `http` (`allow`, `readonly`) and of a tool server (`env`, `readonly`) may come in any
 order and more than once.
@@ -354,6 +357,77 @@ agent Lander
 - `metagente trust` shows a connection that writes as one that **changes** the database, with the names
   of the statements and of the transactions; it is another approval than the one for reading the same
   database.
+
+### An asynchronous ELT made from a description (`tool from elt`)
+
+The Extractor and the Worker of the asynchronous ELT ([the design](design-async-elt.md), [the tutorial](tutorial-elt.md))
+do the same steps for every table: a loop over pages, an outbox, a hash, two transactions, the totals, the brakes.
+What changes from a table to another is the table, its columns, what must not leave the source, and the rules. So
+that is what is written, in `metagente.toml`, and the agent is one line:
+
+```
+agent Extractor
+  goal "Copy the orders table to the broker, in batches"
+  tool orders from elt "orders" extract
+```
+
+```
+agent Worker
+  goal "Load the batches of the orders table and close the job"
+  tool orders from elt "orders" load
+```
+
+When the file is loaded, the line is taken out and the agent is given what the description calls for. `extract` gives it
+the tools `source`, `outbox`, `events`, `codec` and `clock`, and the messages `extract job` and `resend v job_id seq`.
+`load` gives it the tools `dest` and `codec`, and the messages `batch`, `control`, `resume job`, `retransform`,
+`purge days` and `purge_control days`. What comes out is an ordinary agent: `check`, `trust`, `run`, `serve` and
+`consume` treat it as one that was written by hand, and the events it reads and writes are the ones of
+`samples/async-elt`, so one made from a description and one written by hand work together. A name that the agent
+declares and the description also makes (a tool called `codec`, a message called `purge`) is a problem: rename yours.
+
+The description is the section `[elt.NAME]`, and a machine has the part it needs:
+
+```toml
+[elt.orders]
+key     = "id"                                # a whole number that grows; "id" if left out
+columns = ["id", "customer", "document", "total"]   # the columns of the event, in order; the key is one of them
+
+[elt.orders.source]                           # only the Extractor
+connection = "source"                         # [sql.source], read only
+table      = "orders"
+outbox     = "outbox"                         # [sql.outbox]: a SQLite file with mode = "write"
+broker     = "main"                           # [broker.main]
+mask       = { document = "last 4" }          # only '***' and the last four characters leave the source
+select     = { total = "CAST(total AS double precision)" }   # how a column is read, in the dialect of the source
+rows       = 1000                             # the most rows of a page (1000 if left out)
+bytes      = 262144                           # a page is halved until its rows, in JSON, fit (262144 if left out)
+
+[elt.orders.destination]                      # only the Worker
+connection   = "dest"                         # [sql.dest], with mode = "write": SQLite or PostgreSQL
+staging      = "stg_orders"                   # where a batch lands; "stg_" and the name if left out
+table        = "orders_final"
+upsert_on    = "id"                           # a column of the final table; loading a batch twice gives the same table
+set          = { id = "id", customer = "trim(customer)", total_cents = "CAST(round(total * 100) AS INTEGER)", loaded_job = "job_id" }
+reject       = [{ when = "total < 0", code = "TOTAL_NEGATIVE" }]
+reject_share = 20                             # a batch with more than this percent of rejected rows is stopped (20 if left out)
+pause_after  = 3                              # this many stopped in a row pause the job (3 if left out)
+```
+
+- **The statements are made from it.** `page` and `range` of the source, the statements of the outbox, and the ones of
+  the destination (`land_batch`, `transform_batch`, `register_totals`, `resume`, `purge_control`, ...) are put in
+  the connections the description names, in the dialect of each database, and go through the same reading as a
+  statement written by hand. `metagente trust` shows them, and a change of the description asks for approval
+  again. A statement of the same name written by hand in the connection is a problem, not a replacement.
+- **The tables are yours.** Metagente makes no tables. The control tables (`etl_jobs`, `etl_batches`, ...) are the same
+  for every description; staging has `job_id`, `seq` and the `columns`, with those names, and the key in its primary key.
+  See `samples/elt-tutorial/migrations/`.
+- **`select`, `set` and `when` are SQL** of the database that reads them: `select` of the source, `set` and `when` of
+  the destination, over the columns of staging (and `job_id`, `seq`). A row for which a `when` holds is rejected with
+  its key and the code, never its content; a `when` that is not true or false for a row (a null) does not reject it.
+- **Drivers.** The source may be any database the `sql` tool reads; the outbox is SQLite; the destination is SQLite
+  or PostgreSQL. For SQL Server or Oracle as the destination, or a step with a language model (`samples/async-elt`),
+  write the agent by hand.
+- **The passwords** are the ones of `[credentials]`, under the names of the generated tools: `source`, `dest` and `events`.
 
 ### Moving rows (`tool codec`)
 
@@ -795,7 +869,7 @@ agent Packer
 | Command | What it does |
 |---|---|
 | `metagente new NAME` | creates `NAME.ag`, a starter agent, and a `metagente.toml` |
-| `metagente check [--strict] FILE.ag` | looks for problems without running; `--strict` turns the warnings into problems |
+| `metagente check [--strict] FILE.ag [--config FILE]` | looks for problems without running; `--strict` turns the warnings into problems; `--config` names the settings of an agent that uses `tool from elt` |
 | `metagente run FILE.ag [MESSAGE] [key=value ...]` | runs an agent. `--agent NAME` picks one of a file with several; `--config FILE` a `metagente.toml` |
 | `metagente trust FILE.ag [--yes]` | approves the programs and addresses the agents of the file use (and the agents they link to) |
 | `metagente trust --list`, `metagente trust --revoke` | shows what is approved; removes the approvals of this project |
@@ -893,13 +967,14 @@ remote        = "remote" NAME "at" TEXT NEWLINE ;
 accepts       = "accepts" NAME { NAME } [ COMMENT ] NEWLINE ;          (* the comment describes it *)
 handler       = "on" NAME NEWLINE block ;                               (* "on start" runs first *)
 
-tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | "codec" | server_tool | sql_tool | broker_tool ) NEWLINE ;
+tool          = "tool" ( file_tool | http_tool | env_tool | "state" | "clock" | "codec" | server_tool | sql_tool | broker_tool | elt_tool ) NEWLINE ;
 file_tool     = "file" [ TEXT ] { "readonly" } ;
 http_tool     = "http" { "readonly" | "allow" ( "private" | TEXT { TEXT } ) } ;
 env_tool      = "env" TEXT { TEXT } ;
 server_tool   = NAME "from" "mcp" TEXT { "readonly" | "env" TEXT { TEXT } } ;
 sql_tool      = NAME "from" "sql" TEXT ;                            (* TEXT is a name of [sql.NAME] *)
 broker_tool   = NAME "from" "broker" TEXT "publish" TEXT { TEXT } { "publish" TEXT { TEXT } } ;
+elt_tool      = NAME "from" "elt" TEXT ( "extract" | "load" ) ;      (* TEXT is a name of [elt.NAME] *)
                                                      (* the first TEXT is a name of [broker.NAME]; the others are subjects *)
                                                      (* NAME is not file, http, env, state or clock *)
 

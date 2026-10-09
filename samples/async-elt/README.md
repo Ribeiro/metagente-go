@@ -19,7 +19,7 @@ step with a language model (`enricher.ag`), **the sweeper** (`sweeper.ag`), whic
 and tells the team what needs a person, their configuration (`metagente.toml`, and `metagente.postgres.toml`
 for a Worker with a PostgreSQL destination), and the migrations of the databases.
 
-New to this? [`docs/tutorial-elt.md`](../../docs/tutorial-elt.md) builds a small Extractor and a Worker step by step.
+New to this? [`docs/tutorial-elt.md`](../../docs/tutorial-elt.md) builds an Extractor and a Worker from a short description of the table (`tool orders from elt "orders" extract`), with no step written by hand. The agents in this folder are the same steps written out, and the way to go when you need the model step, the sweeper, or SQL Server or Oracle as the destination.
 
 ## What the Extractor does
 

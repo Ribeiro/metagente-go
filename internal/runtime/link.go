@@ -25,6 +25,9 @@ type Linker struct {
 	// registered holds the agents of files that are already loaded, so that
 	// `link` can find the siblings of an agent in the same file.
 	registered map[string][]*lang.AgentDef
+	// Expand, when it is set, is given the agents of every file that is loaded, before they are kept: it is
+	// how `tool x from elt` lines become the tools and the handlers that the description calls for.
+	Expand func([]*lang.AgentDef) error
 }
 
 type cachedFile struct {
@@ -108,6 +111,11 @@ func (l *Linker) Load(path string) ([]*lang.AgentDef, error) {
 	agents, err := lang.ParseFile(filepath.Base(resolved), resolved, string(text))
 	if err != nil {
 		return nil, err
+	}
+	if l.Expand != nil {
+		if err := l.Expand(agents); err != nil {
+			return nil, err
+		}
 	}
 	l.Register(agents)
 	if known {

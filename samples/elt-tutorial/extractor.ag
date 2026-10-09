@@ -1,0 +1,3 @@
+agent Extractor
+  goal "Copy the orders table to the broker, in batches"
+  tool orders from elt "orders" extract

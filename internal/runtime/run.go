@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/elt"
 	"github.com/Ribeiro/metagente-go/internal/lang"
 	"github.com/Ribeiro/metagente-go/internal/tools"
 	"github.com/Ribeiro/metagente-go/internal/trust"
@@ -29,6 +30,19 @@ func LoadAgents(path string) ([]*lang.AgentDef, error) {
 			Fix("check the file name and the folder you are in")
 	}
 	return lang.ParseFile(filepath.Base(path), path, string(text))
+}
+
+// LoadAgents reads and parses a .ag file, and gives the agents that use a description of the asynchronous
+// ELT (`tool x from elt "name" extract`) the tools, the messages and the handlers that it calls for.
+func (rt *Runtime) LoadAgents(path string) ([]*lang.AgentDef, error) {
+	agents, err := LoadAgents(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := elt.Expand(agents, rt.Config); err != nil {
+		return nil, err
+	}
+	return agents, nil
 }
 
 // Options is what `metagente run` was asked to do.
@@ -93,7 +107,7 @@ func plural(n int, word string) string {
 // RunFile runs an agent file from start to finish: it checks the file, picks
 // the agent and the message, runs `on start` and then the handler.
 func RunFile(ctx context.Context, rt *Runtime, opts Options) (value.Value, error) {
-	agents, err := LoadAgents(opts.File)
+	agents, err := rt.LoadAgents(opts.File)
 	if err != nil {
 		return value.Nothing, err
 	}
