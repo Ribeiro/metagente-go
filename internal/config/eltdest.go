@@ -228,7 +228,7 @@ func (w *worker) reject(rule ELTRule) string {
 
 // upsert makes the statements that put the rows of a batch in the final table.
 func (w *worker) upsert() {
-	d, dest := w.d, w.e.Destination
+	dest := w.e.Destination
 	targets := make([]string, 0, len(dest.Set))
 	for column := range dest.Set {
 		targets = append(targets, column)
@@ -238,43 +238,56 @@ func (w *worker) upsert() {
 	for i, column := range targets {
 		values[i] = dest.Set[column]
 	}
-	if d.onConflict() {
-		updates := []string{}
-		for _, column := range targets {
-			if column != dest.UpsertOn {
-				updates = append(updates, fmt.Sprintf("%s = %s.%s", column, d.excluded(), column))
-			}
-		}
-		conflict := "DO NOTHING"
-		if len(updates) > 0 {
-			conflict = "DO UPDATE SET " + strings.Join(updates, ", ")
-		}
-		w.add("load", fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s WHERE job_id = :job AND seq = :seq AND CASE WHEN %s THEN 1 ELSE 0 END = 0 ON CONFLICT (%s) %s",
-			dest.Table, strings.Join(targets, ", "), strings.Join(values, ", "), w.stg, w.e.rejected(), dest.UpsertOn, conflict))
-		w.transform = append(w.transform, "load")
-		return
+	if w.d.onConflict() {
+		w.upsertOnConflict(targets, values)
+	} else {
+		w.upsertByHand(targets, values)
 	}
-	// The rows to load, with the columns of the final table: the expressions are read against staging alone, so a
-	// name that both tables have cannot be taken for the wrong one.
+}
+
+// others are the columns that an upsert changes: all but the one that tells a row from another.
+func (w *worker) others(targets []string) []string {
+	var out []string
+	for _, column := range targets {
+		if column != w.e.Destination.UpsertOn {
+			out = append(out, column)
+		}
+	}
+	return out
+}
+
+// upsertOnConflict is one INSERT that updates the row that is there already.
+func (w *worker) upsertOnConflict(targets, values []string) {
+	dest := w.e.Destination
+	updates := []string{}
+	for _, column := range w.others(targets) {
+		updates = append(updates, fmt.Sprintf("%s = %s.%s", column, w.d.excluded(), column))
+	}
+	conflict := "DO NOTHING"
+	if len(updates) > 0 {
+		conflict = "DO UPDATE SET " + strings.Join(updates, ", ")
+	}
+	w.add("load", fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s WHERE job_id = :job AND seq = :seq AND CASE WHEN %s THEN 1 ELSE 0 END = 0 ON CONFLICT (%s) %s",
+		dest.Table, strings.Join(targets, ", "), strings.Join(values, ", "), w.stg, w.e.rejected(), dest.UpsertOn, conflict))
+	w.transform = append(w.transform, "load")
+}
+
+// upsertByHand is an UPDATE of the rows that are there, and an INSERT of the ones that are not. The rows to load come with
+// the columns of the final table, and the expressions are read against staging alone, so a name that both tables have
+// cannot be taken for the wrong one.
+func (w *worker) upsertByHand(targets, values []string) {
+	dest := w.e.Destination
 	parts := make([]string, len(targets))
+	picked := make([]string, len(targets))
 	for i, column := range targets {
 		parts[i] = values[i] + " AS " + column
+		picked[i] = "s." + column
 	}
 	rows := fmt.Sprintf("(SELECT %s FROM %s WHERE job_id = :job AND seq = :seq AND CASE WHEN %s THEN 1 ELSE 0 END = 0) s",
 		strings.Join(parts, ", "), w.stg, w.e.rejected())
-	var changed []string
-	for _, column := range targets {
-		if column != dest.UpsertOn {
-			changed = append(changed, column)
-		}
-	}
-	if len(changed) > 0 {
+	if changed := w.others(targets); len(changed) > 0 {
 		w.add("update_final", w.update(rows, changed))
 		w.transform = append(w.transform, "update_final")
-	}
-	picked := make([]string, len(targets))
-	for i, column := range targets {
-		picked[i] = "s." + column
 	}
 	w.add("load", fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s WHERE NOT EXISTS (SELECT 1 FROM %s f WHERE f.%s = s.%s)",
 		dest.Table, strings.Join(targets, ", "), strings.Join(picked, ", "), rows, dest.Table, dest.UpsertOn, dest.UpsertOn))
@@ -326,15 +339,13 @@ func (w *worker) closing() {
 // control tables, much later: the jobs that are `done`, ended more than N days ago and have nothing left in staging.
 func (w *worker) cleaning() {
 	d := w.d
-	purge := fmt.Sprintf("DELETE FROM %s s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = s.job_id AND b.seq = s.seq AND b.state = 'done' AND %s)",
-		w.stg, d.older("b.done_at", ":days"))
+	done := d.older("b.done_at", ":days")
+	purge := fmt.Sprintf("DELETE FROM %s s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = s.job_id AND b.seq = s.seq AND b.state = 'done' AND %s)", w.stg, done)
 	switch d {
 	case "sqlite":
-		purge = fmt.Sprintf("DELETE FROM %s AS s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = s.job_id AND b.seq = s.seq AND b.state = 'done' AND %s)",
-			w.stg, d.older("b.done_at", ":days"))
+		purge = fmt.Sprintf("DELETE FROM %s AS s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = s.job_id AND b.seq = s.seq AND b.state = 'done' AND %s)", w.stg, done)
 	case "sqlserver", "oracle":
-		purge = fmt.Sprintf("DELETE FROM %s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = %s.job_id AND b.seq = %s.seq AND b.state = 'done' AND %s)",
-			w.stg, w.stg, w.stg, d.older("b.done_at", ":days"))
+		purge = fmt.Sprintf("DELETE FROM %s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = %s.job_id AND b.seq = %s.seq AND b.state = 'done' AND %s)", w.stg, w.stg, w.stg, done)
 	}
 	w.add("purge", purge)
 	old := fmt.Sprintf("job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND %s AND NOT EXISTS (SELECT 1 FROM %s s WHERE s.job_id = j.job_id))",
