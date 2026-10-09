@@ -22,6 +22,8 @@ minor versions.
 
 ### Added
 
+- `docs/tutorial-elt.md`: a tutorial that builds an Extractor and a Worker of the asynchronous ELT from an empty folder (SQLite
+  source and destination, JetStream), step by step, with the failures to try. Its agents are checked by the tests of the documents.
 - The pilot of the asynchronous ELT (`integration/pilot_test.go`, workflow `Pilot`): from the Actions tab, with the rows
   and the number of Workers you choose, it runs the Extractor and the Workers against real PostgreSQL and NATS in
   containers, kills a Worker, freezes the destination, makes it turn its callers away (which opens the breaker of

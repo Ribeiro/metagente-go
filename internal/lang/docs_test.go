@@ -37,7 +37,7 @@ func docAgents(t *testing.T, file string) []string {
 // The documents promise that every agent they show passes `metagente check`.
 func TestEveryAgentInTheDocumentsPassesTheChecks(t *testing.T) {
 	// How many there are at least, so that a change to how blocks are found cannot skip them all.
-	for name, least := range map[string]int{"LANGUAGE.md": 3, "tutorial.md": 8} {
+	for name, least := range map[string]int{"LANGUAGE.md": 3, "tutorial.md": 8, "tutorial-elt.md": 2} {
 		file := filepath.Join("..", "..", "docs", name)
 		blocks := docAgents(t, file)
 		if len(blocks) < least {

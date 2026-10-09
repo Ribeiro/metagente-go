@@ -19,6 +19,8 @@ step with a language model (`enricher.ag`), **the sweeper** (`sweeper.ag`), whic
 and tells the team what needs a person, their configuration (`metagente.toml`, and `metagente.postgres.toml`
 for a Worker with a PostgreSQL destination), and the migrations of the databases.
 
+New to this? [`docs/tutorial-elt.md`](../../docs/tutorial-elt.md) builds a small Extractor and a Worker step by step.
+
 ## What the Extractor does
 
 1. Reads the next page of the table **by key** (`WHERE id > :after ORDER BY id LIMIT :size`), through a
