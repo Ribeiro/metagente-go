@@ -174,6 +174,27 @@ Read it in two parts.
 with a user and a password, add `user = "extractor"` and, in `[credentials]`, `events = "BROKER_PASSWORD"`: the file says
 the *name* of the variable, never the password.
 
+**A source that is not SQLite.** This tutorial reads a SQLite file so that you need nothing else, but the Extractor reads
+PostgreSQL, **MySQL**, **MariaDB**, SQL Server and Oracle just the same. Only the place of the source changes, and the
+statements are made in the dialect of each (`LIMIT` for MySQL and MariaDB, `TOP` for SQL Server, `FETCH FIRST` for Oracle; the
+mask of `document` becomes `CONCAT('***', RIGHT(document, 4))` in MySQL and MariaDB). For MySQL or MariaDB:
+
+```toml
+[sql.source]
+driver = "mysql"                  # or "mariadb"
+host = "db.example.com"
+database = "orders"
+user = "extractor"                # a user that may only read; the password goes in [credentials] as source = "SOURCE_DB_PASSWORD"
+
+[elt.orders.source]
+select = { total = "CAST(total AS DOUBLE)" }   # a DECIMAL column is read as a number
+```
+
+`select` is how a column is read in the SQL of the source. The cast makes a `DECIMAL` column reach the Extractor as a number of the language, which is how the
+sample reads it in every dialect; the other columns need nothing. The two databases are served by the same migration to try it
+([`demo-source.mysql.sql`](../samples/async-elt/migrations/demo-source.mysql.sql)) and the same statements: MariaDB is named apart
+only because it is another server and another driver.
+
 **The description** is `[elt.orders]`. It says what the table is:
 
 - `columns` are the columns of the event, in order, and `key` is the one that orders the table and marks where a batch ends
@@ -584,7 +605,7 @@ You change the description, and the agents stay as they are.
 | The rules of the transformation | `reject` and `set` in `destination`; the Extractor does not change |
 | The brakes | `reject_share` and `pause_after` |
 | The source database | `[sql.source]`: PostgreSQL, MySQL, MariaDB, SQL Server and Oracle work, with `select` for the casts that each one needs ([`samples/async-elt/sources/`](../samples/async-elt/sources/) has examples that are tried against the real databases) |
-| The destination database | `[sql.dest]`: SQLite, PostgreSQL, SQL Server and Oracle (with the expressions of each) |
+| The destination database | `[sql.dest]`: SQLite, PostgreSQL, SQL Server and Oracle (with the expressions of each). MySQL and MariaDB are a source, not yet a destination (see section 7) |
 
 The key must be a whole number that grows. If your table has another key, read it with the name of the key:
 `select = { id = "order_no" }` and `key = "id"`. A column that is called `job`, `seq`, `rows` or `version` (names that the
@@ -600,6 +621,10 @@ The description covers the copy of a table with rules that can be said in a line
 [`samples/async-elt`](../samples/async-elt/README.md) does, when you need:
 
 - **a step with a language model** between landing and transforming, with a budget (the sample has it);
+- **MySQL or MariaDB as the destination.** They can be a source (section 3.3), but the description does not yet make the statements
+  of the Worker for them: they have neither `ON CONFLICT` nor `MERGE` (an upsert there is `ON DUPLICATE KEY UPDATE`), so the
+  statements of `samples/async-elt` are written for the other four. Write the Worker by hand for them; the Extractor, made from
+  a description, still sends it the same events;
 - **another kind of work** that the Worker does for each batch.
 
 An agent written by hand and one made from a description speak the same events and use the same control tables, so they
