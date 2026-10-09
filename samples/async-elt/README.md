@@ -255,6 +255,18 @@ has one step more); the key of two Workers that land the same row at the same ti
 is a dead letter to send again; in Oracle an empty text is nothing, so an empty customer is stored as nothing and is
 rejected all the same, and the names that an agent reads are quoted aliases (`AS "job"`).
 
+## The pilot
+
+Before a real job, measure. The workflow `Pilot` (Actions tab, "Run workflow") starts a PostgreSQL source, a PostgreSQL
+destination and NATS in containers, makes 100 thousand synthetic orders (up to 500 thousand), and runs this sample with
+1, 2 and 4 Workers. It then kills a Worker in the middle of a run, freezes the destination and the broker for a while,
+and sends 1%, 5% and 25% of invalid rows. The summary of the run has one line for each run (time of the Extractor, the
+p50, p95 and p99 of the time of a batch, rows landed each second, tries, dead letters) and says whether the books closed:
+read = loaded + rejected, no row twice in staging, the final table equal to what was loaded, the job done, or paused by
+the brake of quality when the invalid rows are above its limit. A table at the end puts the starting value of each brake
+of the design beside what the runs suggest. The model step is not part of the pilot (the jobs have no budget); try it
+with a small job on your own provider. The code is `integration/pilot_test.go` (build tag `pilot`).
+
 ## Personal data
 
 The rows may hold personal data, so the sample treats every job as if they did (section 10 of the design):

@@ -67,6 +67,7 @@ type server struct {
 	driver string
 	host   string
 	port   int
+	ctr    testcontainers.Container // to ask the server something and to pause it (the pilot does)
 }
 
 // user and database are what the connection names. SQL Server has only its administrator in the container,
@@ -250,6 +251,7 @@ func startWith(t *testing.T, driver, path string) server {
 		t.Fatal(err)
 	}
 	s.port, _ = strconv.Atoi(mapped.Port())
+	s.ctr = ctr
 	return s
 }
 

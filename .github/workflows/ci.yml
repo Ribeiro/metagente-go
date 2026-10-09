@@ -82,7 +82,7 @@ jobs:
       - name: go vet
         run: |
           go vet ./...
-          (cd integration && go vet -tags integration ./...)
+          (cd integration && go vet -tags 'integration pilot' ./...)
       # The vulnerabilities known in the standard library and in the modules, that the code reaches. The
       # version of Go comes from the toolchain line of go.mod: a new fix of Go turns this red until it is
       # raised there.

@@ -2,7 +2,7 @@ module github.com/Ribeiro/metagente-go
 
 go 1.26.0
 
-toolchain go1.26.8
+toolchain go1.26.9
 
 require (
 	github.com/a2aproject/a2a-go/v2 v2.6.0
