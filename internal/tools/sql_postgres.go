@@ -21,7 +21,8 @@ func init() {
 
 // postgresTransient is an error that may pass: a connection exception (class 08), a server that shuts down or
 // starts (57P01 to 57P03), too many connections or no resources (class 53), a serialization failure or a
-// deadlock (40001, 40P01).
+// deadlock (40001, 40P01), and a database that was closed to connections for a while, as for maintenance: it answers
+// with 55000, a code that also means other things, so its words count too.
 func postgresTransient(err error) bool {
 	var pg *pgconn.PgError
 	if !errors.As(err, &pg) {
@@ -34,6 +35,8 @@ func postgresTransient(err error) bool {
 	switch pg.Code {
 	case "57P01", "57P02", "57P03", "40001", "40P01":
 		return true
+	case "55000":
+		return strings.Contains(pg.Message, "is not currently accepting connections")
 	}
 	return false
 }

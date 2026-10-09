@@ -14,6 +14,9 @@ minor versions.
 
 ### Fixed
 
+- `tool … from sql` (PostgreSQL): a database that was closed to connections for a while (for maintenance, it answers `55000`,
+  "is not currently accepting connections") is now taken for a failure that may pass. Before, the Worker of the asynchronous ELT
+  sent every event that met it to the dead letters and the breaker of `consume` never opened; found by the pilot.
 - `metagente serve --mcp`: stopping the server could return before the conversations of an MCP session that ended at that same moment
   were let go (the session took them out of the list and had not closed them yet). Stopping now waits for them.
 
