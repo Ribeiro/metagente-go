@@ -16,8 +16,8 @@ on:
         description: Numbers of Workers of the clean runs
         default: '1,2,4'
       scenarios:
-        description: baseline, kill, pause-destination, pause-broker, bad-rows
-        default: 'baseline,kill,pause-destination,pause-broker,bad-rows'
+        description: baseline, kill, pause-destination, stop-destination, pause-broker, bad-rows
+        default: 'baseline,kill,pause-destination,stop-destination,pause-broker,bad-rows'
       batch_rows:
         description: Most rows of a page
         default: '1000'
@@ -25,7 +25,10 @@ on:
         description: Size a batch aims at, in bytes
         default: '262144'
       pause_seconds:
-        description: Seconds that the destination and the broker are frozen
+        description: Seconds that the destination and the broker are frozen, or the destination turns its callers away
+        default: '20'
+      ack_wait_seconds:
+        description: Seconds the broker waits for a Worker to confirm a batch (the time to confirm)
         default: '20'
   pull_request:
     paths:
@@ -50,10 +53,11 @@ jobs:
       # On a pull request the table is small, but big enough for the kill and the freezes to happen while the Workers work.
       METAGENTE_PILOT_ROWS: ${{ github.event_name == 'workflow_dispatch' && inputs.rows || '100000' }}
       METAGENTE_PILOT_WORKERS: ${{ github.event_name == 'workflow_dispatch' && inputs.workers || '1,2' }}
-      METAGENTE_PILOT_SCENARIOS: ${{ github.event_name == 'workflow_dispatch' && inputs.scenarios || 'baseline,kill,pause-destination,pause-broker,bad-rows' }}
+      METAGENTE_PILOT_SCENARIOS: ${{ github.event_name == 'workflow_dispatch' && inputs.scenarios || 'baseline,kill,pause-destination,stop-destination,pause-broker,bad-rows' }}
       METAGENTE_PILOT_BATCH_ROWS: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_rows || '500' }}
       METAGENTE_PILOT_BATCH_BYTES: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_bytes || '262144' }}
       METAGENTE_PILOT_PAUSE: ${{ github.event_name == 'workflow_dispatch' && inputs.pause_seconds || '5' }}
+      METAGENTE_PILOT_ACK_WAIT: ${{ github.event_name == 'workflow_dispatch' && inputs.ack_wait_seconds || '5' }}
       METAGENTE_PILOT_REPORT: ${{ github.workspace }}/pilot-report.md
     steps:
       - uses: actions/checkout@v7

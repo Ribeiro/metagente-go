@@ -259,8 +259,10 @@ rejected all the same, and the names that an agent reads are quoted aliases (`AS
 
 Before a real job, measure. The workflow `Pilot` (Actions tab, "Run workflow") starts a PostgreSQL source, a PostgreSQL
 destination and NATS in containers, makes 100 thousand synthetic orders (up to 500 thousand), and runs this sample with
-1, 2 and 4 Workers. It then kills a Worker in the middle of a run, freezes the destination and the broker for a while,
-and sends 1%, 5% and 25% of invalid rows. The summary of the run has one line for each run (time of the Extractor, the
+1, 2 and 4 Workers. It then kills a Worker in the middle of a run, freezes the destination (its callers wait), makes it turn its callers away
+with errors (which opens the breaker of `consume`), freezes the broker while the Extractor publishes, and sends 1%, 5% and 25% of
+invalid rows. The time to confirm a batch is a setting of the run (`ack_wait_seconds`), so the cost of a dead Worker can be
+measured with other values. The summary of the run has one line for each run (time of the Extractor, the
 p50, p95 and p99 of the time of a batch, rows landed each second, tries, dead letters) and says whether the books closed:
 read = loaded + rejected, no row twice in staging, the final table equal to what was loaded, the job done, or paused by
 the brake of quality when the invalid rows are above its limit. A table at the end puts the starting value of each brake

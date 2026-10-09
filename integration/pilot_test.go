@@ -31,10 +31,11 @@ import (
 //
 //	METAGENTE_PILOT_ROWS       rows of the source (default 100000)
 //	METAGENTE_PILOT_WORKERS    the numbers of Workers of the clean runs (default 1,2,4)
-//	METAGENTE_PILOT_SCENARIOS  baseline, kill, pause-destination, pause-broker, bad-rows (default all)
+//	METAGENTE_PILOT_SCENARIOS  baseline, kill, pause-destination, stop-destination, pause-broker, bad-rows (default all)
 //	METAGENTE_PILOT_BATCH_ROWS the most rows of a page (default 1000)
 //	METAGENTE_PILOT_BATCH_BYTES the size a batch aims at (default 262144)
-//	METAGENTE_PILOT_PAUSE      seconds that the destination and the broker are frozen (default 20)
+//	METAGENTE_PILOT_PAUSE      seconds that the destination and the broker are frozen or refuse (default 20)
+//	METAGENTE_PILOT_ACK_WAIT   seconds the broker waits for a Worker to confirm a batch (default 20)
 //	METAGENTE_PILOT_REPORT     where the report is written (default pilot-report.md)
 
 func pilotNumber(name string, fallback int) int {
@@ -60,10 +61,13 @@ func pilotList(name, fallback string) []string {
 
 // psql asks the PostgreSQL server of a container something, and gives the rows as text, one line for each, with | between
 // the columns.
-func (s server) psql(sql string) (string, error) {
+func (s server) psql(sql string) (string, error) { return s.psqlOn(dbName, sql) }
+
+// psqlOn is psql in another database of the server.
+func (s server) psqlOn(database, sql string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	code, reader, err := s.ctr.Exec(ctx, []string{"psql", "-U", dbUser, "-d", dbName, "-v", "ON_ERROR_STOP=1", "-At", "-F", "|", "-c", sql}, tcexec.Multiplexed())
+	code, reader, err := s.ctr.Exec(ctx, []string{"psql", "-U", dbUser, "-d", database, "-v", "ON_ERROR_STOP=1", "-At", "-F", "|", "-c", sql}, tcexec.Multiplexed())
 	if err != nil {
 		return "", err
 	}
@@ -100,6 +104,43 @@ func freeze(t *testing.T, ctr testcontainers.Container, d time.Duration) {
 		}
 		if attempt == 5 {
 			t.Errorf("thawing the container: %v\n%s", err, out)
+			return
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// refuse makes the database turn every connection away, and ends the ones it has: what a server that is down does to those
+// who talk to it, with errors and not with silence. The control goes through another database, which still takes them.
+func (s server) refuse() error {
+	if _, err := s.psqlOn("postgres", "ALTER DATABASE "+dbName+" ALLOW_CONNECTIONS false"); err != nil {
+		return err
+	}
+	_, err := s.psqlOn("postgres", "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '"+dbName+"'")
+	return err
+}
+
+// allow takes the database back.
+func (s server) allow() error {
+	_, err := s.psqlOn("postgres", "ALTER DATABASE "+dbName+" ALLOW_CONNECTIONS true")
+	return err
+}
+
+// outage makes the destination turn away its callers for a while. A database that stays shut would stop the whole run, so
+// taking it back is tried a few times.
+func outage(t *testing.T, dest server, d time.Duration) {
+	t.Helper()
+	if err := dest.refuse(); err != nil {
+		t.Errorf("shutting the database: %v", err)
+	}
+	time.Sleep(d)
+	for attempt := 1; ; attempt++ {
+		err := dest.allow()
+		if err == nil {
+			return
+		}
+		if attempt == 5 {
+			t.Errorf("opening the database again: %v", err)
 			return
 		}
 		time.Sleep(time.Second)
@@ -197,18 +238,24 @@ func extractorRunBefore(ctx context.Context, t *testing.T, dir string, args ...s
 	return string(out), err
 }
 
-var takenLine = regexp.MustCompile(`Taken (\d+): done (\d+), asked for again (\d+), dead letters (\d+)`)
+var (
+	takenLine   = regexp.MustCompile(`Taken (\d+): done (\d+), asked for again (\d+), dead letters (\d+)`)
+	breakerLine = regexp.MustCompile(`the destination failed \d+ times in a row`)
+)
 
-// tally adds what the Workers said they did: events taken, asked for again, and dead letters.
-func (f *fleet) tally() (again, dead int) {
+// tally adds what the Workers said they did: events asked for again, dead letters, and how many times the breaker opened.
+// A Worker that was killed said nothing, so its part is not here.
+func (f *fleet) tally() (again, dead, breaker int) {
 	for _, w := range f.all {
-		if m := takenLine.FindStringSubmatch(w.out.String()); m != nil {
+		text := w.out.String()
+		if m := takenLine.FindStringSubmatch(text); m != nil {
 			a, _ := strconv.Atoi(m[3])
 			d, _ := strconv.Atoi(m[4])
 			again, dead = again+a, dead+d
 		}
+		breaker += len(breakerLine.FindAllString(text, -1))
 	}
-	return again, dead
+	return again, dead, breaker
 }
 
 // pilotRun is one run of the pilot.
@@ -217,9 +264,13 @@ type pilotRun struct {
 	workers      int
 	badPercent   int  // of the rows, invalid in the source
 	kill         bool // a Worker is killed in the middle of the run
-	freezeDest   bool
+	freezeDest   bool // the destination is frozen: its callers wait
+	stopDest     bool // the destination turns its callers away, with errors
 	freezeBroker bool
 }
+
+// harmful says whether the run does harm to a part of the pipeline while it goes on.
+func (r pilotRun) harmful() bool { return r.kill || r.freezeDest || r.stopDest || r.freezeBroker }
 
 func (r pilotRun) name() string {
 	switch {
@@ -241,7 +292,7 @@ type pilotResult struct {
 	p50, p95, p99, longest       float64
 	spanSeconds                  float64
 	attempts                     int
-	again, dead                  int
+	again, dead, breaker         int
 	final, duplicates            int
 	job                          string
 	harmed                       bool // the harm of the run (the kill or the freeze) was done while it went on
@@ -254,7 +305,7 @@ func (r *pilotResult) problem(format string, args ...any) {
 
 type pilot struct {
 	rows, batchRows, batchBytes int
-	pause                       time.Duration
+	pause, ackWait              time.Duration
 	source                      server
 	lastBad                     int
 	results                     []*pilotResult
@@ -266,6 +317,7 @@ func TestThePilot(t *testing.T) {
 		batchRows:  pilotNumber("METAGENTE_PILOT_BATCH_ROWS", 1000),
 		batchBytes: pilotNumber("METAGENTE_PILOT_BATCH_BYTES", 262144),
 		pause:      time.Duration(pilotNumber("METAGENTE_PILOT_PAUSE", 20)) * time.Second,
+		ackWait:    time.Duration(pilotNumber("METAGENTE_PILOT_ACK_WAIT", 20)) * time.Second,
 		lastBad:    -1,
 	}
 	// The source: the demo orders of the sample, as many as the pilot wants, made once for all the runs.
@@ -273,7 +325,7 @@ func TestThePilot(t *testing.T) {
 	p.source = startWith(t, "postgres", seedFile(t, "postgres", script))
 
 	var runs []pilotRun
-	for _, scenario := range pilotList("METAGENTE_PILOT_SCENARIOS", "baseline,kill,pause-destination,pause-broker,bad-rows") {
+	for _, scenario := range pilotList("METAGENTE_PILOT_SCENARIOS", "baseline,kill,pause-destination,stop-destination,pause-broker,bad-rows") {
 		switch scenario {
 		case "baseline":
 			for _, w := range pilotList("METAGENTE_PILOT_WORKERS", "1,2,4") {
@@ -284,6 +336,8 @@ func TestThePilot(t *testing.T) {
 			runs = append(runs, pilotRun{scenario: "kill", workers: 2, kill: true})
 		case "pause-destination":
 			runs = append(runs, pilotRun{scenario: "pause-destination", workers: 2, freezeDest: true})
+		case "stop-destination":
+			runs = append(runs, pilotRun{scenario: "stop-destination", workers: 2, stopDest: true})
 		case "pause-broker":
 			runs = append(runs, pilotRun{scenario: "pause-broker", workers: 2, freezeBroker: true})
 		case "bad-rows":
@@ -315,7 +369,7 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 	}
 	batches := (p.rows + p.batchRows - 1) / p.batchRows
 	nats := startNATS(t)
-	nats.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: int64(batches*4 + 100)})
+	stream := nats.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: int64(batches*4 + 100)})
 	dest := start(t, "postgres")
 	dir := nats.extractorProject(t)
 	databaseSource(t, dir, "postgres", p.source)
@@ -339,26 +393,27 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 
 	// The Workers wait for the batches before the Extractor starts, the way they would in production. They leave when
 	// nothing has come for a while.
-	// A batch that a killed Worker held comes again after the time to confirm, so the Workers wait longer than that.
-	idle := 60 + int(p.pause.Seconds())
+	// A batch that a killed Worker held comes again after the time to confirm, and a breaker that opened waits 30 seconds
+	// before it tries again, so the Workers wait longer than both.
+	idle := int((p.ackWait + p.pause).Seconds()) + 60
 	crew := &fleet{t: t, dir: dir, args: []string{"consume", "worker.ag", "--config", "worker.dest.toml", "--from", "main", "--subject", "etl.*.batch",
-		"--dead", "etl.dead", "--message", "batch", "--durable", "pilot-batch", "--in-flight", "2", "--ack-wait", "20", "--idle-exit", strconv.Itoa(idle)}}
+		"--dead", "etl.dead", "--message", "batch", "--durable", "pilot-batch", "--in-flight", "2", "--ack-wait", strconv.Itoa(int(p.ackWait.Seconds())), "--idle-exit", strconv.Itoa(idle)}}
 	for i := 0; i < r.workers; i++ {
 		crew.add()
 	}
 
 	// No run may take for ever: past this time the Extractor and the Workers are stopped and the run fails, with the rest
 	// of the report still written.
-	limit := 5*time.Minute + time.Duration(p.rows/100)*time.Second + 3*p.pause
+	limit := 5*time.Minute + time.Duration(p.rows/100)*time.Second + 3*p.pause + 2*p.ackWait
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 
 	var helpers sync.WaitGroup
-	if r.kill || r.freezeDest || r.freezeBroker {
+	if r.kill || r.freezeDest || r.stopDest || r.freezeBroker {
 		helpers.Add(1)
 		go func() {
 			defer helpers.Done()
-			p.disturb(ctx, t, res, dest, nats, crew, batches)
+			p.disturb(ctx, t, res, &scene{dest: dest, nats: nats, stream: stream, crew: crew, batches: batches})
 		}()
 	}
 	if r.badPercent > 20 {
@@ -396,7 +451,7 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 	if !crew.wait(ctx) {
 		res.problem("the Workers were still working after %s: they were stopped", limit)
 	}
-	res.again, res.dead = crew.tally()
+	res.again, res.dead, res.breaker = crew.tally()
 	p.close(t, dir)
 	p.measure(t, dest, res)
 	return res
@@ -409,44 +464,81 @@ func doneBatches(dest server) (int, error) {
 	return n, err
 }
 
-// disturb waits until a share of the batches is done and then does the harm of the run. If every batch is done before that,
-// there is nothing left to harm, and the run is told so.
-func (p *pilot) disturb(ctx context.Context, t *testing.T, res *pilotResult, dest server, nats natsServer, crew *fleet, batches int) {
-	r := res.run
-	enough := batches / 4
-	if r.kill {
-		enough = batches / 3
+// scene is what the harm of a run acts on.
+type scene struct {
+	dest    server
+	nats    natsServer
+	stream  jetstream.Stream
+	crew    *fleet
+	batches int
+}
+
+// published says how many messages the stream holds, which is how far the Extractor has gone.
+func published(ctx context.Context, stream jetstream.Stream) (int, error) {
+	info, err := stream.Info(ctx)
+	if err != nil {
+		return 0, err
 	}
-	if enough < 1 {
-		enough = 1
+	return int(info.State.Msgs), nil
+}
+
+// waitForHarm waits until the run has gone far enough for its harm, and says false when the run ended before that. The
+// harm of the broker has to come while the Extractor is still publishing, and the Extractor is much faster than the Workers,
+// so for that harm what is measured is what the Extractor published and not what the Workers did.
+func (p *pilot) waitForHarm(ctx context.Context, t *testing.T, r pilotRun, sc *scene) bool {
+	enough, poll := sc.batches/4, 200*time.Millisecond
+	switch {
+	case r.kill:
+		enough = sc.batches / 3
+	case r.freezeBroker:
+		enough, poll = sc.batches/10, 50*time.Millisecond
 	}
+	enough = max(enough, 1)
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-time.After(200 * time.Millisecond):
+			return false
+		case <-time.After(poll):
 		}
-		n, err := doneBatches(dest)
+		var n, end int
+		var err error
+		if r.freezeBroker {
+			n, err = published(ctx, sc.stream)
+			end = sc.batches + 1 // and the control event
+		} else {
+			n, err = doneBatches(sc.dest)
+			end = sc.batches
+		}
 		if err != nil {
 			continue
 		}
-		if n >= batches {
-			t.Logf("all %d batches were done before the harm could be done", batches)
-			return
+		if n >= end {
+			t.Logf("the run was over (%d of %d) before the harm could be done", n, end)
+			return false
 		}
 		if n >= enough {
-			break
+			return true
 		}
+	}
+}
+
+// disturb waits until the run has gone far enough and then does the harm of the run.
+func (p *pilot) disturb(ctx context.Context, t *testing.T, res *pilotResult, sc *scene) {
+	r := res.run
+	if !p.waitForHarm(ctx, t, r, sc) {
+		return
 	}
 	switch {
 	case r.kill:
-		crew.killOne()
+		sc.crew.killOne()
 		time.Sleep(3 * time.Second)
-		crew.add()
+		sc.crew.add()
 	case r.freezeDest:
-		freeze(t, dest.ctr, p.pause)
+		freeze(t, sc.dest.ctr, p.pause)
+	case r.stopDest:
+		outage(t, sc.dest, p.pause)
 	case r.freezeBroker:
-		freeze(t, nats.ctr, p.pause)
+		freeze(t, sc.nats.ctr, p.pause)
 	}
 	res.harmed = true
 }
@@ -514,7 +606,7 @@ func (p *pilot) measure(t *testing.T, dest server, res *pilotResult) {
 // judge says what the pilot approves: the books close, there is no duplicate after a kill, and each failure ends as the
 // design says.
 func (r *pilotResult) judge(rows, unbalanced int) {
-	if (r.run.kill || r.run.freezeDest || r.run.freezeBroker) && !r.harmed {
+	if r.run.harmful() && !r.harmed {
 		r.problem("the run ended before the harm was done, so it proves nothing: use more rows")
 	}
 	if r.duplicates != 0 {
@@ -525,6 +617,9 @@ func (r *pilotResult) judge(rows, unbalanced int) {
 	}
 	if r.final != r.loaded {
 		r.problem("the final table has %d rows and the batches say %d were loaded", r.final, r.loaded)
+	}
+	if r.run.harmful() && r.dead != 0 {
+		r.problem("%d dead letters: a failure that passes must not end a batch for good", r.dead)
 	}
 	if r.run.badPercent > 20 {
 		// More invalid rows than the brake allows: the job has to stop, not to go on.
@@ -553,7 +648,7 @@ func (r *pilotResult) judgeEnd(rows int) {
 // harmText says whether the harm of a run was done: "-" for the runs that have none.
 func harmText(r *pilotResult) string {
 	switch {
-	case !r.run.kill && !r.run.freezeDest && !r.run.freezeBroker:
+	case !r.run.harmful():
 		return "-"
 	case r.harmed:
 		return "yes"
@@ -571,17 +666,17 @@ func rate(rows int, seconds float64) string {
 // writePilotReport writes what the pilot measured, and the starting values of the brakes beside what it suggests.
 func writePilotReport(t *testing.T, p *pilot) {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Pilot of the asynchronous ELT\n\n%d rows, batches of at most %d rows aiming at %d bytes, PostgreSQL source and destination, a freeze of %s.\n\n", p.rows, p.batchRows, p.batchBytes, p.pause)
-	b.WriteString("| Run | Workers | Extractor (s) | rows/s read | Batches | Done | p50 (s) | p95 (s) | p99 (s) | Longest (s) | Workers span (s) | rows/s landed | Tries | Asked again | Dead | Rejected | Harm | Job | Result |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+	fmt.Fprintf(&b, "# Pilot of the asynchronous ELT\n\n%d rows, batches of at most %d rows aiming at %d bytes, PostgreSQL source and destination, a freeze or an outage of %s, time to confirm a batch %s.\n\n", p.rows, p.batchRows, p.batchBytes, p.pause, p.ackWait)
+	b.WriteString("| Run | Workers | Extractor (s) | rows/s read | Batches | Done | p50 (s) | p95 (s) | p99 (s) | Longest (s) | Workers span (s) | rows/s landed | Tries | Asked again | Dead | Rejected | Harm | Breaker | Job | Result |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, r := range p.results {
 		verdict := "approved"
 		if len(r.problems) > 0 {
 			verdict = "**failed**"
 		}
-		fmt.Fprintf(&b, "| %s | %d | %.1f | %s | %d | %d | %.2f | %.2f | %.2f | %.2f | %.1f | %s | %d | %d | %d | %d | %s | %s | %s |\n",
+		fmt.Fprintf(&b, "| %s | %d | %.1f | %s | %d | %d | %.2f | %.2f | %.2f | %.2f | %.1f | %s | %d | %d | %d | %d | %s | %d | %s | %s |\n",
 			r.run.name(), r.run.workers, r.extractSeconds, rate(p.rows, r.extractSeconds), r.batches, r.done, r.p50, r.p95, r.p99, r.longest,
-			r.spanSeconds, rate(r.loaded+r.rejected, r.spanSeconds), r.attempts, r.again, r.dead, r.rejected, harmText(r), r.job, verdict)
+			r.spanSeconds, rate(r.loaded+r.rejected, r.spanSeconds), r.attempts, r.again, r.dead, r.rejected, harmText(r), r.breaker, r.job, verdict)
 	}
 	b.WriteString("\n")
 	for _, r := range p.results {
@@ -598,6 +693,23 @@ func writePilotReport(t *testing.T, p *pilot) {
 		t.Errorf("writing the report: %v", err)
 	}
 	t.Log("\n" + b.String())
+}
+
+// killCost says what a dead Worker cost in time: the batches it held came back only after the time to confirm.
+func killCost(p *pilot) string {
+	var kill, clean *pilotResult
+	for _, r := range p.results {
+		switch {
+		case r.run.scenario == "kill" && len(r.problems) == 0:
+			kill = r
+		case r.run.scenario == "baseline" && r.run.workers == 2 && len(r.problems) == 0:
+			clean = r
+		}
+	}
+	if kill == nil || clean == nil {
+		return "the cost of a dead Worker is not measured"
+	}
+	return fmt.Sprintf("a dead Worker added %.1f s to the run, with %s to confirm", kill.spanSeconds-clean.spanSeconds, p.ackWait)
 }
 
 // brakesTable puts the starting value of each brake (section 14 of the design) beside what the clean runs suggest.
@@ -620,14 +732,14 @@ func brakesTable(p *pilot) string {
 	var b strings.Builder
 	b.WriteString("\n## The brakes\n\n| Brake | Starting value | What the pilot says |\n|---|---|---|\n")
 	if longest99 > 0 {
-		fmt.Fprintf(&b, "| Time to confirm a batch | 3 times the p99 of the time of a batch | p99 of the clean runs is %.2f s, so %.1f s |\n", longest99, 3*longest99)
+		fmt.Fprintf(&b, "| Time to confirm a batch | 3 times the p99 of the time of a batch | p99 of the clean runs is %.2f s, so %.1f s; %s |\n", longest99, 3*longest99, killCost(p))
 		fmt.Fprintf(&b, "| Batches in flight | 2 times the number of Workers | raise it until the p95 gets worse: %s |\n", strings.Join(lines, "; "))
 		fmt.Fprintf(&b, "| Workers | as many as the destination allows | the best throughput of the clean runs is %.0f rows/s, with %d Workers |\n", best, bestWorkers)
 	}
 	b.WriteString("| Rejected rows in a batch | 20% | the runs with 1% and 5% of invalid rows close the job; the one with 25% must pause it |\n")
 	b.WriteString("| Pause the job | 3 batches in a row above the limit | see the run with 25% |\n")
-	b.WriteString("| Destination down | opens after 3 failures in a row; tries again every 30 s | see `pause-destination`: tries and asked-again columns |\n")
-	b.WriteString("| Maximum deliveries | 5, waiting 10 s, 1, 5 and 15 min | see `kill` and the two pauses: dead letters must be 0 |\n")
+	b.WriteString("| Destination down | opens after 3 failures in a row; tries again every 30 s | see `stop-destination`: the Breaker column says how many times it opened; `pause-destination` is a destination that does not answer, which makes the callers wait and does not open it |\n")
+	b.WriteString("| Maximum deliveries | 5, waiting 10 s, 1, 5 and 15 min | see `kill`, the pauses and the outage: dead letters must be 0 |\n")
 	b.WriteString("| Size of a batch | try 64, 128, 256 and 512 KiB | run the pilot again with other values of `METAGENTE_PILOT_BATCH_BYTES` |\n")
 	return b.String()
 }
