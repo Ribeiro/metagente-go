@@ -354,6 +354,41 @@ The pilot runs after the sample of phase 3 exists, and before the job goes to pr
 | Size of a batch | try 64, 128, 256 and 512 KiB | the best throughput with a p95 under a third of the time to confirm |
 | Budget of the model | tokens per row × rows × 1.3 | pause at 100%, warn at 80% |
 
+### Measured in the pilot of 9 October
+
+First manual run of the pilot in the CI: 100 thousand synthetic rows, 1,000 rows per batch, PostgreSQL as
+the destination, a small runner where the destination, the broker and the Workers share the same machine,
+outages and freezes of 20 s, time to confirm of 20 s. All runs were approved: the reconciliation
+closed, there was no duplicate, and no batch was lost to a failure that may pass.
+
+| Workers | Rows per second | p95 of a batch | p99 of a batch |
+|---|---|---|---|
+| 1 | 8.7 thousand | 0.23 s | 0.24 s |
+| 2 | 12.2 thousand | 0.34 s | 0.52 s |
+| 4 | 13.0 thousand | 0.72 s | 0.75 s |
+
+| Failure | What was seen |
+|---|---|
+| A Worker killed | the batches it held came back after the time to confirm; the cost was 15.4 s with 20 s to confirm |
+| Destination frozen for 20 s | one batch took 20.3 s; no redelivery (the heartbeat kept it alive), no error, the breaker stayed closed |
+| Destination refusing connections for 20 s | the breaker opened twice, 8 batches went back to the broker, no dead letter, the job finished; the Workers waited about 11 s more after the destination was back |
+| Broker frozen for 20 s | the Extractor waited and finished; no redelivery |
+| Invalid rows in 1% and 5% | exactly 1,000 and 5,000 rows rejected; the job finished |
+| Invalid rows in 25% | the job paused with reason QUALITY after 3 failed batches in a row; the batches that were in flight at that moment went to the dead letters and need to be sent again once the cause is fixed |
+
+Values to start with, from these numbers:
+
+| Brake | Value | Why |
+|---|---|---|
+| Workers | 2 | going from 2 to 4 gave 6% more throughput and doubled the latency of a batch |
+| Time to confirm a batch | 5 s | 3 times the p99 is 2.2 s; a Worker that dies costs about the time to confirm, and a slow batch is not sent again because the live Worker renews the confirmation |
+| Maximum deliveries, quality brake (20%, 3 in a row) | unchanged | nothing in the pilot asked for a change |
+| First wait of the breaker | 30 s, to be decided | after a short outage the Workers idle until the wait ends; 10 s (keeping the 5 min ceiling) would recover faster |
+
+What is not measured yet: the size of a batch in bytes (the pilot cut batches by rows), the model step, and a
+real destination. The numbers of a small shared runner give the shape, not the capacity: repeat the pilot
+against the destination of production before trusting the throughput.
+
 ## 15. Phases
 
 1. **`tool sql` and the bounded loop.** Useful alone: it answers the question of reading a large
