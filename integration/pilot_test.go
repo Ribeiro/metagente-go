@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -258,6 +259,43 @@ func (f *fleet) tally() (again, dead, breaker int) {
 	return again, dead, breaker
 }
 
+var deadLine = regexp.MustCompile(`dead letter on \S+ \((.*)\)\s*$`)
+
+// deadReasons says why the events became dead letters, as the Workers told it: the most common reasons, each with how many
+// times it came and one example. A reason is the same reason whatever the numbers in it.
+func (f *fleet) deadReasons(limit int) []string {
+	count, example := map[string]int{}, map[string]string{}
+	var order []string
+	digits := regexp.MustCompile(`\d+`)
+	for _, w := range f.all {
+		for _, line := range strings.Split(w.out.String(), "\n") {
+			m := deadLine.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			key := digits.ReplaceAllString(m[1], "N")
+			if count[key] == 0 {
+				order = append(order, key)
+				example[key] = m[1]
+			}
+			count[key]++
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool { return count[order[i]] > count[order[j]] })
+	var out []string
+	for _, key := range order[:min(limit, len(order))] {
+		out = append(out, fmt.Sprintf("%d times: %s", count[key], clipText(example[key], 400)))
+	}
+	return out
+}
+
+func clipText(text string, n int) string {
+	if len(text) <= n {
+		return text
+	}
+	return text[:n] + "…"
+}
+
 // pilotRun is one run of the pilot.
 type pilotRun struct {
 	scenario     string
@@ -293,6 +331,7 @@ type pilotResult struct {
 	spanSeconds                  float64
 	attempts                     int
 	again, dead, breaker         int
+	deadWhy                      []string // the reasons of the dead letters, as the Workers told them
 	final, duplicates            int
 	job                          string
 	harmed                       bool // the harm of the run (the kill or the freeze) was done while it went on
@@ -452,6 +491,7 @@ func (p *pilot) execute(t *testing.T, r pilotRun) *pilotResult {
 		res.problem("the Workers were still working after %s: they were stopped", limit)
 	}
 	res.again, res.dead, res.breaker = crew.tally()
+	res.deadWhy = crew.deadReasons(4)
 	p.close(t, dir)
 	p.measure(t, dest, res)
 	return res
@@ -619,7 +659,7 @@ func (r *pilotResult) judge(rows, unbalanced int) {
 		r.problem("the final table has %d rows and the batches say %d were loaded", r.final, r.loaded)
 	}
 	if r.run.harmful() && r.dead != 0 {
-		r.problem("%d dead letters: a failure that passes must not end a batch for good", r.dead)
+		r.problem("%d dead letters: a failure that passes must not end a batch for good. The reasons the Workers gave:\n  %s", r.dead, strings.Join(r.deadWhy, "\n  "))
 	}
 	if r.run.badPercent > 20 {
 		// More invalid rows than the brake allows: the job has to stop, not to go on.
@@ -680,6 +720,9 @@ func writePilotReport(t *testing.T, p *pilot) {
 	}
 	b.WriteString("\n")
 	for _, r := range p.results {
+		for _, why := range r.deadWhy {
+			fmt.Fprintf(&b, "- `%s`, dead letter, %s\n", r.run.name(), why)
+		}
 		for _, problem := range r.problems {
 			fmt.Fprintf(&b, "- `%s`: %s\n", r.run.name(), problem)
 		}
