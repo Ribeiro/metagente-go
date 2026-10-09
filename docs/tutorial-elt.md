@@ -3,7 +3,8 @@
 In this tutorial you build, from an empty folder, the two agents of the asynchronous ELT: an **Extractor**, that reads
 a table of a source database and sends it in batches, and a **Worker**, that receives the batches, loads them into
 another database and checks that nothing was lost. When you finish, you will have copied 2,500 orders from one SQLite
-file to another, through a broker, and seen the books close.
+file to another, through a broker, and seen the books close. The source shown is SQLite, but it can be any of the six
+databases (see [3.6](#36-reading-from-another-database)).
 
 You do not write the steps. Copying a table takes the same steps every time (read a page, save its edges, pack it, send
 it; land it, transform it, count it), and what changes from a table to another is **which table, which columns, what must
@@ -44,7 +45,8 @@ Metagente makes no tables. The databases are yours; the migrations below are you
 ## 2. What you need
 
 - `metagente` (see [step 1 of the first tutorial](tutorial.md#1-get-metagente)).
-- `sqlite3`, to make the demo databases (any SQLite tool will do).
+- `sqlite3`, to make the demo databases (any SQLite tool will do). The source of the demo is SQLite, but it can be any of
+  the six databases (see [3.6](#36-reading-from-another-database)); the outbox is always SQLite.
 - A NATS server with JetStream, and a stream called `ETL` that takes `etl.>`. With Docker and the
   [`nats` command](https://github.com/nats-io/natscli):
 
@@ -174,26 +176,8 @@ Read it in two parts.
 with a user and a password, add `user = "extractor"` and, in `[credentials]`, `events = "BROKER_PASSWORD"`: the file says
 the *name* of the variable, never the password.
 
-**A source that is not SQLite.** This tutorial reads a SQLite file so that you need nothing else, but the Extractor reads
-PostgreSQL, **MySQL**, **MariaDB**, SQL Server and Oracle just the same. Only the place of the source changes, and the
-statements are made in the dialect of each (`LIMIT` for MySQL and MariaDB, `TOP` for SQL Server, `FETCH FIRST` for Oracle; the
-mask of `document` becomes `CONCAT('***', RIGHT(document, 4))` in MySQL and MariaDB). For MySQL or MariaDB:
-
-```toml
-[sql.source]
-driver = "mysql"                  # or "mariadb"
-host = "db.example.com"
-database = "orders"
-user = "extractor"                # a user that may only read; the password goes in [credentials] as source = "SOURCE_DB_PASSWORD"
-
-[elt.orders.source]
-select = { total = "CAST(total AS DOUBLE)" }   # a DECIMAL column is read as a number
-```
-
-`select` is how a column is read in the SQL of the source. The cast makes a `DECIMAL` column reach the Extractor as a number of the language, which is how the
-sample reads it in every dialect; the other columns need nothing. The two databases are served by the same migration to try it
-([`demo-source.mysql.sql`](../samples/async-elt/migrations/demo-source.mysql.sql)) and the same statements: MariaDB is named apart
-only because it is another server and another driver.
+The source here is a SQLite file so that you need nothing else, but it can be any of six databases: see
+[3.6](#36-reading-from-another-database).
 
 **The description** is `[elt.orders]`. It says what the table is:
 
@@ -254,6 +238,62 @@ Three batches went to the broker: 1,000, 1,000 and 500 rows (a page is 1,000 row
 the same line again: it finds everything done, plans no new batch, and publishes the control event once more with the
 same id (the broker drops it while it still remembers the id). **Run it with the same job name to go on after a stop; use a
 new name for a new copy.**
+
+### 3.6 Reading from another database
+
+The source shown above is SQLite, but the Extractor reads **SQLite, PostgreSQL, MySQL, MariaDB, SQL Server and Oracle** just
+the same. Only two things change: the `[sql.source]` section (the `driver` and the place of the database) and, when a column
+needs it, `select`. The statements `page` and `range` are made in the dialect of each database (`LIMIT` for SQLite, PostgreSQL,
+MySQL and MariaDB, `TOP` for SQL Server, `FETCH FIRST` for Oracle), and so is the mask of `document`.
+
+`select` is how a column is read in the SQL of the source. A `DECIMAL` or `NUMERIC` column has to reach the Extractor as a number of
+the language, so it is cast. In the table, `total` is that column:
+
+| Source | `driver` | `select` for `total` |
+|---|---|---|
+| SQLite | `sqlite` | nothing: `REAL` is already a number |
+| PostgreSQL | `postgres` | `{ total = "CAST(total AS double precision)" }` |
+| MySQL | `mysql` | `{ total = "CAST(total AS DOUBLE)" }` |
+| MariaDB | `mariadb` | `{ total = "CAST(total AS DOUBLE)" }` |
+| SQL Server | `sqlserver` | `{ total = "CAST(total AS float)" }` |
+| Oracle | `oracle` | `{ total = "CAST(total AS BINARY_DOUBLE)" }` |
+
+The other columns need nothing. **The outbox stays a SQLite file** in every case: it is the small file the Extractor keeps on
+its own machine, and a source in another database does not change that. So `[sql.outbox]` and `[broker.main]` are the same as
+above.
+
+For MySQL or MariaDB:
+
+```toml
+[sql.source]
+driver = "mysql"                  # or "mariadb"
+host = "db.example.com"
+database = "orders"
+user = "extractor"                # a user that may only read; the password goes in [credentials] as source = "SOURCE_DB_PASSWORD"
+
+[elt.orders.source]
+select = { total = "CAST(total AS DOUBLE)" }   # a DECIMAL column is read as a number
+```
+
+For PostgreSQL (SQL Server is the same with `driver = "sqlserver"` and its cast from the table):
+
+```toml
+[sql.source]
+driver = "postgres"
+host = "db.example.com"
+database = "orders"
+user = "extractor"                # a user that may only read
+
+[elt.orders.source]
+select = { total = "CAST(total AS double precision)" }
+```
+
+Run `metagente check` and `metagente trust` again: the statements are new, so `trust` shows them and asks you to approve. Oracle
+also gives the names of columns in capitals unless they are quoted; the description quotes them for you, and the `database` is
+the name of the service. MySQL and MariaDB are served by the same migration to try it
+([`demo-source.mysql.sql`](../samples/async-elt/migrations/demo-source.mysql.sql)) and the same statements: MariaDB is named apart
+only because it is another server and another driver. The other databases have their own, and a full `[sql.source]` for each is in
+[`samples/async-elt/sources`](../samples/async-elt/sources/).
 
 ## 4. The destination and the Worker
 
