@@ -257,7 +257,6 @@ func TestAProblemInADescriptionIsToldWithTheLineOfItsSection(t *testing.T) {
 		"outbox not sqlite":           {replace("[sql.outbox]\ndriver = \"sqlite\"\npath = \"outbox.db\"", "[sql.outbox]\ndriver = \"postgres\"\nhost = \"h\"\ndatabase = \"d\"\nuser = \"u\""), "has to be a SQLite file"},
 		"source written to":           {replace("[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"", "[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"\nmode = \"write\""), "is written to"},
 		"destination reads":           {replace("[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\"\nmode = \"write\"", "[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\""), "has to have mode = \"write\""},
-		"destination of another kind": {replace("[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\"", "[sql.dest]\ndriver = \"mysql\"\nhost = \"h\"\ndatabase = \"d\"\nuser = \"u\""), "makes the statements of sqlite, postgres, sqlserver, oracle only"},
 		"a rule the database refuses": {replace(`when = "total < 0"`, `when = "total < 0; DROP TABLE orders"`), "does not accept"},
 		"a name clash":                {replace("[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"", "[sql.source]\ndriver = \"sqlite\"\npath = \"source.db\"\n[sql.source.statements]\npage = \"SELECT id FROM orders\""), "the description makes one with that name"},
 	} {
@@ -425,5 +424,69 @@ func TestAnUpsertThatSetsOnlyItsKeyHasNothingToUpdateInSQLServerAndOracle(t *tes
 		if dest.Statements["update_final"] != nil || strings.Join(dest.Transactions["transform_batch"].Steps, " ") != "reject_1 reject_2 load finish_batch" {
 			t.Errorf("%s: transform_batch has the steps %v", driver, dest.Transactions["transform_batch"].Steps)
 		}
+	}
+}
+
+// MySQL and MariaDB have neither ON CONFLICT nor MERGE: they have INSERT ... ON DUPLICATE KEY UPDATE, which does both. The
+// description makes the same statements, with the same names and values, as for the others.
+func TestTheStatementsOfADescriptionForMySQLAndMariaDBUseOnDuplicateKeyUpdate(t *testing.T) {
+	for _, driver := range []string{"mysql", "mariadb"} {
+		cfg, err := loadELT(t, eltSettings(driver))
+		if err != nil {
+			t.Fatalf("%s: %s", driver, problemText(t, err))
+		}
+		dest := cfg.SQL["dest"]
+		want := map[string]string{
+			"open_job":        "INSERT INTO etl_jobs (job_id) VALUES (:job) ON DUPLICATE KEY UPDATE job_id = job_id",
+			"mark_landed":     "INSERT INTO etl_batches (job_id, seq, state, rows_read) VALUES (:job, :seq, 'landed', :row_count) ON DUPLICATE KEY UPDATE job_id = job_id",
+			"land":            "INSERT INTO stg_orders (job_id, seq, id, customer, document, total, note) VALUES (:job, :seq, :id, :customer, :document, :total, :note) ON DUPLICATE KEY UPDATE job_id = job_id",
+			"record_incident": "INSERT INTO etl_incidents (job_id, seq, code) VALUES (:job, :seq, :code) ON DUPLICATE KEY UPDATE job_id = job_id",
+			"reject_1": "INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, id, 'TOTAL_NEGATIVE' FROM stg_orders WHERE job_id = :job AND seq = :seq AND (total < 0) " +
+				"ON DUPLICATE KEY UPDATE etl_rejects.job_id = etl_rejects.job_id",
+			"load": "INSERT INTO orders_final (customer, id, loaded_job, total_cents) SELECT trim(customer), id, job_id, CAST(round(total * 100) AS INTEGER) FROM stg_orders " +
+				"WHERE job_id = :job AND seq = :seq AND CASE WHEN (total < 0) OR (trim(customer) = '') THEN 1 ELSE 0 END = 0 " +
+				"ON DUPLICATE KEY UPDATE orders_final.customer = VALUES(customer), orders_final.loaded_job = VALUES(loaded_job), orders_final.total_cents = VALUES(total_cents)",
+			"purge": "DELETE FROM stg_orders WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = stg_orders.job_id AND b.seq = stg_orders.seq AND b.state = 'done' AND b.done_at < DATE_SUB(NOW(6), INTERVAL CAST(:days AS SIGNED) DAY))",
+			"old_jobs": "DELETE FROM etl_jobs WHERE job_id IN (SELECT done.job_id FROM (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND j.finished_at < DATE_SUB(NOW(6), INTERVAL CAST(:days AS SIGNED) DAY) " +
+				"AND NOT EXISTS (SELECT 1 FROM stg_orders s WHERE s.job_id = j.job_id)) done)",
+			"finish_batch": "UPDATE etl_batches SET state = 'done', rows_rejected = (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), " +
+				"rows_loaded = rows_read - (SELECT count(DISTINCT source_key) FROM etl_rejects WHERE job_id = :job AND seq = :seq), done_at = NOW(6), transform_version = :version, last_error_code = NULL WHERE job_id = :job AND seq = :seq",
+		}
+		for name, text := range want {
+			if got := dest.Statements[name].Parsed.Text; got != text {
+				t.Errorf("%s: %s is\n%s\nwant\n%s", driver, name, got, text)
+			}
+		}
+		if share := dest.Statements["reject_share"].Parsed.Text; !strings.HasPrefix(share, "SELECT CAST(coalesce(100.0 * sum(CASE WHEN") || !strings.Contains(share, "/ NULLIF(count(*), 0), 0) AS DOUBLE) FROM stg_orders") {
+			t.Errorf("%s: reject_share is %s", driver, share)
+		}
+		if got := strings.Join(dest.Transactions["transform_batch"].Steps, " "); got != "reject_1 reject_2 load finish_batch" {
+			t.Errorf("%s: transform_batch has the steps %s", driver, got)
+		}
+	}
+}
+
+func TestTheStatementsOfADescriptionForMySQLHaveTheShapeOfTheOnesOfTheSampleDestination(t *testing.T) {
+	for _, driver := range []string{"mysql", "mariadb"} {
+		want := loadSample(t, "metagente.postgres.toml")
+		delete(want.Transactions, "open_budget")
+		delete(want.Transactions, "save_enrichment")
+		cfg, err := loadELT(t, eltSettings(driver))
+		if err != nil {
+			t.Fatal(problemText(t, err))
+		}
+		sameStatements(t, driver, want, cfg.SQL["dest"])
+		sameTransactions(t, driver, want, cfg.SQL["dest"])
+	}
+}
+
+func TestAnUpsertThatSetsOnlyItsKeyChangesNothingInMySQL(t *testing.T) {
+	text := strings.Replace(eltSettings("mariadb"), `set = { id = "id", customer = "trim(customer)", total_cents = "CAST(round(total * 100) AS INTEGER)", loaded_job = "job_id" }`, `set = { id = "id" }`, 1)
+	cfg, err := loadELT(t, text)
+	if err != nil {
+		t.Fatal(problemText(t, err))
+	}
+	if load := cfg.SQL["dest"].Statements["load"].Parsed.Text; !strings.HasSuffix(load, "ON DUPLICATE KEY UPDATE orders_final.id = orders_final.id") {
+		t.Errorf("load is %s", load)
 	}
 }

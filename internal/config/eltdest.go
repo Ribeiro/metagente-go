@@ -8,15 +8,19 @@ import (
 
 // The statements of the Worker, for each database of a destination. The control tables are the same for all
 // of them (etl_jobs, etl_batches, ...), and so are the names and the values of the statements, because the
-// Worker calls them by name; what differs is the SQL. PostgreSQL and SQLite have an upsert and an
-// INSERT ... ON CONFLICT DO NOTHING. SQL Server and Oracle write "insert if it is not there" as an INSERT ... SELECT ...
-// WHERE NOT EXISTS (with FROM dual in Oracle), and an upsert as an UPDATE followed by such an INSERT, as
-// samples/async-elt does, which is tried against real servers.
+// Worker calls them by name; what differs is the SQL, in three ways. PostgreSQL and SQLite have an upsert and an
+// INSERT ... ON CONFLICT DO NOTHING. MySQL and MariaDB have INSERT ... ON DUPLICATE KEY UPDATE, which is both. SQL Server and
+// Oracle write "insert if it is not there" as an INSERT ... SELECT ... WHERE NOT EXISTS (with FROM dual in Oracle), and an
+// upsert as an UPDATE followed by such an INSERT, as samples/async-elt does, which is tried against real servers.
 
 // eltDialect is the database of a destination.
 type eltDialect string
 
+// onConflict says that the database has INSERT ... ON CONFLICT, and duplicateKey that it has ON DUPLICATE KEY UPDATE. A
+// database with neither writes an upsert as an UPDATE and an INSERT.
 func (d eltDialect) onConflict() bool { return d == "sqlite" || d == "postgres" }
+
+func (d eltDialect) duplicateKey() bool { return d == "mysql" || d == "mariadb" }
 
 // now is the current time.
 func (d eltDialect) now() string {
@@ -27,6 +31,8 @@ func (d eltDialect) now() string {
 		return "SYSUTCDATETIME()"
 	case "oracle":
 		return "SYSTIMESTAMP"
+	case "mysql", "mariadb":
+		return "NOW(6)"
 	}
 	return "CURRENT_TIMESTAMP"
 }
@@ -56,6 +62,8 @@ func (d eltDialect) older(column, param string) string {
 		return fmt.Sprintf("%s < DATEADD(day, -CAST(%s AS INT), SYSUTCDATETIME())", column, param)
 	case "oracle":
 		return fmt.Sprintf("%s < SYSTIMESTAMP - NUMTODSINTERVAL(%s, 'DAY')", column, param)
+	case "mysql", "mariadb":
+		return fmt.Sprintf("%s < DATE_SUB(NOW(6), INTERVAL CAST(%s AS SIGNED) DAY)", column, param)
 	}
 	return fmt.Sprintf("%s < datetime('now', '-' || CAST(%s AS INTEGER) || ' days')", column, param)
 }
@@ -109,6 +117,11 @@ func (d eltDialect) insertMissing(table string, columns, values []string, keys [
 			target = "(" + strings.Join(names, ", ") + ") "
 		}
 		return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT %sDO NOTHING", table, list, strings.Join(values, ", "), target)
+	}
+	if d.duplicateKey() {
+		// A row that is there already is "updated" to what it is: nothing changes, and nothing fails.
+		first := columns[keys[0]]
+		return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON DUPLICATE KEY UPDATE %s = %s", table, list, strings.Join(values, ", "), first, first)
 	}
 	same := make([]string, len(keys))
 	for i, k := range keys {
@@ -198,8 +211,11 @@ func (w *worker) transformation() {
 	if d.onConflict() {
 		share = fmt.Sprintf("coalesce(100.0 * sum(CASE WHEN %s THEN 1 ELSE 0 END) / count(*), 0)", e.rejected())
 	}
-	if d == "postgres" {
+	switch d {
+	case "postgres":
 		share = "CAST(" + share + " AS DOUBLE PRECISION)"
+	case "mysql", "mariadb":
+		share = "CAST(" + share + " AS DOUBLE)" // a DECIMAL would come back as a text
 	}
 	w.add("reject_share", rowsOf(fmt.Sprintf("SELECT %s FROM %s WHERE job_id = :job AND seq = :seq", share, w.stg), ResultValue))
 	for i, rule := range dest.Reject {
@@ -221,6 +237,10 @@ func (w *worker) reject(rule ELTRule) string {
 		return fmt.Sprintf("INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, %s, '%s' FROM %s WHERE job_id = :job AND seq = :seq AND (%s) ON CONFLICT DO NOTHING",
 			e.Key, rule.Code, w.stg, rule.When)
 	}
+	if w.d.duplicateKey() {
+		return fmt.Sprintf("INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT job_id, seq, %s, '%s' FROM %s WHERE job_id = :job AND seq = :seq AND (%s) ON DUPLICATE KEY UPDATE etl_rejects.job_id = etl_rejects.job_id",
+			e.Key, rule.Code, w.stg, rule.When)
+	}
 	return fmt.Sprintf("INSERT INTO etl_rejects (job_id, seq, source_key, reason_code) SELECT s.job_id, s.seq, s.%s, '%s' FROM %s s WHERE s.job_id = :job AND s.seq = :seq AND (%s) "+
 		"AND NOT EXISTS (SELECT 1 FROM etl_rejects r WHERE r.job_id = s.job_id AND r.seq = s.seq AND r.source_key = s.%s AND r.reason_code = '%s')",
 		e.Key, rule.Code, w.stg, rule.When, e.Key, rule.Code)
@@ -238,9 +258,12 @@ func (w *worker) upsert() {
 	for i, column := range targets {
 		values[i] = dest.Set[column]
 	}
-	if w.d.onConflict() {
+	switch {
+	case w.d.onConflict():
 		w.upsertOnConflict(targets, values)
-	} else {
+	case w.d.duplicateKey():
+		w.upsertDuplicate(targets, values)
+	default:
 		w.upsertByHand(targets, values)
 	}
 }
@@ -269,6 +292,22 @@ func (w *worker) upsertOnConflict(targets, values []string) {
 	}
 	w.add("load", fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s WHERE job_id = :job AND seq = :seq AND CASE WHEN %s THEN 1 ELSE 0 END = 0 ON CONFLICT (%s) %s",
 		dest.Table, strings.Join(targets, ", "), strings.Join(values, ", "), w.stg, w.e.rejected(), dest.UpsertOn, conflict))
+	w.transform = append(w.transform, "load")
+}
+
+// upsertDuplicate is one INSERT that updates the row that is there already, as MySQL and MariaDB write it. The columns to
+// change are named with the table, because the rows come from a SELECT and a bare name could be taken for one of its columns.
+func (w *worker) upsertDuplicate(targets, values []string) {
+	dest := w.e.Destination
+	updates := []string{}
+	for _, column := range w.others(targets) {
+		updates = append(updates, fmt.Sprintf("%s.%s = VALUES(%s)", dest.Table, column, column))
+	}
+	if len(updates) == 0 {
+		updates = append(updates, fmt.Sprintf("%s.%s = %s.%s", dest.Table, dest.UpsertOn, dest.Table, dest.UpsertOn))
+	}
+	w.add("load", fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s WHERE job_id = :job AND seq = :seq AND CASE WHEN %s THEN 1 ELSE 0 END = 0 ON DUPLICATE KEY UPDATE %s",
+		dest.Table, strings.Join(targets, ", "), strings.Join(values, ", "), w.stg, w.e.rejected(), strings.Join(updates, ", ")))
 	w.transform = append(w.transform, "load")
 }
 
@@ -344,12 +383,18 @@ func (w *worker) cleaning() {
 	switch d {
 	case "sqlite":
 		purge = fmt.Sprintf("DELETE FROM %s AS s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = s.job_id AND b.seq = s.seq AND b.state = 'done' AND %s)", w.stg, done)
-	case "sqlserver", "oracle":
+	case "sqlserver", "oracle", "mysql", "mariadb":
 		purge = fmt.Sprintf("DELETE FROM %s WHERE EXISTS (SELECT 1 FROM etl_batches b WHERE b.job_id = %s.job_id AND b.seq = %s.seq AND b.state = 'done' AND %s)", w.stg, w.stg, w.stg, done)
 	}
 	w.add("purge", purge)
-	old := fmt.Sprintf("job_id IN (SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND %s AND NOT EXISTS (SELECT 1 FROM %s s WHERE s.job_id = j.job_id))",
+	finished := fmt.Sprintf("SELECT j.job_id FROM etl_jobs j WHERE j.state = 'done' AND %s AND NOT EXISTS (SELECT 1 FROM %s s WHERE s.job_id = j.job_id)",
 		d.older("j.finished_at", ":days"), w.stg)
+	if d.duplicateKey() {
+		// MySQL does not let a DELETE read the table it deletes from, unless the rows are first set aside in a derived table
+		// (MariaDB lets it; the same text does for both).
+		finished = "SELECT done.job_id FROM (" + finished + ") done"
+	}
+	old := "job_id IN (" + finished + ")"
 	for _, table := range []string{"alerts", "incidents", "resends", "rejects", "batches", "jobs"} {
 		w.add("old_"+table, fmt.Sprintf("DELETE FROM etl_%s WHERE %s", table, old))
 	}

@@ -426,7 +426,7 @@ against the destination of production before trusting the throughput.
    a language model. `tool x from elt "name" extract` and `... load` (see [the language](LANGUAGE.md#an-asynchronous-elt-made-from-a-description-tool-from-elt))
    give an agent the tools, the messages and the handlers that the section `[elt.name]` of `metagente.toml` calls for, and
    the statements are made from it for the source (any database the `sql` tool reads), the outbox (SQLite) and the
-   destination (SQLite, PostgreSQL, SQL Server and Oracle). The events are the same as the ones of the sample. The step with a
+   destination (SQLite, PostgreSQL, MySQL, MariaDB, SQL Server and Oracle). The events are the same as the ones of the sample. The step with a
    language model is still written by hand, as in the sample.
 
 ## 16. Tests

@@ -403,7 +403,7 @@ rows       = 1000                             # the most rows of a page (1000 if
 bytes      = 262144                           # a page is halved until its rows, in JSON, fit (262144 if left out)
 
 [elt.orders.destination]                      # only the Worker
-connection   = "dest"                         # [sql.dest], with mode = "write": SQLite, PostgreSQL, SQL Server or Oracle
+connection   = "dest"                         # [sql.dest], with mode = "write": any database the sql tool reads
 staging      = "stg_orders"                   # where a batch lands; "stg_" and the name if left out
 table        = "orders_final"
 upsert_on    = "id"                           # a column of the final table; loading a batch twice gives the same table
@@ -424,10 +424,10 @@ pause_after  = 3                              # this many stopped in a row pause
 - **`select`, `set` and `when` are SQL** of the database that reads them: `select` of the source, `set` and `when` of
   the destination, over the columns of staging (and `job_id`, `seq`). A row for which a `when` holds is rejected with
   its key and the code, never its content; a `when` that is not true or false for a row (a null) does not reject it.
-- **Drivers.** The source may be any database the `sql` tool reads; the outbox is SQLite; the destination is SQLite,
-  PostgreSQL, SQL Server or Oracle (MySQL and MariaDB are not yet). For a step with a language model (`samples/async-elt`),
-  write the agent by hand. Where a database has no `ON CONFLICT`, an upsert is made as an `UPDATE` and an `INSERT` of what is
-  not there, as the sample does; the expressions of `set` and the rules of `reject` are read against staging alone. Oracle
+- **Drivers.** The source may be any database the `sql` tool reads; the outbox is SQLite; the destination is any database the `sql` tool writes (SQLite, PostgreSQL,
+  MySQL, MariaDB, SQL Server or Oracle). For a step with a language model (`samples/async-elt`), write the agent by hand. PostgreSQL
+  and SQLite make an upsert with `ON CONFLICT`, MySQL and MariaDB with `ON DUPLICATE KEY UPDATE`, and SQL Server and Oracle, which
+  have neither, as an `UPDATE` and an `INSERT` of what is not there, as the sample does; the expressions of `set` and the rules of `reject` are read against staging alone. Oracle
   takes an empty text for nothing, so a rule that rejects an empty customer says `customer IS NULL` there.
 - **The passwords** are the ones of `[credentials]`, under the names of the generated tools: `source`, `dest` and `events`.
 

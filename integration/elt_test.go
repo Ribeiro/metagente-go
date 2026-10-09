@@ -55,6 +55,10 @@ tail = { sql = "SELECT %s FROM orders_final WHERE id = 1", result = "value" }
 type eltDialect struct{ document, cents, empty, tail string }
 
 var eltDialects = map[string]eltDialect{
+	"mysql": {"RIGHT(document, 4)", "CAST(ROUND(total * 100) AS SIGNED)", "TRIM(customer) = ''",
+		"CONCAT(document_tail, ' ', total_cents, ' ', loaded_job)"},
+	"mariadb": {"RIGHT(document, 4)", "CAST(ROUND(total * 100) AS SIGNED)", "TRIM(customer) = ''",
+		"CONCAT(document_tail, ' ', total_cents, ' ', loaded_job)"},
 	"postgres": {"right(document, 4)", "CAST(round(CAST(total * 100 AS numeric)) AS BIGINT)", "trim(customer) = ''",
 		"document_tail || ' ' || total_cents || ' ' || loaded_job"},
 	"sqlserver": {"RIGHT(document, 4)", "CAST(ROUND(total * 100, 0) AS BIGINT)", "TRIM(customer) = ''",
@@ -109,7 +113,7 @@ func eltProject(t *testing.T, nats natsServer, db server) string {
 }
 
 func TestADescriptionMakesAnExtractorAndAWorkerThatCopyTheTableIntoEveryDatabase(t *testing.T) {
-	for _, driver := range databases {
+	for _, driver := range append([]string{"mysql", "mariadb"}, databases...) {
 		t.Run(driver, func(t *testing.T) { copiesTheTable(t, driver) })
 	}
 }
@@ -117,7 +121,8 @@ func TestADescriptionMakesAnExtractorAndAWorkerThatCopyTheTableIntoEveryDatabase
 func copiesTheTable(t *testing.T, driver string) {
 	nats := startNATS(t)
 	nats.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: 1000, Duplicates: time.Second})
-	db := startWith(t, driver, seedFile(t, driver, eltText(t, "migrations/control."+driver+".sql")+"\n"+eltText(t, "migrations/orders."+driver+".sql")))
+	files := strings.Replace(driver, "mariadb", "mysql", 1) // the same tables serve both
+	db := startWith(t, driver, seedFile(t, driver, eltText(t, "migrations/control."+files+".sql")+"\n"+eltText(t, "migrations/orders."+files+".sql")))
 	dir := eltProject(t, nats, db)
 
 	run := func(args ...string) string {
