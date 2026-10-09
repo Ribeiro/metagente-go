@@ -17,8 +17,8 @@ import (
 )
 
 // The Extractor and the Worker that a description makes (samples/elt-tutorial): the agents are two lines each, a
-// source in SQLite, a real JetStream server, and a real PostgreSQL as the destination. The statements of
-// the Worker are made for PostgreSQL by the description, and this is where they meet the database.
+// source in SQLite, a real JetStream server, and a real PostgreSQL, SQL Server or Oracle as the destination. The
+// statements of the Worker are made for each of them by the description, and this is where they meet the database.
 
 const eltCheckAgent = `agent Check
   goal "Count what the Worker wrote"
@@ -35,7 +35,7 @@ const eltCheckAgent = `agent Check
 
 const eltCheckStatements = `
 [sql.check]
-driver = "postgres"
+driver = %q
 host = %q
 port = %d
 database = %q
@@ -47,8 +47,21 @@ loaded = { sql = "SELECT count(*) FROM orders_final", result = "value" }
 rejected = { sql = "SELECT count(*) FROM etl_rejects", result = "value" }
 state = { sql = "SELECT state FROM etl_jobs WHERE job_id = 'j1'", result = "value" }
 done_batches = { sql = "SELECT count(*) FROM etl_batches WHERE state = 'done'", result = "value" }
-tail = { sql = "SELECT document_tail || ' ' || total_cents || ' ' || loaded_job FROM orders_final WHERE id = 1", result = "value" }
+tail = { sql = "SELECT %s FROM orders_final WHERE id = 1", result = "value" }
 `
+
+// eltDialect is what the description says in the SQL of each database: the expressions of the destination, the rule that
+// rejects an empty customer (an empty text is nothing in Oracle), and how to put the final row in one text.
+type eltDialect struct{ document, cents, empty, tail string }
+
+var eltDialects = map[string]eltDialect{
+	"postgres": {"right(document, 4)", "CAST(round(CAST(total * 100 AS numeric)) AS BIGINT)", "trim(customer) = ''",
+		"document_tail || ' ' || total_cents || ' ' || loaded_job"},
+	"sqlserver": {"RIGHT(document, 4)", "CAST(ROUND(total * 100, 0) AS BIGINT)", "TRIM(customer) = ''",
+		"document_tail + ' ' + CAST(total_cents AS NVARCHAR(30)) + ' ' + loaded_job"},
+	"oracle": {"substr(document, -4)", "CAST(round(total * 100) AS NUMBER(19))", "customer IS NULL",
+		"document_tail || ' ' || total_cents || ' ' || loaded_job"},
+}
 
 func eltText(t *testing.T, name string) string {
 	t.Helper()
@@ -72,11 +85,13 @@ func eltProject(t *testing.T, nats natsServer, db server) string {
 	}
 	write(t, filepath.Join(dir, "extractor.toml"), broker(eltText(t, "extractor.toml")))
 	worker := eltText(t, "worker.toml")
-	worker = strings.Replace(worker, "[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\"", fmt.Sprintf("[sql.dest]\ndriver = \"postgres\"\nhost = %q\nport = %d\ndatabase = %q\nuser = %q\ntls = \"disable\"", db.host, db.port, db.database(), db.user()), 1)
-	// The expressions are the ones of PostgreSQL.
-	worker = strings.Replace(worker, `substr(document, -4)`, `right(document, 4)`, 1)
-	worker = strings.Replace(worker, `CAST(round(total * 100) AS INTEGER)`, `CAST(round(CAST(total * 100 AS numeric)) AS BIGINT)`, 1)
-	write(t, filepath.Join(dir, "worker.toml"), broker(worker)+fmt.Sprintf(eltCheckStatements, db.host, db.port, db.database(), db.user()))
+	worker = strings.Replace(worker, "[sql.dest]\ndriver = \"sqlite\"\npath = \"warehouse.db\"", fmt.Sprintf("[sql.dest]\ndriver = %q\nhost = %q\nport = %d\ndatabase = %q\nuser = %q\ntls = \"disable\"", db.driver, db.host, db.port, db.database(), db.user()), 1)
+	// The expressions are the ones of the database.
+	dialect := eltDialects[db.driver]
+	worker = strings.Replace(worker, `substr(document, -4)`, dialect.document, 1)
+	worker = strings.Replace(worker, `CAST(round(total * 100) AS INTEGER)`, dialect.cents, 1)
+	worker = strings.Replace(worker, `when = "trim(customer) = ''"`, `when = "`+dialect.empty+`"`, 1)
+	write(t, filepath.Join(dir, "worker.toml"), broker(worker)+fmt.Sprintf(eltCheckStatements, db.driver, db.host, db.port, db.database(), db.user(), dialect.tail))
 	write(t, filepath.Join(dir, "extractor.ag"), eltText(t, "extractor.ag"))
 	write(t, filepath.Join(dir, "worker.ag"), eltText(t, "worker.ag"))
 	write(t, filepath.Join(dir, "check.ag"), eltCheckAgent)
@@ -93,10 +108,16 @@ func eltProject(t *testing.T, nats natsServer, db server) string {
 	return dir
 }
 
-func TestADescriptionMakesAnExtractorAndAWorkerThatCopyTheTableIntoPostgreSQL(t *testing.T) {
+func TestADescriptionMakesAnExtractorAndAWorkerThatCopyTheTableIntoEveryDatabase(t *testing.T) {
+	for _, driver := range databases {
+		t.Run(driver, func(t *testing.T) { copiesTheTable(t, driver) })
+	}
+}
+
+func copiesTheTable(t *testing.T, driver string) {
 	nats := startNATS(t)
 	nats.stream(t, jetstream.StreamConfig{Name: "ETL", Subjects: []string{"etl.>"}, Storage: jetstream.MemoryStorage, Discard: jetstream.DiscardNew, MaxMsgs: 1000, Duplicates: time.Second})
-	db := startWith(t, "postgres", seedFile(t, "postgres", eltText(t, "migrations/control.postgres.sql")+"\n"+eltText(t, "migrations/orders.postgres.sql")))
+	db := startWith(t, driver, seedFile(t, driver, eltText(t, "migrations/control."+driver+".sql")+"\n"+eltText(t, "migrations/orders."+driver+".sql")))
 	dir := eltProject(t, nats, db)
 
 	run := func(args ...string) string {

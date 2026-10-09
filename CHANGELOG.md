@@ -22,6 +22,12 @@ minor versions.
 
 ### Added
 
+- `tool x from elt`: the Worker can load into SQL Server and Oracle too. The statements of the destination for these two are
+  made from the description as `samples/async-elt` writes them by hand, which are tried against real servers: "insert if it is not
+  there" is an `INSERT ... SELECT ... WHERE NOT EXISTS`, and an upsert is an `UPDATE` followed by such an `INSERT`, both reading
+  the rows of the batch against staging alone. For the 22 statements that do not depend on the columns, a test checks that the
+  text is the one of the sample. The tutorial has the control tables and the tables of the copy for each database
+  (`samples/elt-tutorial/migrations/`), and `integration/elt_test.go` runs it against real PostgreSQL, SQL Server and Oracle.
 - `tool x from elt "name" extract` and `... load`: the Extractor and the Worker of the asynchronous ELT made from a
   description, the section `[elt.name]` of `metagente.toml`, in place of agents written step by step. The description says
   the table, its columns, the key, what leaves the source masked, how a column is read, where each part goes, the
