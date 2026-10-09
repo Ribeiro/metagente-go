@@ -204,7 +204,7 @@ func (cfg *Config) addSQL(file, text string, e entry) error {
 	case len(conn.Transactions) > 0 && !conn.Writes():
 		return fail("%s has transactions, and a connection that only reads has no use for them", where).
 			Fix(`add mode = "write" to the section, or remove the transactions`)
-	case len(conn.Statements) == 0:
+	case len(conn.Statements) == 0 && !cfg.eltUses(e.key):
 		return fail("%s has no statements", where).
 			Fixf("add some under [sql.%s.statements], for example: next_page = \"SELECT id FROM orders WHERE id > :after ORDER BY id LIMIT :size\"", e.key)
 	}

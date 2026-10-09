@@ -207,7 +207,7 @@ metagente run my-agent.ag    # an agent with `tool http`
 
 ## What exists
 
-- `metagente check [--strict] FILE.ag`: lexer, parser, static checks, warnings.
+- `metagente check [--strict] FILE.ag [--config FILE]`: lexer, parser, static checks, warnings.
 - `metagente new NAME`: a starter agent and a `metagente.toml`.
 - `metagente run FILE.ag [MESSAGE] [key=value ...] [--agent NAME] [--config FILE]`.
 - `link`: an agent calls another agent of the same machine like a tool
@@ -235,6 +235,10 @@ metagente run my-agent.ag    # an agent with `tool http`
   by `metagente trust`. A connection with `mode = "write"` may also run named `INSERT`, `UPDATE`,
   `DELETE` and `MERGE` statements, a list of rows in one transaction, and transactions of several statements (never
   DDL), approved as a database that is changed. See `docs/LANGUAGE.md`.
+- `tool orders from elt "orders" extract` (or `load`): the Extractor (or the Worker) of the asynchronous ELT, made from the
+  description `[elt.orders]` of `metagente.toml` (the table, its columns, what is masked, the rules that reject a row, the
+  brakes) in place of an agent written step by step. The statements it calls are made from the description too, for SQLite
+  and PostgreSQL as the destination, and shown by `metagente trust`. See `docs/LANGUAGE.md` and `docs/tutorial-elt.md`.
 - `tool meter`: how much of the language model a conversation has used (`meter.model`), for an agent that keeps
   a budget for it. See `docs/LANGUAGE.md`.
 - `tool codec`: JSON, gzip, SHA-256, UUID v7 and records made from values, for the agents of a pipeline that

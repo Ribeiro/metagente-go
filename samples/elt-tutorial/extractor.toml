@@ -1,0 +1,32 @@
+# The Extractor: reads the table `orders` of a source database and publishes it in batches.
+
+[runtime]
+timeout_seconds = 60
+max_loop_turns = 1000000          # one turn for each page, and a big table has many pages
+
+[sql.source]
+driver = "sqlite"
+path = "source.db"                # no `mode`, so it can only be read
+
+[sql.outbox]
+driver = "sqlite"
+path = "outbox.db"
+mode = "write"
+
+[broker.main]
+driver = "jetstream"
+url = "nats://127.0.0.1:4222"
+stream = "ETL"
+
+# The description of the copy. The statements `page` and `range` of the source, and the ones of the outbox,
+# are made from it, and `metagente trust` shows them.
+[elt.orders]
+key = "id"
+columns = ["id", "customer", "document", "total"]
+
+[elt.orders.source]
+connection = "source"
+table = "orders"
+outbox = "outbox"
+broker = "main"
+mask = { document = "last 4" }    # only '***' and the last four digits leave the source

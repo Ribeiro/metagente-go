@@ -1,0 +1,3 @@
+agent Worker
+  goal "Load the batches of the orders table and close the job"
+  tool orders from elt "orders" load

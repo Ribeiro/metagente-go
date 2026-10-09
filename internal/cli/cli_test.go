@@ -794,3 +794,47 @@ func TestGoInstallOfAReleaseSaysItsVersion(t *testing.T) {
 		t.Errorf("without build info: %q", got)
 	}
 }
+
+// An agent that says `tool x from elt "name" extract` is checked as the agent it is made into, which takes the
+// settings: --config names them, and without any the problem is told.
+func TestCheckSeesTheAgentThatADescriptionMakes(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	writeFile(t, dir, "extractor.ag", "agent Extractor\n  goal \"Copy\"\n  tool orders from elt \"orders\" extract\n")
+	code, _, stderr := run(t, "check", "extractor.ag")
+	if code != 1 {
+		t.Errorf("without settings the exit code = %d, want 1", code)
+	}
+	assertContains(t, stderr, "has no section [elt.orders]", "line 3")
+
+	writeFile(t, dir, "metagente.elt.toml", `
+[sql.source]
+driver = "sqlite"
+path = "source.db"
+
+[sql.outbox]
+driver = "sqlite"
+path = "outbox.db"
+mode = "write"
+
+[broker.main]
+driver = "memory"
+
+[elt.orders]
+columns = ["id", "customer"]
+
+[elt.orders.source]
+connection = "source"
+table = "orders"
+outbox = "outbox"
+broker = "main"
+`)
+	code, stdout, stderr := run(t, "check", "extractor.ag", "--config", "metagente.elt.toml")
+	if code != 0 {
+		t.Fatalf("exit code = %d\n%s", code, stderr)
+	}
+	assertContains(t, stdout, "No problems found in extractor.ag (1 agent).")
+	if code, _, stderr := run(t, "check", "extractor.ag", "--config"); code != 2 {
+		t.Errorf("--config with no value: exit code = %d\n%s", code, stderr)
+	}
+}

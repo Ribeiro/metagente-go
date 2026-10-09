@@ -421,6 +421,13 @@ against the destination of production before trusting the throughput.
    reads a PostgreSQL, MySQL, MariaDB, SQL Server or Oracle source as well as SQLite (`samples/async-elt/sources/`).
    The pilot of section 14 is written (`integration/pilot_test.go`, run by hand from the workflow `Pilot`); its numbers
    are still to be read and the brakes tuned.
+5. **The Extractor and the Worker made from a description.** The agents of the sample repeat, for every table, the same
+   steps; what changes is the table, the columns, the masks and the rules. *Status:* done for the part that does not use
+   a language model. `tool x from elt "name" extract` and `... load` (see [the language](LANGUAGE.md#an-asynchronous-elt-made-from-a-description-tool-from-elt))
+   give an agent the tools, the messages and the handlers that the section `[elt.name]` of `metagente.toml` calls for, and
+   the statements are made from it for the source (any database the `sql` tool reads), the outbox (SQLite) and the
+   destination (SQLite and PostgreSQL). The events are the same as the ones of the sample. The step with a language
+   model, and SQL Server and Oracle as the destination, are still written by hand, as in the sample.
 
 ## 16. Tests
 

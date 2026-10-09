@@ -17,6 +17,7 @@ import (
 	"github.com/Ribeiro/metagente-go/internal/applog"
 	"github.com/Ribeiro/metagente-go/internal/config"
 	"github.com/Ribeiro/metagente-go/internal/diag"
+	"github.com/Ribeiro/metagente-go/internal/elt"
 	"github.com/Ribeiro/metagente-go/internal/lang"
 	"github.com/Ribeiro/metagente-go/internal/runtime"
 	"github.com/Ribeiro/metagente-go/internal/scaffold"
@@ -109,7 +110,8 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `Build AI agents in minutes.
 
 Usage:
-  metagente check [--strict] FILE.ag   look for problems without running
+  metagente check [--strict] FILE.ag [--config FILE]
+                                       look for problems without running
   metagente new NAME                   create a starter agent and a metagente.toml
   metagente run FILE.ag [MESSAGE] [key=value ...] [--agent NAME] [--config FILE]
                                        run an agent
@@ -164,6 +166,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		printError(stderr, err)
 		return 1
 	}
+	if err := expandForCheck(agents, c.configPath); err != nil {
+		printError(stderr, err)
+		return 1
+	}
 	problems, warnings := checkWithLinks(agents)
 	if c.strict {
 		problems = append(problems, warnings...)
@@ -174,18 +180,46 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 }
 
 type checkArgs struct {
-	file   string
-	strict bool
+	file       string
+	strict     bool
+	configPath string
+}
+
+// expandForCheck gives the agents that use a description of the asynchronous ELT what it calls for, so that
+// the check sees the agent that will run. It reads metagente.toml only for that: an agent that uses no
+// description is checked, as it always was, without the configuration.
+func expandForCheck(agents []*lang.AgentDef, configPath string) error {
+	uses := false
+	for _, agent := range agents {
+		uses = uses || elt.Uses(agent)
+	}
+	if !uses {
+		return nil
+	}
+	cfg, err := currentConfig(configPath)
+	if err != nil {
+		return err
+	}
+	return elt.Expand(agents, cfg)
 }
 
 func parseCheckArgs(args []string) (*checkArgs, error) {
 	c := &checkArgs{}
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch {
 		case arg == "--strict":
 			c.strict = true
+		case arg == "--config":
+			if i+1 >= len(args) {
+				return nil, badUsage("`--config` needs a value.", "write it like: --config metagente.postgres.toml")
+			}
+			i++
+			c.configPath = args[i]
+		case strings.HasPrefix(arg, "--config="):
+			c.configPath = strings.TrimPrefix(arg, "--config=")
 		case len(arg) > 1 && arg[0] == '-':
-			return nil, badUsage(fmt.Sprintf("`check` does not take the option `%s`.", arg), "the only option is --strict.")
+			return nil, badUsage(fmt.Sprintf("`check` does not take the option `%s`.", arg), "the options are --strict and --config FILE.")
 		case c.file == "":
 			c.file = arg
 		default:

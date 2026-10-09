@@ -497,6 +497,9 @@ func (p *parser) serverTool(c *cursor, span Span, name string) (*ToolDecl, error
 	if c.peekWord("broker") {
 		return p.brokerTool(c, span, name)
 	}
+	if c.peekWord("elt") {
+		return p.eltTool(c, span, name)
+	}
 	if !c.peekWord("mcp") {
 		return nil, p.missing(c, "after `from` I expected `mcp`",
 			`write: tool weather from mcp "command or address"`)
@@ -551,6 +554,31 @@ func (p *parser) sqlTool(c *cursor, span Span, name string) (*ToolDecl, error) {
 		return nil, err
 	}
 	return &ToolDecl{Name: name, Kind: ToolSQL, Span: span, Command: connection}, nil
+}
+
+// eltTool reads `tool name from elt "description" extract` and `... load`, with the cursor at `elt`.
+func (p *parser) eltTool(c *cursor, span Span, name string) (*ToolDecl, error) {
+	const example = `write: tool orders from elt "orders" extract`
+	c.i++ // elt
+	parts, err := p.text(c, "the name of the description must be in quotes", example)
+	if err != nil {
+		return nil, err
+	}
+	description := strings.TrimSpace(joinLit(parts))
+	if !ValidConnectionName(description) {
+		return nil, p.err(c.line, c.tokens[c.i-1].Col,
+			"the name of a description is made of letters, digits, `_` and `-`", example)
+	}
+	if !c.peekWord("extract") && !c.peekWord("load") {
+		return nil, p.missing(c, "after the name I expected `extract` (the Extractor) or `load` (the Worker)",
+			`write: tool orders from elt "orders" load`)
+	}
+	role := c.peek().Word
+	c.i++
+	if err := p.finish(c); err != nil {
+		return nil, err
+	}
+	return &ToolDecl{Name: name, Kind: ToolELT, Span: span, Command: description, Allow: []string{role}}, nil
 }
 
 // brokerTool reads `tool name from broker "connection" publish "subject" ...`, with the cursor at `broker`.

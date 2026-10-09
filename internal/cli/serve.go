@@ -204,7 +204,7 @@ func loadServeConfig(path string, stderr io.Writer) (*config.Config, error) {
 func loadServed(rt *runtime.Runtime, files, wanted []string) ([]serve.Agent, error) {
 	byFile := make([][]*lang.AgentDef, len(files))
 	for i, file := range files {
-		defs, err := runtime.LoadAgents(file)
+		defs, err := rt.LoadAgents(file)
 		if err != nil {
 			return nil, err
 		}
