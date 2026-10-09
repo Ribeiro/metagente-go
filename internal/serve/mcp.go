@@ -70,6 +70,10 @@ type MCPServer struct {
 
 	mu    sync.Mutex
 	slots map[convKey]*convSlot
+
+	// letting go is one at a time: a session that ends while the server stops takes its conversations out of slots before it
+	// closes them, and Close must not return before they are closed, though it finds slots empty.
+	letting sync.Mutex
 }
 
 // convKey says whose conversation it is: one for each agent in each session, so what
@@ -195,6 +199,8 @@ func (m *MCPServer) Close() {
 // forget lets go of the conversations of a session that ended, or of every
 // conversation when session is nil.
 func (m *MCPServer) forget(session *sdk.ServerSession) {
+	m.letting.Lock()
+	defer m.letting.Unlock()
 	m.mu.Lock()
 	var gone []*convSlot
 	for key, s := range m.slots {

@@ -12,6 +12,11 @@ minor versions.
 - Built with Go 1.26.9 (`toolchain go1.26.9` in `go.mod`): Go 1.26.8 has ten known vulnerabilities in the standard library
   (`net/http`, `crypto/tls`, `mime/multipart`, `os`) that the program reaches, and `govulncheck` found them.
 
+### Fixed
+
+- `metagente serve --mcp`: stopping the server could return before the conversations of an MCP session that ended at that same moment
+  were let go (the session took them out of the list and had not closed them yet). Stopping now waits for them.
+
 ### Added
 
 - The pilot of the asynchronous ELT (`integration/pilot_test.go`, workflow `Pilot`): from the Actions tab, with the rows
