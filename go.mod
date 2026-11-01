@@ -10,7 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microsoft/go-mssqldb v1.11.2
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/nats-io/nats.go v1.54.0
+	github.com/nats-io/nats.go v1.55.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/rogpeppe/go-internal v1.16.0
 	github.com/sijms/go-ora/v2 v2.9.0
